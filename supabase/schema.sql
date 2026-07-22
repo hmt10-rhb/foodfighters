@@ -16,6 +16,8 @@ create policy "saves: owner can insert" on public.saves
   for insert with check (auth.uid() = user_id);
 create policy "saves: owner can update" on public.saves
   for update using (auth.uid() = user_id);
+create policy "saves: owner can delete" on public.saves
+  for delete using (auth.uid() = user_id);
 
 -- ============ Public leaderboard (small subset, safe to expose) ============
 create table if not exists public.leaderboard (
@@ -34,6 +36,8 @@ create policy "leaderboard: owner can insert" on public.leaderboard
   for insert with check (auth.uid() = user_id);
 create policy "leaderboard: owner can update" on public.leaderboard
   for update using (auth.uid() = user_id);
+create policy "leaderboard: owner can delete" on public.leaderboard
+  for delete using (auth.uid() = user_id);
 
 -- ============ Anti-cheat guard ============
 -- Basic sanity check, not a full server-authoritative simulation: scores can
