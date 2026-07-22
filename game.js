@@ -2396,7 +2396,10 @@ function renderFusion() {
 function renderRanking() {
   const hours = (Date.now() - NPC_EPOCH) / 3600000;
   const rows = NPCS.map(n => ({ name: n.name, score: n.base + n.perHour * hours, player: false }));
-  rows.push({ name: 'You 💣', score: state.totalMined, player: true });
+  leaderboardCache
+    .filter(r => r.username !== cloudUsername) // avoid double-listing yourself
+    .forEach(r => rows.push({ name: r.username, score: r.total_mined, player: false }));
+  rows.push({ name: (cloudUsername || 'You') + ' 💣', score: state.totalMined, player: true });
   rows.sort((a, b) => b.score - a.score);
   document.querySelector('#ranking-table tbody').innerHTML = rows.map((r, i) => `
     <tr class="${r.player ? 'player-row' : ''}">
@@ -3016,6 +3019,156 @@ function bindEvents() {
   });
 
   window.addEventListener('beforeunload', save);
+
+  document.getElementById('account-btn').addEventListener('click', showAccountModal);
+  document.getElementById('modal-body').addEventListener('click', e => {
+    if (e.target.closest('#cloud-signup-btn')) cloudSignUp();
+    else if (e.target.closest('#cloud-signin-btn')) cloudSignIn();
+    else if (e.target.closest('#cloud-signout-btn')) cloudSignOut();
+  });
+}
+
+/* ============ Cloud Sync (Supabase) ============ */
+//
+// Entirely additive: with no config.js / offline / Supabase down, `sb` stays
+// null and every function below no-ops, so the game behaves exactly as the
+// pure-localStorage version always has. localStorage remains the fast, always
+// -on save path (see save()/load()) — this layer only mirrors that state to
+// the cloud on a slow interval so a logged-in player can pick up on another
+// device and appear on the shared leaderboard.
+const sb = (window.supabase && window.SUPABASE_URL)
+  ? window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY)
+  : null;
+
+let cloudSession = null;
+let cloudUsername = null;
+let leaderboardCache = [];
+const USERNAME_KEY = 'bombheroes-username';
+
+function cloudSignedIn() { return !!cloudSession; }
+
+async function restoreCloudSession() {
+  if (!sb) return;
+  const { data } = await sb.auth.getSession();
+  cloudSession = data && data.session ? data.session : null;
+  if (cloudSession) {
+    cloudUsername = localStorage.getItem(USERNAME_KEY) || cloudSession.user.email.split('@')[0];
+    await pullCloudSave();
+  }
+  refreshLeaderboard();
+}
+
+async function cloudSignUp() {
+  if (!sb) return;
+  const email = document.getElementById('cloud-email').value.trim();
+  const pw = document.getElementById('cloud-pw').value;
+  const username = document.getElementById('cloud-username').value.trim();
+  if (!email || !pw || !username) { toast('Preencha email, senha e nome de jogador.'); return; }
+  const { data, error } = await sb.auth.signUp({ email, password: pw });
+  if (error) { toast('Erro ao criar conta: ' + error.message); return; }
+  cloudSession = data.session;
+  cloudUsername = username;
+  localStorage.setItem(USERNAME_KEY, username);
+  if (cloudSession) {
+    await pushCloudSave();
+    toast('Conta criada e sincronizada!');
+    showAccountModal();
+  } else {
+    toast('Conta criada — confirme o email antes de entrar (verifique a caixa de entrada).');
+  }
+}
+
+async function cloudSignIn() {
+  if (!sb) return;
+  const email = document.getElementById('cloud-email').value.trim();
+  const pw = document.getElementById('cloud-pw').value;
+  if (!email || !pw) { toast('Preencha email e senha.'); return; }
+  const { data, error } = await sb.auth.signInWithPassword({ email, password: pw });
+  if (error) { toast('Erro ao entrar: ' + error.message); return; }
+  cloudSession = data.session;
+  cloudUsername = localStorage.getItem(USERNAME_KEY) || email.split('@')[0];
+  await pullCloudSave();
+  toast('Login feito — progresso sincronizado.');
+  showAccountModal();
+}
+
+async function cloudSignOut() {
+  if (!sb) return;
+  await sb.auth.signOut();
+  cloudSession = null;
+  cloudUsername = null;
+  toast('Você saiu da conta. O jogo continua salvo neste dispositivo (local).');
+  showAccountModal();
+}
+
+// Cloud is treated as source of truth when its save is newer than the local
+// one (e.g. player progressed on another device) — otherwise we push local up.
+async function pullCloudSave() {
+  if (!sb || !cloudSession) return;
+  const { data, error } = await sb
+    .from('saves')
+    .select('state, updated_at')
+    .eq('user_id', cloudSession.user.id)
+    .maybeSingle();
+  if (error || !data) { await pushCloudSave(); return; }
+  if (new Date(data.updated_at).getTime() > (state.lastSeen || 0)) {
+    state = Object.assign(defaultState(), data.state);
+    state.houses = Object.assign({ tent: 0, cabin: 0, villa: 0, fortress: 0 }, data.state.houses);
+    state.upgrades = Object.assign({ mining: 0, blast: 0, haste: 0 }, data.state.upgrades);
+    save();
+    genLayout();
+    buildArena();
+    syncActors();
+    renderAll();
+  } else {
+    await pushCloudSave();
+  }
+}
+
+async function pushCloudSave() {
+  if (!sb || !cloudSession) return;
+  await sb.from('saves').upsert({
+    user_id: cloudSession.user.id,
+    state,
+    updated_at: new Date().toISOString(),
+  });
+  await sb.from('leaderboard').upsert({
+    user_id: cloudSession.user.id,
+    username: cloudUsername || 'Miner',
+    wave: state.wave,
+    total_mined: Math.floor(state.totalMined),
+  });
+}
+
+async function refreshLeaderboard() {
+  if (!sb) return;
+  const { data } = await sb
+    .from('leaderboard')
+    .select('username, total_mined')
+    .order('total_mined', { ascending: false })
+    .limit(20);
+  leaderboardCache = data || [];
+  const active = document.querySelector('.tab-panel.active');
+  if (active && active.id === 'tab-ranking') renderRanking();
+}
+
+function showAccountModal() {
+  document.getElementById('modal-body').innerHTML = sb
+    ? (cloudSignedIn()
+      ? `
+        <h3>☁️ Conta na nuvem</h3>
+        <p>Logado como <b>${cloudUsername}</b>. Progresso sincronizado entre dispositivos e visível no ranking.</p>
+        <button id="cloud-signout-btn" class="btn">Sair da conta</button>`
+      : `
+        <h3>☁️ Conta na nuvem</h3>
+        <p class="muted">Crie uma conta pra sincronizar seu progresso entre PC/celular e entrar no ranking compartilhado. Sem conta, o jogo continua salvo só neste navegador.</p>
+        <input id="cloud-username" type="text" placeholder="Nome de jogador (aparece no ranking)" style="width:100%;margin-bottom:6px;">
+        <input id="cloud-email" type="email" placeholder="Email" style="width:100%;margin-bottom:6px;">
+        <input id="cloud-pw" type="password" placeholder="Senha (mín. 6 caracteres)" style="width:100%;margin-bottom:10px;">
+        <button id="cloud-signup-btn" class="btn">Criar conta</button>
+        <button id="cloud-signin-btn" class="btn btn-ghost">Já tenho conta — Entrar</button>`)
+    : `<h3>☁️ Conta na nuvem</h3><p class="muted">Sincronização não configurada neste build.</p>`;
+  document.getElementById('modal-backdrop').classList.remove('hidden');
 }
 
 /* ============ Init ============ */
@@ -3057,3 +3210,10 @@ syncActors();
 renderAll();
 setInterval(economyTick, 1000);
 setInterval(aiTick, AI_MS);
+
+restoreCloudSession();
+setInterval(() => { if (cloudSignedIn()) pushCloudSave(); refreshLeaderboard(); }, 30000);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && cloudSignedIn()) pushCloudSave();
+});
+window.addEventListener('beforeunload', () => { if (cloudSignedIn()) pushCloudSave(); });
