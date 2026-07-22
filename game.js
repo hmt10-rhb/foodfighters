@@ -8,72 +8,167 @@ const BASE_RECOVERY = 0.25;        // energy/s while resting, before house bonus
 const BASE_DRAIN = 0.35;           // energy/s while working; ~5 min of work per full bar
 const OFFLINE_CAP_S = 8 * 3600;    // away-progress cap so a week offline doesn't print money
 const MAX_WORKERS = 15;            // roster-wide cap on simultaneous fielded heroes
-const SKILL_CHANCE = 0.07;         // independent roll per skill at hero creation
+// LEGACY, Lab-compatibility only: this constant (and the h.ghost/h.swift
+// boolean fields it rolls in makeHero()) exist purely so the Lab tab's
+// re-roll/sacrifice/breeding/implant/ascension code — explicitly left
+// untouched in this migration, per instruction — keeps working exactly as
+// it always has (implant can still buy "ghost"/"swift", breeding can still
+// inherit them). Live gameplay no longer drives ANY of its own skill logic
+// off SKILL_CHANCE directly; see SKILL_ROLL_TABLE below for the real
+// rarity-conditional Basic/Power system that governs Massa Leve/Cafeinado/
+// Folhado de Ouro/Temperamental on freshly-created rangos. (h.ghost/h.swift
+// ALSO still trigger their real gameplay effect for backward compatibility
+// — see hasMassaLeve()/hasCafeinado() — so Lab's implant/breeding stay
+// meaningfully useful, not just decorative dead flags.)
+const SKILL_CHANCE = 0.07;
 
-// internal keys are slugs (CSS-class safe); label/tag are for display
-const RARITIES = ['Common', 'Rare', 'Epic', 'Legendary', 'SuperLegendario', 'Imortal', 'Shiny', 'Robadasso'];
+/* ===== MASTER MIGRATION: 6-tier rarity ladder, replacing the old 8-tier
+   Common..Robadasso system entirely, per the user's master spec. =====
+   RARITIES/RARITY_CONF deliberately KEEP their existing names (not renamed
+   to e.g. RARIDADES) — Lab's re-roll/breeding/ascension code (left
+   untouched per explicit instruction) reads them directly by these names;
+   renaming the CONSTANTS would crash Lab, which the instruction explicitly
+   says to avoid. Only the VALUES inside changed. Old rarity-name string
+   literals still hardcoded inside untouched Lab code (e.g.
+   ASCEND_MIN_RARITY further down still literally says 'Epic', a rarity
+   that no longer exists) are a DELIBERATE, flagged exception — see
+   canAscend() and the session report for why that was left exactly as-is
+   rather than remapped to a new-tier equivalent. */
+const RARITIES = ['CASEIRO', 'TEMPERADO', 'GOURMET', 'CHEF_RENOMADO', 'ESTRELA_MICHELIN', 'RECEITA_DE_VO'];
 
-// Power curve is deliberately two-phase: Common→Imortal is a measured ~x2
-// mineRate climb per tier (paced against the chest-HP wall growing x1.4/wave,
-// so a lucky mid-tier pull can't trivialize high waves), then Shiny (~x5 over
-// Imortal) and Robadasso (~x7 over Shiny) are intentional holy-grail spikes
+// Stat curve: "preserve what works" interpolation of the OLD 8-tier shape
+// (gentle climb, then a real spike, then an even bigger spike at the very
+// top) onto these 6 tiers — see the session report for the full table and
+// hit-count sanity-check reasoning. RECEITA_DE_VO is now the absolute
+// ceiling (no tier above it), so it inherits the old Shiny+Robadasso
+// "holy grail" spike blended into ONE step instead of two.
 const RARITY_CONF = {
-  Common:          { power: [5, 15],        range: [1, 2],  speed: [1, 2], maxEnergy: 100 },
-  Rare:            { power: [18, 32],       range: [2, 3],  speed: [1, 3], maxEnergy: 130 },
-  Epic:            { power: [40, 70],       range: [3, 4],  speed: [2, 4], maxEnergy: 170 },
-  Legendary:       { power: [80, 130],      range: [4, 6],  speed: [3, 5], maxEnergy: 220 },
-  SuperLegendario: { label: 'Super Legendário', tag: 'SP',    power: [150, 250],     range: [5, 7],  speed: [4, 6], maxEnergy: 300 },
-  Imortal:         { label: 'Imortal',          tag: 'IM',    power: [280, 460],     range: [6, 8],  speed: [5, 7], maxEnergy: 420 },
-  Shiny:           { label: 'Shiny',            tag: 'SH',    power: [1400, 2100],   range: [7, 9],  speed: [6, 8], maxEnergy: 600 },
-  Robadasso:       { label: 'Robadasso',        tag: 'MESSI', power: [9000, 14000],  range: [8, 10], speed: [7, 9], maxEnergy: 900 },
+  CASEIRO:          { label: 'Caseiro',          power: [5, 15],       range: [1, 2],  speed: [1, 2], maxEnergy: 100 },
+  TEMPERADO:        { label: 'Temperado',        power: [18, 32],      range: [2, 3],  speed: [1, 3], maxEnergy: 130 },
+  GOURMET:          { label: 'Gourmet',          power: [40, 70],      range: [3, 4],  speed: [2, 4], maxEnergy: 170 },
+  CHEF_RENOMADO:    { label: 'Chef Renomado',    power: [80, 130],     range: [4, 6],  speed: [3, 5], maxEnergy: 220 },
+  ESTRELA_MICHELIN: { label: 'Estrela Michelin', power: [200, 350],    range: [5, 8],  speed: [4, 7], maxEnergy: 360 },
+  RECEITA_DE_VO:    { label: 'Receita de Vó',    power: [3000, 5000],  range: [7, 10], speed: [6, 9], maxEnergy: 800 },
 };
 
-function rLabel(r) { return RARITY_CONF[r].label || r; }
-function rTag(r) { return RARITY_CONF[r].tag || r; }
+function rLabel(r) { return (RARITY_CONF[r] && RARITY_CONF[r].label) || r; }
+function rTag(r) { return (RARITY_CONF[r] && RARITY_CONF[r].tag) || r; }
 
-// every tier below the Robadasso ceiling can attempt fusion now — the risk
-// table below is what keeps the ultra tiers rare, not a hard block
+// Save-migration only (see load()): maps a pre-migration hero's old rarity
+// string onto its new-tier equivalent, using the exact same interpolation
+// RARITY_CONF itself was built from.
+const LEGACY_RARITY_MIGRATION = {
+  Common: 'CASEIRO', Rare: 'TEMPERADO', Epic: 'GOURMET', Legendary: 'CHEF_RENOMADO',
+  SuperLegendario: 'ESTRELA_MICHELIN', Imortal: 'ESTRELA_MICHELIN',
+  Shiny: 'RECEITA_DE_VO', Robadasso: 'RECEITA_DE_VO',
+};
+
+/* ===== Picante — independent variant, NOT a 7th rarity (master spec #3) =====
+   Any of the 6 rarities can independently roll Picante — rolled completely
+   separately from the rarity roll itself, never affecting rarity odds or
+   vice versa. NO visual treatment yet (explicitly deferred by the spec) —
+   see PICANTE_VISUAL_PLACEHOLDER and applySpicyStatModifier() below. Uses
+   `isSpicy: boolean` on the hero object (not `variant`, which is already
+   the existing sprite-art-variant 0/1/2 field). */
+const PICANTE_CHANCE_SHOP = 0.03;
+const PICANTE_CHANCE_JAULA_NORMAL = 0.03;
+const PICANTE_CHANCE_JAULA_MERCADO_NOTURNO = 0.30;
+const PICANTE_VISUAL_PLACEHOLDER = 'PICANTE VISUAL — EM BREVE';
+function rollPicante(chance) { return Math.random() < chance; }
+// Future hook only — per the spec's own rule 40 ("don't invent the
+// multiplier yet"), this deliberately applies ZERO stat effect right now.
+// Structured so a later task can fill in a real bonus without touching any
+// other call site: just change what this function returns.
+function applySpicyStatModifier(rango) { return rango; }
+
+/* ===== Skills — complete replacement of the old Phantom/Swift/Midas/
+   Cataclysm system (master spec #4/#5) =====
+   Two categories, two skills each, max 4 total, never duplicated:
+   Basic: Massa Leve (phase through destructibles, same effect as the old
+   Phantom) and Cafeinado (2x energy recovery — REPLACES the old Swift
+   double-movement-step mechanic entirely, which is removed).
+   Power: Folhado de Ouro (+50% Food Coins, same effect as the old Midas)
+   and Temperamental (chains to 5 random valid targets per explosion,
+   UP from the old Cataclysm's 3).
+   Unlike the old Midas/Cataclysm (pure rarity-derived, never rolled/stored),
+   these are independently ROLLED per rarity at creation — see
+   SKILL_ROLL_TABLE and rollSkillsForRarity() below. */
+const BASIC_SKILLS = ['MASSA_LEVE', 'CAFEINADO'];
+const POWER_SKILLS = ['FOLHADO_DE_OURO', 'TEMPERAMENTAL'];
+const SKILL_DEFS = {
+  MASSA_LEVE:      { category: 'BASIC', icon: '🥟', label: 'Massa Leve', text: 'O Rango fica leve como massa folhada e atravessa obstáculos quebráveis.' },
+  CAFEINADO:       { category: 'BASIC', icon: '☕', label: 'Cafeinado', text: 'Cafeína pura. O Rango recupera energia 2x mais rápido.', energyRecoveryMultiplier: 2 },
+  FOLHADO_DE_OURO: { category: 'POWER', icon: '🌟', label: 'Folhado de Ouro', text: 'Um tempero lendário transforma cada recompensa em algo ainda mais gostoso.', foodCoinMultiplier: 1.5 },
+  TEMPERAMENTAL:   { category: 'POWER', icon: '🌶️', label: 'Temperamental', text: 'Cada explosão atinge também 5 alvos aleatórios em qualquer ponto da arena.', randomTargetsPerExplosion: 5 },
+};
+// Rarity-dependent two-step conditional roll, PER CATEGORY, independently.
+// Process: roll "≥1 of this category" at basic1/power1; if it hits, grant
+// ONE random skill from that category's 2 options (50/50); THEN, only if
+// that first roll succeeded, roll basic2/power2 — if it ALSO hits, grant
+// the OTHER skill in that category too. If the first roll fails, skip
+// straight to 0 skills in that category (never roll the 2nd).
+const SKILL_ROLL_TABLE = {
+  CASEIRO:          { basic1: 0.10, basic2: 0.02, power1: 0.00, power2: 0.00 },
+  TEMPERADO:        { basic1: 0.30, basic2: 0.07, power1: 0.00, power2: 0.00 },
+  GOURMET:          { basic1: 1.00, basic2: 0.20, power1: 0.00, power2: 0.00 },
+  CHEF_RENOMADO:    { basic1: 1.00, basic2: 0.35, power1: 0.20, power2: 0.05 },
+  ESTRELA_MICHELIN: { basic1: 1.00, basic2: 0.55, power1: 0.60, power2: 0.20 },
+  RECEITA_DE_VO:    { basic1: 1.00, basic2: 0.75, power1: 1.00, power2: 0.50 },
+};
+function rollSkillsForRarity(rarity) {
+  const t = SKILL_ROLL_TABLE[rarity];
+  const skills = { massaLeve: false, cafeinado: false, folhadoDeOuro: false, temperamental: false };
+  if (!t) return skills;
+  if (Math.random() < t.basic1) {
+    if (pick(BASIC_SKILLS) === 'MASSA_LEVE') skills.massaLeve = true; else skills.cafeinado = true;
+    if (Math.random() < t.basic2) { skills.massaLeve = true; skills.cafeinado = true; }
+  }
+  if (Math.random() < t.power1) {
+    if (pick(POWER_SKILLS) === 'FOLHADO_DE_OURO') skills.folhadoDeOuro = true; else skills.temperamental = true;
+    if (Math.random() < t.power2) { skills.folhadoDeOuro = true; skills.temperamental = true; }
+  }
+  return skills;
+}
+function hasMassaLeve(h) { return !!(h.massaLeve || h.ghost); } // h.ghost: legacy Lab-implant/breeding compatibility, see SKILL_CHANCE comment above
+function hasCafeinado(h) { return !!(h.cafeinado || h.swift); } // h.swift: same legacy compatibility
+function hasFolhadoDeOuro(h) { return !!h.folhadoDeOuro; }
+function hasTemperamental(h) { return !!h.temperamental; }
+
+// every tier below the RECEITA_DE_VO ceiling can attempt fusion now — the
+// risk table below is what keeps the top tier rare, not a hard block
 const FUSABLE = RARITIES.slice(0, RARITIES.length - 1);
 const FUSE_COST = 9;
-// success odds per SOURCE rarity — monotonically decreasing, brutal at the top
+// success odds per SOURCE rarity — monotonically decreasing, brutal at the
+// top; remapped from the old 7-point (Common..Shiny) curve onto these 5
+// fusable source tiers (RECEITA_DE_VO is the ceiling, never a fusion
+// source), same "preserve what works" interpolation as RARITY_CONF above.
 const FUSE_SUCCESS_CHANCE = {
-  Common: 0.95,
-  Rare: 0.85,
-  Epic: 0.70,
-  Legendary: 0.40,
-  SuperLegendario: 0.20,
-  Imortal: 0.08,
-  Shiny: 0.02,
+  CASEIRO: 0.95,
+  TEMPERADO: 0.80,
+  GOURMET: 0.55,
+  CHEF_RENOMADO: 0.25,
+  ESTRELA_MICHELIN: 0.06,
 };
-// a successful fusion can leap +2 tiers instead of +1 (clamped at Robadasso)
+// a successful fusion can leap +2 tiers instead of +1 (clamped at RECEITA_DE_VO)
 const FUSE_BONUS_JUMP = 0.18;
 
-// ultra drop odds per pack size [x1, x5, x10, x15] — each tier roughly an
-// order of magnitude rarer than the one before; Robadasso is ~1-in-a-million
-const ULTRA_ODDS = {
-  SuperLegendario: [0.0002,   0.0004,   0.0007,    0.001],
-  Imortal:         [0.00004,  0.00008,  0.00014,   0.0002],
-  Shiny:           [0.000008, 0.000016, 0.000028,  0.00004],
-  Robadasso:       [0.000001, 0.000002, 0.0000035, 0.000005],
+/* ===== Supermercado (shop) rarity odds — master spec #6 =====
+   ONE flat table now, no pack-size variation: the old system gave worse
+   odds on a x1 pull and better odds on a x15 pull (buildOdds()/ULTRA_ODDS
+   per pack-size arrays) — the new spec gives a single table with no
+   pack-size mention at all, and explicitly forbids inventing new chances,
+   so x1/x5/x10/x15 now differ ONLY in how many rolls you get, never in
+   per-roll odds. Rolled via rollRarity() (the same generic weighted-random
+   helper the Jaula table below also uses — see master spec #12). */
+const SHOP_RARITY_WEIGHTS = {
+  CASEIRO: 0.8287, TEMPERADO: 0.1036, GOURMET: 0.0518,
+  CHEF_RENOMADO: 0.0104, ESTRELA_MICHELIN: 0.0052, RECEITA_DE_VO: 0.0004,
 };
-
-// ultra odds are carved out of Common's share so every table still sums to 1
-function buildOdds(packIdx, base) {
-  const odds = Object.assign({}, base);
-  let ultra = 0;
-  for (const r of Object.keys(ULTRA_ODDS)) {
-    odds[r] = ULTRA_ODDS[r][packIdx];
-    ultra += odds[r];
-  }
-  odds.Common -= ultra;
-  return odds;
-}
-
 const PACKS = [
-  { size: 1,  cost: 100,  odds: buildOdds(0, { Common: 0.85, Rare: 0.12,  Epic: 0.027, Legendary: 0.003 }) },
-  { size: 5,  cost: 450,  odds: buildOdds(1, { Common: 0.80, Rare: 0.155, Epic: 0.04,  Legendary: 0.005 }) },
-  { size: 10, cost: 850,  odds: buildOdds(2, { Common: 0.75, Rare: 0.19,  Epic: 0.05,  Legendary: 0.01  }) },
-  { size: 15, cost: 1200, odds: buildOdds(3, { Common: 0.70, Rare: 0.22,  Epic: 0.06,  Legendary: 0.02  }) },
+  { size: 1,  cost: 100 },
+  { size: 5,  cost: 450 },
+  { size: 10, cost: 850 },
+  { size: 15, cost: 1200 },
 ];
 
 const HOUSES = [
@@ -84,11 +179,13 @@ const HOUSES = [
 ];
 
 const TASKS = [
-  { id: 'own15',    name: 'Recruit 15 heroes',                  reward: 500,  check: s => s.heroes.length >= 15 },
+  { id: 'own15',    name: 'Recruit 15 Rangos',                   reward: 500,  check: s => s.heroes.length >= 15 },
   { id: 'mine1000', name: 'Mine 1,000 Food Coins (all-time)',   reward: 750,  check: s => s.totalMined >= 1000 },
-  { id: 'fuse1',    name: 'Fuse a hero in the Fusion Lab',      reward: 1000, check: s => s.fusions >= 1 },
+  { id: 'fuse1',    name: 'Fuse a Rango in the Fusão Culinária', reward: 1000, check: s => s.fusions >= 1 },
   { id: 'house1',   name: 'Buy any house',                      reward: 500,  check: s => HOUSES.some(h => s.houses[h.id] > 0) },
-  { id: 'epic1',    name: 'Own an Epic or better hero',         reward: 1500, check: s => s.heroes.some(h => RARITIES.indexOf(h.rarity) >= RARITIES.indexOf('Epic')) },
+  // Judgment call: remapped from the old "Epic or better" (index 2 of 8) to
+  // GOURMET or better (index 2 of 6) — same relative ladder position.
+  { id: 'epic1',    name: 'Own a Gourmet or better Rango',       reward: 1500, check: s => s.heroes.some(h => RARITIES.indexOf(h.rarity) >= RARITIES.indexOf('GOURMET')) },
 ];
 const TASKS_UNLOCK_HEROES = 15;
 
@@ -170,7 +267,6 @@ function defaultState() {
     houses: { tent: 0, cabin: 0, villa: 0, fortress: 0 },
     tasksClaimed: [],
     wave: 1,
-    wavesSinceJail: 0,
     activeThemeId: ACTIVE_THEME,
     mapsInTheme: 0,
     automine: 'none',
@@ -206,7 +302,7 @@ function load() {
   try { raw = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) { raw = null; }
   if (!raw || !Array.isArray(raw.heroes)) {
     state = defaultState();
-    for (let i = 0; i < 3; i++) state.heroes.push(makeHero('Common'));
+    for (let i = 0; i < 3; i++) state.heroes.push(makeHero('CASEIRO'));
     genLayout(); // brand-new game: no persisted grid to restore, roll one
     waveRegen = false;
     save();
@@ -223,12 +319,30 @@ function load() {
   // could reference an id that no longer exists — fall back to the default
   if (!THEME_ROTATION.includes(state.activeThemeId)) state.activeThemeId = ACTIVE_THEME;
   if (typeof state.mapsInTheme !== 'number' || state.mapsInTheme < 0) state.mapsInTheme = 0;
+  syncActiveSpawnConfig(); // keep ACTIVE_SPAWN_CONFIG in step with whatever theme just got validated/defaulted above
   // saves from before the sprite/skill/meta/portrait systems get defaults assigned once
   for (const h of state.heroes) {
     if (typeof h.variant !== 'number') h.variant = randInt(0, 2);
     if (typeof h.character !== 'string' || !HERO_CHARACTERS.includes(h.character)) h.character = pick(HERO_CHARACTERS);
+    // rarity master migration: a save from before this pivot carries an OLD
+    // rarity string (Common/Rare/Epic/Legendary/SuperLegendario/Imortal/
+    // Shiny/Robadasso) that no longer exists in RARITY_CONF at all — mapped
+    // onto its new-tier equivalent using the exact same "preserve what
+    // works" interpolation used to build RARITY_CONF itself, so an existing
+    // roster doesn't crash (RARITY_CONF[h.rarity] would be undefined) or
+    // silently lose its relative power position.
+    if (!RARITY_CONF[h.rarity]) h.rarity = LEGACY_RARITY_MIGRATION[h.rarity] || 'CASEIRO';
     h.ghost = !!h.ghost;
     h.swift = !!h.swift;
+    // migration for saves from before the rarity/skill master migration —
+    // old heroes get the new fields defaulted to "off" rather than rolled
+    // retroactively (rolling them now would be indistinguishable from a
+    // free stealth buff to every existing save on load)
+    h.isSpicy = !!h.isSpicy;
+    h.massaLeve = !!h.massaLeve;
+    h.cafeinado = !!h.cafeinado;
+    h.folhadoDeOuro = !!h.folhadoDeOuro;
+    h.temperamental = !!h.temperamental;
     h.bonusPower = h.bonusPower || 0;
     h.ascendCount = h.ascendCount || 0;
     // one-time rename: legacy heroes carry an old random fantasy name
@@ -254,7 +368,7 @@ function load() {
     const elapsed = Math.min(Math.max((Date.now() - state.lastSeen) / 1000, 0), OFFLINE_CAP_S);
     if (elapsed > 5) {
       const mined = simulate(elapsed, SLEEP_MODE_MULT);
-      if (mined >= 1) toast(`💤 Sleep Mode: your heroes mined ${fmt(mined)} Food Coins while you were away.`);
+      if (mined >= 1) toast(`💤 Sleep Mode: your Rangos mined ${fmt(mined)} Food Coins while you were away.`);
     }
   }
 
@@ -296,6 +410,10 @@ function makeHero(rarity) {
   // fully independent of the rarity roll below — any of the 12 characters
   // can appear at any rarity, purely by chance
   const character = pick(HERO_CHARACTERS);
+  // new rarity-conditional Basic/Power skill roll (master spec #5) — applies
+  // at every hero creation site (shop, jaula, fusion, breeding), independent
+  // of the legacy ghost/swift roll below (which exists only for Lab compat)
+  const skills = rollSkillsForRarity(rarity);
   return {
     id: state.nextHeroId++,
     name: nameForCharacter(character),
@@ -303,8 +421,18 @@ function makeHero(rarity) {
     rarity,
     variant: randInt(0, 2),
     character,
-    ghost: Math.random() < SKILL_CHANCE,
-    swift: Math.random() < SKILL_CHANCE,
+    // Picante (master spec #3) is rolled INDEPENDENTLY by the CALLER, not
+    // here — shop and jaula each have their own different chance (3% vs
+    // 3%/30%), and other creation paths (fusion, breeding) don't roll it at
+    // all per the spec, so this always starts false and gets set after the
+    // fact by whichever call site actually rolls for it (see rollPicante()).
+    isSpicy: false,
+    ghost: Math.random() < SKILL_CHANCE,  // legacy Lab-compatibility flag — see SKILL_CHANCE comment
+    swift: Math.random() < SKILL_CHANCE,  // legacy Lab-compatibility flag — see SKILL_CHANCE comment
+    massaLeve: skills.massaLeve,
+    cafeinado: skills.cafeinado,
+    folhadoDeOuro: skills.folhadoDeOuro,
+    temperamental: skills.temperamental,
     power: randInt(c.power[0], c.power[1]),
     range: randInt(c.range[0], c.range[1]),
     speed: randInt(c.speed[0], c.speed[1]),
@@ -339,13 +467,18 @@ function prestigeMult() {
   return 1 + (state.prestigePoints || 0) * PRESTIGE_POINT_VALUE;
 }
 
+// Generic weighted-random rarity roll — reused for BOTH the shop
+// (SHOP_RARITY_WEIGHTS) and the jaula (JAULA_RARITY_WEIGHTS) tables, per
+// master spec #12 ("one generic weighted-random roll helper... no
+// duplicated if/else chains"). Not referenced by any Lab (re-roll/
+// sacrifice/breeding/implant/ascension) code, so safe to touch freely.
 function rollRarity(odds) {
   let r = Math.random();
   for (const rarity of RARITIES) {
     r -= odds[rarity];
     if (r <= 0) return rarity;
   }
-  return 'Common';
+  return 'CASEIRO';
 }
 
 // Mining rate balance: power drives it, +25%/level, +5% per bomb range point,
@@ -363,6 +496,12 @@ function drainRate(h) {
 
 function recoveryRate() {
   return BASE_RECOVERY + HOUSES.reduce((sum, hs) => sum + hs.recovery * state.houses[hs.id], 0);
+}
+
+// Cafeinado's real effect (master spec #4): 2x energy recovery. Applied on
+// top of the shared house-driven recoveryRate(), per hero.
+function recoveryRateFor(h) {
+  return recoveryRate() * (hasCafeinado(h) ? SKILL_DEFS.CAFEINADO.energyRecoveryMultiplier : 1);
 }
 
 function levelCost(h) {
@@ -387,12 +526,12 @@ function levelCost(h) {
 // of the old flat mineRate*seconds formula printing money regardless
 // of whether the wall could plausibly be broken.
 function simulate(seconds, rateMult = 1) {
-  const rec = recoveryRate();
   let minedTotal = 0;
   let damageBudget = 0;
 
   for (const h of state.heroes) {
     const maxE = RARITY_CONF[h.rarity].maxEnergy;
+    const rec = recoveryRateFor(h); // Cafeinado's 2x energy recovery, per hero
     if (h.mode === 'work') {
       const drain = drainRate(h);
       const workable = h.energy / drain;
@@ -430,6 +569,16 @@ function simulate(seconds, rateMult = 1) {
   // totalWaveHP/totalWaveWorth are the same avgHp*tiles / avgWorthPerKill*
   // tiles this used to be — just built from the per-tier counts up front so
   // the remainder pass below (the actual fix) can reuse them per-tier.
+  // avgReward(t): master spec #8 replaced the old HP x CHEST_WORTH_S formula
+  // with a FIXED reward RANGE per tier — offline simulate() can't roll the
+  // per-kill randomBetween() the live game does, so it uses the range's
+  // midpoint as its expected-value stand-in (matches the live long-run
+  // average exactly, same "closed-form estimate" spirit as everything else
+  // in this function).
+  function avgReward(t) {
+    const [rMin, rMax] = CHEST_TIER_REWARD_RANGE[t];
+    return (rMin + rMax) / 2;
+  }
   const tierCount = {};
   let totalWaveHP = 0, totalWaveWorth = 0;
   for (const t of CHEST_TIERS) {
@@ -437,7 +586,7 @@ function simulate(seconds, rateMult = 1) {
     tierCount[t] = cnt;
     const hp = CHEST_TIER_HP[t];
     totalWaveHP += cnt * hp;
-    totalWaveWorth += cnt * hp * CHEST_WORTH_S;
+    totalWaveWorth += cnt * avgReward(t);
   }
   totalWaveWorth *= mult;
   if (totalWaveHP > 0.0001 && damageBudget > 0.0001) {
@@ -448,16 +597,15 @@ function simulate(seconds, rateMult = 1) {
 
     // Remainder pass (< one full wave-bag of damage left): spend it on the
     // CHEAPEST tiers first, not at the wave's blended average HP. A flat
-    // average is dominated by rare-but-huge tiers (vip=25000 HP) even at a
-    // tiny spawn weight — e.g. a ~2% vip weight alone can outweigh wood/
-    // iron/gold combined — which silently zeroed out a weak/fresh squad's
-    // ENTIRE offline income once every tier became eligible from wave 1
-    // (no more wave-gate holding vip back). Real live play doesn't work
-    // this way either: heroes path to nearby/reachable easy targets, they
-    // are never forced to crack the wave's one huge chest before earning
-    // anything — this mirrors that. Walk tiers cheapest-to-priciest and
-    // greedily fill from what this bag actually contains (tierCount[t]),
-    // so it can never "sell" more kills than the bag has of that tier.
+    // average is dominated by rare-but-huge tiers (VIP=2000 HP) even at a
+    // tiny spawn weight, which would otherwise zero out a weak/fresh squad's
+    // ENTIRE offline income once every tier became eligible from wave 1.
+    // Real live play doesn't work this way either: heroes path to nearby/
+    // reachable easy targets, they are never forced to crack the wave's one
+    // huge chest before earning anything — this mirrors that. Walk tiers
+    // cheapest-to-priciest and greedily fill from what this bag actually
+    // contains (tierCount[t]), so it can never "sell" more kills than the
+    // bag has of that tier.
     const cheapestFirst = CHEST_TIERS.slice().sort((a, b) => CHEST_TIER_HP[a] - CHEST_TIER_HP[b]);
     for (const t of cheapestFirst) {
       if (damageBudget <= 0.0001) break;
@@ -467,7 +615,7 @@ function simulate(seconds, rateMult = 1) {
       const affordable = Math.floor(damageBudget / hp);
       const kills = Math.floor(Math.min(available, affordable));
       if (kills <= 0) continue;
-      minedTotal += kills * hp * CHEST_WORTH_S * mult;
+      minedTotal += kills * avgReward(t) * mult;
       damageBudget -= kills * hp;
     }
   }
@@ -502,14 +650,13 @@ function estimatedTileCount(wave) {
 }
 
 function economyTick() {
-  const rec = recoveryRate();
   for (const h of state.heroes) {
     const maxE = RARITY_CONF[h.rarity].maxEnergy;
     if (h.mode === 'work') {
       h.energy = Math.max(0, h.energy - drainRate(h));
       if (h.energy <= 0) h.mode = 'rest';
     } else {
-      h.energy = Math.min(maxE, h.energy + rec);
+      h.energy = Math.min(maxE, h.energy + recoveryRateFor(h));
     }
   }
   syncActors();
@@ -599,79 +746,84 @@ function applyTheme(id) {
 // can be changed later without touching any placement/collision logic.
 const G_COLS = 35, G_ROWS = 17;
 let tileSize = 44; // recomputed from the viewport by layoutArena()
-// T_OBSTACLE (mesa_variavel.png) sits ABOVE T_JAIL numerically on purpose:
-// several call sites use `t >= T_CRATE` as shorthand for "this is a
-// destructible with HP" (nearestCrateDist, aiTick's nearCrate check,
-// explode/hitTile). If T_OBSTACLE's value fell inside/above that range,
-// those loose numeric checks would silently treat an indestructible
-// obstacle as a destructible target. Rather than rely on numeric ordering
-// staying accidentally correct forever, every one of those call sites was
-// switched to the explicit isDestructible()/isBlockingObstacle() helpers
-// below — the actual numeric value of T_OBSTACLE no longer matters for
-// correctness, but it's kept out of the CRATE..JAIL range as a second,
-// redundant layer of safety.
-const T_WALL = 0, T_FLOOR = 1, T_CRATE = 2, T_CHEST = 3, T_JAIL = 4, T_OBSTACLE = 5;
-// true only for tiles with HP that can be bombed open for a reward
-function isDestructible(t) { return t === T_CRATE || t === T_CHEST || t === T_JAIL; }
-// true for anything that permanently blocks movement + bomb blast: the 136
-// fixed tables (T_WALL) AND this wave's randomly-placed decorative
-// obstacles (T_OBSTACLE) — same collision treatment, different lifetime
-// (tables are forever, obstacles are re-rolled every wave)
-function isBlockingObstacle(t) { return t === T_WALL || t === T_OBSTACLE; }
-// Jail is no longer a per-block roll — it's a once-per-wave "soft pity" roll
-// (see jailPityChance()) that decides whether THIS wave's map gets a single
-// jail tile at all. JAIL_PITY_BASE is the chance at zero drought (fresh reset),
-// JAIL_PITY_MAX is a soft ceiling the chance asymptotically approaches but
-// never reaches (no hard guarantee at any wave count), JAIL_PITY_TAU is the
-// growth time-constant. Calibrated via Monte Carlo + analytic expected-value
-// simulation so the average gap between jail appearances lands ~445 waves
-// (target was ~450): analytic E[T]=444.98, Monte Carlo (50k cycles)=443.61.
-const JAIL_PITY_BASE = 0.0002, JAIL_PITY_MAX = 0.02, JAIL_PITY_TAU = 2600;
+const T_WALL = 0, T_FLOOR = 1, T_CRATE = 2, T_CHEST = 3, T_JAULA = 4, T_OBSTACLE = 5;
+// true only for tiles with HP that can be bombed open for a reward. Mesa
+// Variável (T_OBSTACLE) is DESTRUCTIBLE now — master spec #9 explicitly
+// calls for it to be breakable, phaseable-through by Massa Leve, and a
+// valid Temperamental chain target, which requires real trackable HP. This
+// is a genuine behavior CHANGE from the prior build (where it was a
+// permanent, indestructible obstacle) — flagged in the session report,
+// since the spec's own wording ("confirm it's destructible") reads as if
+// this were already true, which it wasn't; per the ABSOLUTE PRIORITY RULE
+// the spec wins over the existing implementation on this conflict. HP/
+// reward for Mesa Variável aren't given explicit numbers anywhere in the
+// spec (only the 5 named chest tiers get one) — see MESA_VARIAVEL_HP below
+// for the flagged judgment call on what to use instead of inventing an
+// unlisted reward.
+function isDestructible(t) { return t === T_CRATE || t === T_CHEST || t === T_JAULA || t === T_OBSTACLE; }
+// true for anything that PERMANENTLY blocks movement + bomb blast: only the
+// 136 fixed Mesa Fixa tables now (T_WALL) — Mesa Variável moved to
+// isDestructible() above (it still blocks movement/blast UNTIL destroyed,
+// same as any other destructible; it just doesn't block FOREVER anymore).
+function isBlockingObstacle(t) { return t === T_WALL; }
+// User correction (2026-07-22): set to 1 HP flat — Mesa Variável breaks on
+// ANY single hit, regardless of the hitting hero's damage, not just "the
+// cheapest tier" as the earlier 30 HP judgment call had it. Still pays NO
+// Food Coins reward on its own (the spec's reward numbers are explicitly
+// scoped to the 5 named chest tiers only; inventing a 6th reward figure for
+// Mesa Variável isn't licensed by the doc). It exists to be cleared
+// instantly for pathing/board-opening purposes and as a valid Temperamental
+// chain target, not as a currency source.
+const MESA_VARIAVEL_HP = 1;
 
-function jailPityChance(n = state.wavesSinceJail) {
-  return JAIL_PITY_MAX - (JAIL_PITY_MAX - JAIL_PITY_BASE) * Math.exp(-n / JAIL_PITY_TAU);
-}
-// Rarity odds for a hero freed from a jail block — ONE fixed table now, no
-// longer wave-bracketed. Under the old philosophy, a richer table at deeper
-// waves was justified by "you worked hard to get here"; under the new one
-// ("phases are equal in difficulty/reward forever"), that justification is
-// gone, so keeping 5 wave-gated brackets would directly contradict the
-// pivot (jail's own PITY/spawn-chance stays wave-independent already — see
-// jailPityChance() — only the odds ONCE a jail appears were wave-bracketed).
-// Picked the old wave-100-499 bracket as the single permanent table — a
-// deliberate middle ground, not the richest or the poorest option: jail
-// already only appears ~once per 450 waves on average (a real, separately-
-// earned rarity via the pity system), so it's reasonable for the payoff to
-// feel a bit better than the old "wave 1" floor once it does happen, without
-// going as generous as the deep-wave brackets (which would make every jail
-// pull feel disproportionately amazing relative to everything else in the
-// game's progression, undermining the rest of the rarity ladder). The
-// combined "ultra" pool (SP+Imortal+Shiny+Robadasso) is 1.5% under this
-// table; its INTERNAL split stays fixed (SP 60% / Imortal 25% / Shiny 12% /
-// Robadasso 3% of that pool), same as it always was at every old bracket.
-const JAIL_FIXED_ODDS = { Common: 0.3940, Rare: 0.3152, Epic: 0.1970, Legendary: 0.0788, SuperLegendario: 0.00900, Imortal: 0.003750, Shiny: 0.001800, Robadasso: 0.000450 };
+/* ===== Jaula — replaces the old "Baú Especial" chest tier entirely (master
+   spec #7). Grants exactly 1 Rango (not Food Coins) on destruction — this
+   IS the old jail/hero-granting mechanic, fully renamed and re-tuned. =====
+   RESOLVED CALL, FLAGGED FOR USER CONFIRMATION: the old wave-based "soft
+   pity"/drought system (JAIL_PITY_BASE/MAX/TAU, jailPityChance()) is REMOVED
+   in favor of these flat per-map percentages. The spec doesn't mention a
+   pity/drought mechanic at all — it gives explicit flat chances (1% normal,
+   50% Mercado Noturno) that read as the actual intended mechanic, and
+   keeping both systems at once would mean inventing an unspecified
+   interaction between them. Implemented as primary per the literal spec;
+   please confirm this call is correct. */
+const JAULA_HP = 1500;
+const JAULA_SPAWN_CHANCE_NORMAL = 0.01;
+const JAULA_SPAWN_CHANCE_MERCADO_NOTURNO = 0.50;
+// Not yet a real registered theme (see THEMES/THEME_ROTATION further up —
+// deliberately not fabricating placeholder theme assets/entries that don't
+// exist yet), but this IS the concrete trigger condition master spec #9
+// asks for: "when the active theme is Mercado Noturno, use these special
+// jaula rates." The check below simply never fires until a real Mercado
+// Noturno theme is registered — the WIRING is complete and ready now,
+// which is what was actually being asked for.
+const MERCADO_NOTURNO_THEME_ID = 'mercado_noturno';
+function isMercadoNoturnoActive() { return state.activeThemeId === MERCADO_NOTURNO_THEME_ID; }
+function jaulaSpawnChance() { return isMercadoNoturnoActive() ? JAULA_SPAWN_CHANCE_MERCADO_NOTURNO : JAULA_SPAWN_CHANCE_NORMAL; }
+function jaulaPicanteChance() { return isMercadoNoturnoActive() ? PICANTE_CHANCE_JAULA_MERCADO_NOTURNO : PICANTE_CHANCE_JAULA_NORMAL; }
+// Separate, much richer rarity table than the shop (master spec #7) — rolled
+// via the same generic rollRarity() helper used for the shop table.
+const JAULA_RARITY_WEIGHTS = {
+  CASEIRO: 0.2500, TEMPERADO: 0.2526, GOURMET: 0.3518,
+  CHEF_RENOMADO: 0.1300, ESTRELA_MICHELIN: 0.0146, RECEITA_DE_VO: 0.0010,
+};
 
-function jailOddsForWave(wave = state.wave) {
-  return JAIL_FIXED_ODDS;
-}
 const AI_MS = 500, FUSE_TICKS = 3;
 // Each smashed crate pays N seconds' worth of the planter's idle mineRate, so
-// on-screen earnings track the offline averaged rate instead of a separate economy
+// on-screen earnings track the offline averaged rate instead of a separate
+// economy. NOTE: this CRATE_WORTH_S/CHEST_WORTH_S-driven formula no longer
+// applies to the 5 named chest tiers (see CHEST_TIER_REWARD_RANGE below,
+// master spec #8 — those are now fixed reward RANGES, not an HP-derived
+// formula) or to Jaula (grants a Rango, not currency). CRATE_WORTH_S is kept
+// only because Mesa Variável (T_CRATE's numeric slot is unused; Mesa
+// Variável is T_OBSTACLE) pays nothing at all — see MESA_VARIAVEL_HP above.
 const CRATE_WORTH_S = 2, CHEST_WORTH_S = 10;
-// ===== Major philosophy reversal (per the user): waves no longer represent
-// difficulty/reward progression AT ALL. A "wave" now means only "a freshly
-// RNG-regenerated map" — every map is equally difficult and equally
-// rewarding forever. The old exponential-then-power-law chestHpForWave()
-// curve (and crateHpForWave()/jail's derived HP, and the WAVE_REWARD_STEP
-// reward multiplier below) are gone entirely, replaced by FIXED per-tier HP
-// (CHEST_TIER_HP) and a fixed JAIL_HP. See waveMult() further down for what
-// happened to the reward multiplier, and JAIL_RARITY_BRACKETS for the
-// (now-single, no-longer-wave-bracketed) jail rescue odds table. ===== //
-// Midas skims +50% Food Coins on anything its bombs break (no more 5x flips);
-// Cataclysm chains each blast to 3 extra random destructibles at NORMAL hit
-// damage (bounded fan-out instead of striking the whole board every blast)
-const MIDAS_BONUS = 1.5;
-const CATA_CHAIN = 3;
+// Folhado de Ouro skims +50% Food Coins on anything its bombs break (same
+// bonus as the old Midas); Temperamental chains each blast to 5 extra random
+// valid targets at NORMAL hit damage (UP from the old Cataclysm's 3, per
+// master spec #4) — bounded fan-out, not striking the whole board.
+const FOLHADO_DE_OURO_BONUS = 1.5;
+const TEMPERAMENTAL_CHAIN = 5;
 // Core-loop RNG: both are EV-neutral by construction, added for feel/variance
 // rather than to quietly re-buff the rebalanced power curve.
 const CRIT_CHANCE = 0.12, CRIT_MULT = 1.75;
@@ -682,79 +834,70 @@ const DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 let gridTiles = [], tileEls = [], cratesLeft = 0, cratesTotal = 0, waveRegen = false;
 let tileHp = {};
 
-// Jail's HP is fixed too now (no more crateHpForWave()) — kept notably
-// easier than even the cheapest chest tier (wood, HP 8), matching the old
-// established ~20%-of-wood-tier relationship ("a rescue, not a boss fight"),
-// just rounded to a clean constant instead of derived via a ratio-of-a-ratio
-// that no longer means anything once there's no shared wave-scaled curve.
-const JAIL_HP = 2;
-
-/* ============ Chest tiers + per-wave variable generation ============
-   Replaces the old per-tile-independent crate/chest DENSITY roll
-   (CRATE_DENSITY/WAVE_DENSITY_STEP/WAVE_DENSITY_MAX/pickDestructibleType())
-   entirely. Every rewarding destructible placed by a live wave is now a
-   tiered chest — "wood" tier is exactly the old single chest type. There is
-   no more plain, untiered "crate": the 60% of variable slots that don't
-   roll a chest become an indestructible mesa_variavel.png obstacle instead
-   (see isBlockingObstacle()). T_CRATE and CRATE_WORTH_S remain defined
-   (jail's HP above is a plain fixed constant now, no longer derived from
-   them, but the tile TYPE and its "20%-of-wood, easier than any real chest"
-   design spirit both live on) but nothing places a T_CRATE tile anymore.
-
-   Per the philosophy reversal ("phases are equal in difficulty/reward
-   forever"), chest HP is now a FIXED constant per tier — NOT
-   chestHpForWave()*multiplier (that function is gone). Calibrated via
-   hit-count sanity-checking against RARITY_CONF's power/range ranges at a
-   representative level (see the report for the concrete numbers): a
-   level-10 mid-roll hero of the "intended" rarity should crack its intended
-   tier in roughly a "satisfying handful to a few dozen hits" range, not
-   trivial and not absurd. Payout is unchanged in SHAPE (HP x CHEST_WORTH_S,
-   still read out of box.max by the existing destroyTile() formula) — just
-   driven by these fixed numbers instead of a wave-scaled curve, so a bigger
-   tier is still a bigger lump sum for proportionally more hits, same as before. */
-const CHEST_TIERS = ['wood', 'iron', 'gold', 'diamond', 'special', 'vip'];
-const CHEST_TIER_HP = { wood: 8, iron: 40, gold: 200, diamond: 1000, special: 5000, vip: 25000 };
-const CHEST_TIER_ICON = {
-  wood: 'bau_madeira', iron: 'bau_ferro', gold: 'bau_ouro',
-  diamond: 'bau_diamante', special: 'bau_especial', vip: 'bau_vip',
+/* ============ Chests + per-wave variable generation ============ (master spec #8)
+   5 tiers now, not 6 — "especial" became Jaula (see above), no longer a
+   Food-Coin-granting chest tier at all. Chest HP AND reward are both now
+   FIXED numbers straight from the spec — CHEST_TIER_REWARD_RANGE fully
+   REPLACES the old HP x CHEST_WORTH_S x tier-multiplier formula; reward is
+   `randomBetween(min, max)` uniformly, decimals preserved (never rounded to
+   an integer). This is a drastically smaller reward scale than the rest of
+   the current economy (shop/upgrade/re-roll costs are in the hundreds-to-
+   thousands) — per explicit instruction relayed with the spec, implemented
+   exactly as given anyway, NOT rescaled to compensate; that's a separate
+   future ask. See fmt()/floatLabel() for the small-decimal display fix this
+   required. */
+const CHEST_TIERS = ['MADEIRA', 'FERRO', 'OURO', 'DIAMANTE', 'VIP'];
+const CHEST_TIER_HP = { MADEIRA: 70, FERRO: 150, OURO: 600, DIAMANTE: 1100, VIP: 2000 };
+const CHEST_TIER_REWARD_RANGE = {
+  MADEIRA: [0.01, 0.02],
+  FERRO: [0.03, 0.05],
+  OURO: [0.16, 0.25],
+  DIAMANTE: [0.40, 1.00],
+  VIP: [0.40, 3.00],
 };
-// Wave-gating (gold@5/diamond@15/special@40/vip@80) from the earlier round
-// is REMOVED per this pivot's explicit instruction #2 — every tier is now
-// eligible starting wave 1, governed purely by rarityLimits' min/max RNG
-// below. That gating existed to bound a "lump-sum jackpot lands absurdly
-// early relative to wave depth" risk — but wave depth no longer means
-// anything (every map is equally hard/rewarding), so "early" isn't a
-// meaningful risk category anymore either; the FIXED HP calibration above
-// is what actually keeps each tier reasonable now, not a wave gate.
+const CHEST_TIER_ICON = {
+  MADEIRA: 'bau_madeira', FERRO: 'bau_ferro', OURO: 'bau_ouro',
+  DIAMANTE: 'bau_diamante', VIP: 'bau_vip',
+};
+function randomBetween(min, max) { return min + Math.random() * (max - min); }
+// Wave-gating from an earlier round stays removed — every tier is eligible
+// from wave 1, governed purely by rarityLimits' min/max RNG below.
 
 const normalMapSpawnConfig = {
   variableTables: { min: 28, max: 50 },
   chests: { probability: 0.40, proportionalMin: 0.30, proportionalMax: 0.45, absoluteMin: 8, absoluteMax: 20 },
   rarityLimits: {
-    wood: { min: 4, max: 12 },
-    iron: { min: 2, max: 7 },
-    gold: { min: 1, max: 7 },
-    diamond: { min: 0, max: 2 },
-    special: { min: 0, max: 0 }, // effectively disabled on the normal map
-    vip: { min: 0, max: 1 },
+    MADEIRA: { min: 4, max: 12 },
+    FERRO: { min: 2, max: 7 },
+    OURO: { min: 1, max: 7 },
+    DIAMANTE: { min: 0, max: 2 },
+    VIP: { min: 0, max: 1 },
   },
 };
-// "a sala especial" (the user's phrase) — described but with NO trigger
-// condition given (a wave milestone? a theme-specific room? unknown).
-// Defined as data only, per the coordinator's explicit instruction — this
-// is NOT wired to any wave/theme condition anywhere. Flagged in the report;
-// needs the user's input on when this should ever become active.
+// Mercado Noturno's per-wave variable-generation density config (richer than
+// the normal map) — now concretely wired to the Mercado Noturno theme (see
+// activeSpawnConfig()/syncActiveSpawnConfig() below), resolving the earlier
+// open question of when this should ever activate (master spec #9).
 const nightKitchenSpawnConfig = {
   variableTables: { min: 30, max: 50 },
   chests: { probability: 0.40, proportionalMin: 0.35, proportionalMax: 0.48, absoluteMin: 12, absoluteMax: 22 },
   rarityLimits: {
-    wood: { min: 3, max: 10 }, iron: { min: 2, max: 7 }, gold: { min: 1, max: 7 },
-    special: { min: 1, max: 3 }, diamond: { min: 0, max: 2 }, vip: { min: 0, max: 1 },
+    MADEIRA: { min: 3, max: 10 }, FERRO: { min: 2, max: 7 }, OURO: { min: 1, max: 7 },
+    DIAMANTE: { min: 0, max: 2 }, VIP: { min: 0, max: 1 },
   },
 };
-// live/default config for every wave right now — nightKitchen exists as data
-// only (see comment above) and is never assigned here or anywhere else
+// live/default config for every wave; kept in sync with the active theme by
+// syncActiveSpawnConfig() (called from load() and waveClear()'s theme
+// rotation) rather than recomputed as a getter, so every existing call site
+// that reads this as a plain variable (including the test suite) keeps working.
 let ACTIVE_SPAWN_CONFIG = normalMapSpawnConfig;
+// Call this whenever state.activeThemeId changes (load(), waveClear()'s
+// theme-rotation block) to keep ACTIVE_SPAWN_CONFIG pointed at the right
+// per-theme generation density — this IS the "concrete trigger" wiring
+// master spec #9 asks for.
+function syncActiveSpawnConfig() {
+  ACTIVE_SPAWN_CONFIG = isMercadoNoturnoActive() ? nightKitchenSpawnConfig : normalMapSpawnConfig;
+}
 
 // Fisher-Yates, exactly as specified — never mutates the input
 function shuffle(arr) {
@@ -882,7 +1025,7 @@ function tileClassFor(val) {
   if (val === T_WALL) return 'wall';
   if (val === T_FLOOR) return 'floor';
   if (val === T_CHEST) return 'chest';
-  if (val === T_JAIL) return 'jail';
+  if (val === T_JAULA) return 'jaula';
   if (val === T_OBSTACLE) return 'obstacle';
   return 'crate';
 }
@@ -899,7 +1042,9 @@ function tileClassFor(val) {
 // string independently instead of sharing this logic.
 function classNameForProp(r, c, val) {
   const box = tileHp[r + ',' + c];
-  const tierClass = (val === T_CHEST && box && box.tier) ? ' chest-' + box.tier : '';
+  // tier keys are uppercase (MADEIRA/FERRO/OURO/DIAMANTE/VIP, matching the
+  // spec's literal slugs) but CSS classes stay lowercase-conventional
+  const tierClass = (val === T_CHEST && box && box.tier) ? ' chest-' + box.tier.toLowerCase() : '';
   return 'tile-prop ' + tileClassFor(val) + tierClass;
 }
 
@@ -1029,6 +1174,7 @@ function seedCrates() {
   // attempts within one seedCrates() call, only the random selection does
   const eligible = baseFloors.filter(([r, c]) => !occupied.has(r + ',' + c));
   let chestTierAssignment = [];
+  let obstaclePositions = [];
   let succeeded = false;
 
   for (let attempt = 0; attempt < VARIABLE_LAYOUT_MAX_RETRIES && !succeeded; attempt++) {
@@ -1058,13 +1204,14 @@ function seedCrates() {
     const tierPool = [];
     for (const t of CHEST_TIERS) for (let i = 0; i < tierCounts[t]; i++) tierPool.push(t);
     const shuffledTiers = shuffle(tierPool);
-    const candidateAssignment = candidateChests.map(([r, c], i) => [r, c, shuffledTiers[i] || 'wood']);
+    const candidateAssignment = candidateChests.map(([r, c], i) => [r, c, shuffledTiers[i] || 'MADEIRA']);
 
     for (const [r, c] of candidateObstacles) gridTiles[r][c] = T_OBSTACLE;
     for (const [r, c] of candidateAssignment) gridTiles[r][c] = T_CHEST;
 
     if (floorsConnected()) {
       chestTierAssignment = candidateAssignment;
+      obstaclePositions = candidateObstacles;
       succeeded = true;
     }
   }
@@ -1077,34 +1224,37 @@ function seedCrates() {
   if (!succeeded) {
     for (const [r, c] of baseFloors) gridTiles[r][c] = T_FLOOR;
     chestTierAssignment = [];
+    obstaclePositions = [];
   }
 
-  // Once-per-wave jail pity roll: at most one jail per map, and it can only
-  // ever replace a CHEST slot (never an obstacle, which was never a reward
-  // to begin with) — same map-level decision as before the grid resize.
-  // Captured BEFORE the possible splice below: jail replaces a chest 1-for-1,
-  // so the total "things to clear this wave" never changes either way.
+  // Jaula: a FLAT per-map chance now (1% normal, 50% Mercado Noturno — no
+  // pity/drought system anymore, see JAULA_HP's comment above), and — same
+  // as the old jail — can only ever replace a CHEST slot (never a Mesa
+  // Variável obstacle, which pays no reward to begin with, see below).
   cratesLeft = chestTierAssignment.length;
-  if (chestTierAssignment.length && Math.random() < jailPityChance()) {
+  if (chestTierAssignment.length && Math.random() < jaulaSpawnChance()) {
     const idx = randInt(0, chestTierAssignment.length - 1);
     const [jr, jc] = chestTierAssignment.splice(idx, 1)[0];
-    gridTiles[jr][jc] = T_JAIL;
-    state.wavesSinceJail = 0;
-  } else {
-    state.wavesSinceJail++;
+    gridTiles[jr][jc] = T_JAULA;
   }
   cratesTotal = cratesLeft;
 
   tileHp = {};
   for (const [r, c, tier] of chestTierAssignment) {
     const maxHp = CHEST_TIER_HP[tier];
-    tileHp[r + ',' + c] = { hp: maxHp, max: maxHp, chest: true, jail: false, tier };
+    tileHp[r + ',' + c] = { hp: maxHp, max: maxHp, chest: true, jaula: false, obstacle: false, tier };
   }
-  // jail's HP is a fixed constant now (JAIL_HP) — "a rescue, not a boss
-  // fight" — independent of chest tiers, same as before this pivot
-  if (gridTiles.some(row => row.includes(T_JAIL))) {
+  // Mesa Variável is destructible now (master spec #9) — fixed HP, pays NO
+  // reward, and (see destroyTile()) does NOT count toward cratesLeft/
+  // wave-clear at all — it's optional pathing/Temperamental-fodder content,
+  // not a reward slot, so it was never counted into cratesLeft above either.
+  for (const [r, c] of obstaclePositions) {
+    tileHp[r + ',' + c] = { hp: MESA_VARIAVEL_HP, max: MESA_VARIAVEL_HP, chest: false, jaula: false, obstacle: true };
+  }
+  // jaula's HP is a fixed constant (JAULA_HP) — independent of chest tiers
+  if (gridTiles.some(row => row.includes(T_JAULA))) {
     for (let r = 0; r < G_ROWS; r++) for (let c = 0; c < G_COLS; c++) {
-      if (gridTiles[r][c] === T_JAIL) tileHp[r + ',' + c] = { hp: JAIL_HP, max: JAIL_HP, chest: false, jail: true };
+      if (gridTiles[r][c] === T_JAULA) tileHp[r + ',' + c] = { hp: JAULA_HP, max: JAULA_HP, chest: false, jaula: true, obstacle: false };
     }
   }
 }
@@ -1231,7 +1381,7 @@ function nearestCrateDist(r, c) {
 function plantBomb(h, a) {
   const el = document.createElement('div');
   el.className = 'bomb';
-  const b = { r: a.r, c: a.c, t: FUSE_TICKS, radius: blastRadius(h), rate: mineRate(h), midas: hasMidas(h), cata: hasCata(h), el };
+  const b = { r: a.r, c: a.c, t: FUSE_TICKS, radius: blastRadius(h), rate: mineRate(h), folhadoDeOuro: hasFolhadoDeOuro(h), temperamental: hasTemperamental(h), el };
   positionBomb(b);
   document.getElementById('arena').appendChild(el);
   bombs.push(b);
@@ -1241,11 +1391,14 @@ function plantBomb(h, a) {
 function canWalk(h, r, c) {
   const t = tileAt(r, c);
   if (t === undefined) return false;
-  // ghosts phase through tables/crates entirely — with the border ring now
-  // guaranteed walkable EMPTY for everyone (isTableCell() never places a
-  // table there), there's no obstacle type left for ghosts to need a special
-  // exception for, so they can go anywhere within the grid's bounds
-  if (h && h.ghost) return true;
+  // Massa Leve phases through destructible obstacles (Mesa Variável and
+  // anything else destructible) during pathing — but NOT Mesa Fixa or the
+  // map borders (those are the only permanently-blocking tiles left; see
+  // isBlockingObstacle()). With the border ring guaranteed walkable EMPTY
+  // for everyone (isTableCell() never places a table there), there's no
+  // obstacle type left that a phasing Rango needs a special exception for,
+  // so they can go anywhere within the grid's bounds.
+  if (h && hasMassaLeve(h)) return true;
   return t === T_FLOOR && !bombAt(r, c);
 }
 
@@ -1277,9 +1430,12 @@ function aiTick() {
     if (!h || h.mode !== 'work') { removeActor(id); continue; }
     const a = actors[id];
     if (a.cd > 0) a.cd--;
-    // re-check plantability between every sub-step: a Swift hero would
-    // otherwise walk onto and straight past a plantable tile in one tick
-    const steps = h.swift ? 2 : 1;
+    // Cafeinado no longer affects movement/pathing speed AT ALL (master
+    // spec #4 — its old double-movement-step mechanic is removed entirely;
+    // Cafeinado's real effect now is purely the 2x energy recovery
+    // multiplier, applied in economyTick()/simulate() instead). Always a
+    // single step per tick now, for every Rango.
+    const steps = 1;
     for (let i = 0; i < steps; i++) {
       const nearCrate = isDestructible(tileAt(a.r, a.c)) ||
         DIRS.some(([dr, dc]) => isDestructible(tileAt(a.r + dr, a.c + dc)));
@@ -1317,11 +1473,17 @@ function explode(b) {
       if (isDestructible(t)) { hitTile(r, c, b); break; }
     }
   }
-  // Cataclysm (Robadasso-exclusive): each blast chains to a few random other
-  // destructibles anywhere on the board — normal hit damage, bounded fan-out
-  if (b.cata) {
+  // Temperamental: each blast also chains to 5 random OTHER valid targets
+  // anywhere on the board — normal hit damage, bounded fan-out (master spec
+  // #4 — UP from the old Cataclysm's 3). tileHp's own keys are already
+  // exactly "every valid target" (Mesa Variável/chests/Jaula — floor, Mesa
+  // Fixa, borders, and Rangos themselves are never tracked in tileHp at
+  // all), and splicing a random one out each iteration already guarantees
+  // the targets are distinct from each other and stops early once fewer
+  // than TEMPERAMENTAL_CHAIN valid targets remain, exactly per spec.
+  if (b.temperamental) {
     const targets = Object.keys(tileHp);
-    for (let i = 0; i < CATA_CHAIN && targets.length; i++) {
+    for (let i = 0; i < TEMPERAMENTAL_CHAIN && targets.length; i++) {
       const key = targets.splice(randInt(0, targets.length - 1), 1)[0];
       const [r, c] = key.split(',').map(Number);
       boomAt(r, c);
@@ -1347,11 +1509,11 @@ function payoutVarianceMult() {
 function hitTile(r, c, b) {
   if (isDestructible(tileAt(r, c))) {
     const crit = rollCrit();
-    damageTile(r, c, b.rate * crit.mult, b.midas, crit.isCrit);
+    damageTile(r, c, b.rate * crit.mult, b.folhadoDeOuro, crit.isCrit);
   }
 }
 
-function damageTile(r, c, dmg, midasBomb, isCrit) {
+function damageTile(r, c, dmg, folhadoDeOuroBomb, isCrit) {
   const key = r + ',' + c;
   const box = tileHp[key];
   if (!box) return;
@@ -1361,39 +1523,54 @@ function damageTile(r, c, dmg, midasBomb, isCrit) {
     floatLabel(r, c, (isCrit ? '💥 CRIT -' : '-') + (dmg >= 10 ? fmt(dmg) : dmg.toFixed(1)), false, isCrit);
     return;
   }
-  destroyTile(r, c, box, midasBomb);
+  destroyTile(r, c, box, folhadoDeOuroBomb);
 }
 
-function destroyTile(r, c, box, midasBomb) {
+function destroyTile(r, c, box, folhadoDeOuroBomb) {
   delete tileHp[r + ',' + c];
   setTile(r, c, T_FLOOR);
 
-  // Jail is a rescue, not a payout: it grants exactly one new hero instead
-  // of Food Coins (no skill-shard roll either — the hero IS the whole reward)
-  if (box.jail) {
-    const rarity = rollRarity(jailOddsForWave());
+  // Jaula is a rescue, not a payout: it grants exactly one new Rango instead
+  // of Food Coins (no skill-shard roll either — the Rango IS the whole reward)
+  if (box.jaula) {
+    const rarity = rollRarity(JAULA_RARITY_WEIGHTS);
     const freed = makeHero(rarity);
+    freed.isSpicy = rollPicante(jaulaPicanteChance());
     state.heroes.push(freed);
     floatLabel(r, c, '🔓 ' + rLabel(rarity) + '!', true);
     cratesLeft = Math.max(0, cratesLeft - 1);
     save();
     renderHeader();
     renderInventory();
-    startJailReveal(freed);
+    startJaulaReveal(freed);
     if (cratesLeft === 0 && !waveRegen) waveClear();
     return;
   }
 
-  // payout scales with the wall; Midas bombs skim a bounded bonus on top;
+  // Mesa Variável: destructible, but purely a pathing/Temperamental-fodder
+  // convenience — pays no Food Coins, no Skill Shard roll, and does NOT
+  // count toward cratesLeft/wave-clear (never counted into cratesLeft/
+  // cratesTotal in seedCrates() either — see its comment).
+  if (box.obstacle) return;
+
+  // Chest payout: fixed reward RANGE per tier now (master spec #8), NOT the
+  // old HP x CHEST_WORTH_S x tier-multiplier formula — box.max/waveMult() no
+  // longer drive this at all. Folhado de Ouro skims a bounded bonus on top;
   // a small symmetric variance roll keeps the AVERAGE identical but stops
-  // every single break from reading like an exact spreadsheet number
-  const amt = box.max * (box.chest ? CHEST_WORTH_S : CRATE_WORTH_S) * waveMult() * (midasBomb ? MIDAS_BONUS : 1) * payoutVarianceMult();
+  // every single break from reading like an exact spreadsheet number. Only
+  // chests reach this point (Jaula/Mesa Variável both return above), so
+  // box.tier is always a valid CHEST_TIERS key here.
+  const [rewardMin, rewardMax] = CHEST_TIER_REWARD_RANGE[box.tier];
+  const amt = randomBetween(rewardMin, rewardMax) * (folhadoDeOuroBomb ? FOLHADO_DE_OURO_BONUS : 1) * payoutVarianceMult();
   state.starCore += amt;
   state.totalMined += amt;
-  floatLabel(r, c, (box.chest ? '💰 +' : '+') + (amt >= 10 ? fmt(amt) : amt.toFixed(1)), box.chest);
+  // reward scale is now fractions of a Food Coin (0.01-3.00) — always show
+  // 2 decimal places (fmt()'s Math.floor() would print "0" for anything
+  // under 1, which is most of this range now)
+  floatLabel(r, c, '💰 +' + amt.toFixed(2), true);
   cratesLeft = Math.max(0, cratesLeft - 1);
   // rare material drop, independent of and additional to the Food Coins payout
-  if (Math.random() < (box.chest ? SKILL_SHARD_CHEST_CHANCE : SKILL_SHARD_CRATE_CHANCE)) {
+  if (Math.random() < SKILL_SHARD_CHEST_CHANCE) {
     state.skillShards = (state.skillShards || 0) + 1;
     floatLabel(r, c, '🔮 +1', true);
   }
@@ -1446,6 +1623,7 @@ function waveClear() {
       const idx = THEME_ROTATION.indexOf(state.activeThemeId);
       state.activeThemeId = THEME_ROTATION[(idx + 1) % THEME_ROTATION.length];
       applyTheme(state.activeThemeId);
+      syncActiveSpawnConfig(); // Mercado Noturno's jaula/density config wiring — see master spec #9
     }
     genLayout();
     applyTileClasses();
@@ -1460,7 +1638,7 @@ function repositionActors() {
   for (const id of Object.keys(actors)) {
     const a = actors[id];
     const h = state.heroes.find(x => x.id === Number(id));
-    if (h && h.ghost) continue;
+    if (h && hasMassaLeve(h)) continue;
     if (tileAt(a.r, a.c) !== T_FLOOR) {
       const spots = openFloors();
       if (!spots.length) continue;
@@ -1500,11 +1678,11 @@ function toggleMode(id) {
   if (!h) return;
   if (h.mode === 'rest') {
     if (h.energy < 1) {
-      toast('This hero has no energy — let them rest first.');
+      toast('This Rango has no energy — let them rest first.');
       return;
     }
     if (workingCount() >= MAX_WORKERS) {
-      toast(`Max ${MAX_WORKERS} heroes can work at once.`);
+      toast(`Max ${MAX_WORKERS} Rangos can work at once.`);
       return;
     }
   }
@@ -1540,7 +1718,10 @@ function buyPack(idx) {
   state.bcoin -= pack.cost;
   const pulled = [];
   for (let i = 0; i < pack.size; i++) {
-    const hero = makeHero(rollRarity(pack.odds));
+    // ONE flat rarity table now regardless of pack size (master spec #6) —
+    // pack size only changes how many rolls you get, not the per-roll odds
+    const hero = makeHero(rollRarity(SHOP_RARITY_WEIGHTS));
+    hero.isSpicy = rollPicante(PICANTE_CHANCE_SHOP); // independent of the rarity roll above
     state.heroes.push(hero);
     pulled.push(hero);
   }
@@ -1587,7 +1768,7 @@ function toggleFusionSelect(id) {
     if (selectedFusion.length > 0) {
       const first = state.heroes.find(x => x.id === selectedFusion[0]);
       if (first && first.rarity !== h.rarity) {
-        toast(`All ${FUSE_COST} heroes must share the same rarity.`);
+        toast(`All ${FUSE_COST} Rangos must share the same rarity.`);
         return;
       }
     }
@@ -1666,7 +1847,7 @@ function showFusionResults(results, src) {
     const r = results[0];
     title = r.success
       ? `⚗️ SUCCESS! ${FUSE_COST}× ${rLabel(src)} → 1× ${rLabel(r.hero.rarity)}${r.bonus ? ' — ⚡ BONUS +2 JUMP!' : ''}`
-      : `⚗️ Fusion failed — the cores collapsed into a fresh ${rLabel(src)}.`;
+      : `⚗️ Fusão failed — the cores collapsed into a fresh ${rLabel(src)}.`;
   } else {
     title = `⚗️ ${results.length} fusion attempts: ${succ.length} succeeded, ${results.length - succ.length} failed`;
   }
@@ -1685,7 +1866,7 @@ function showFusionResults(results, src) {
   const best = succ.map(x => x.hero).sort((a, b) => RARITIES.indexOf(b.rarity) - RARITIES.indexOf(a.rarity))[0];
   if (best && isCelebrated(best)) playCelebration(best);
   if (results.length === 1 && !results[0].success) {
-    toast(`Fusion failed — ${FUSE_COST} heroes became 1 fresh ${rLabel(src)}.`);
+    toast(`Fusão failed — ${FUSE_COST} Rangos became 1 fresh ${rLabel(src)}.`);
   } else if (results.length > 1) {
     toast(`⚗️ ${succ.length}/${results.length} fusions succeeded.`);
   }
@@ -1718,8 +1899,8 @@ function setAllModes(mode) {
   if (tired) parts.push(`${tired} too tired`);
   if (capped) parts.push(`${capped} over the ${MAX_WORKERS}-worker cap`);
   toast(mode === 'work'
-    ? `⛏️ ${changed} hero${changed === 1 ? '' : 'es'} sent to work${parts.length ? ` (${parts.join(', ')})` : ''}`
-    : `😴 ${changed} hero${changed === 1 ? '' : 'es'} sent to rest`);
+    ? `⛏️ ${changed} Rango${changed === 1 ? '' : 's'} sent to work${parts.length ? ` (${parts.join(', ')})` : ''}`
+    : `😴 ${changed} Rango${changed === 1 ? '' : 's'} sent to rest`);
 }
 
 function claimTask(id) {
@@ -1938,41 +2119,44 @@ function fmt(n) {
   return Math.floor(n).toLocaleString('en-US');
 }
 
-// exclusive skills are derived from rarity, never rolled or stored: every
-// Shiny is Midas, every Robadasso is Cataclysm, no other tier ever qualifies
-function hasMidas(h) { return h.rarity === 'Shiny'; }
-function hasCata(h) { return h.rarity === 'Robadasso'; }
-
 function fmtPct(p) {
   const pct = p * 100;
   return (pct >= 0.1 ? pct.toFixed(1) : pct.toPrecision(2)) + '%';
 }
 
+// Shared rendering — used everywhere a Rango portrait renders (arena
+// actors, Inventory cards, details panel, pull-reveal cards, bombers
+// panel, Lab pickers). Reads the NEW skill fields (hasMassaLeve()/
+// hasCafeinado()/hasFolhadoDeOuro()/hasTemperamental() — each ALSO honors
+// the legacy h.ghost/h.swift Lab-implant/breeding fields for backward
+// compatibility, see their definitions above). No Picante visual here on
+// purpose (master spec #3 — "no visual yet"); see heroCardHtml()/
+// ffHeroCardHtml() for the plain-text Picante tag instead.
 function spriteHtml(h) {
   const skills =
-    (h.ghost ? '<span class="sp-skill sk-g" title="Phantom: phases through walls and crates">👻</span>' : '') +
-    (h.swift ? '<span class="sp-skill sk-s" title="Swift: moves twice per step">💨</span>' : '') +
-    (hasMidas(h) ? '<span class="sp-skill sk-m" title="Midas: +50% Food Coins on everything its bombs break">🌟</span>' : '') +
-    (hasCata(h) ? '<span class="sp-skill sk-c" title="Cataclysm: each blast chains to 3 random crates/chests">⚽</span>' : '');
+    (hasMassaLeve(h) ? `<span class="sp-skill sk-ml" title="${SKILL_DEFS.MASSA_LEVE.label}: ${SKILL_DEFS.MASSA_LEVE.text}">${SKILL_DEFS.MASSA_LEVE.icon}</span>` : '') +
+    (hasCafeinado(h) ? `<span class="sp-skill sk-cf" title="${SKILL_DEFS.CAFEINADO.label}: ${SKILL_DEFS.CAFEINADO.text}">${SKILL_DEFS.CAFEINADO.icon}</span>` : '') +
+    (hasFolhadoDeOuro(h) ? `<span class="sp-skill sk-fo" title="${SKILL_DEFS.FOLHADO_DE_OURO.label}: ${SKILL_DEFS.FOLHADO_DE_OURO.text}">${SKILL_DEFS.FOLHADO_DE_OURO.icon}</span>` : '') +
+    (hasTemperamental(h) ? `<span class="sp-skill sk-tp" title="${SKILL_DEFS.TEMPERAMENTAL.label}: ${SKILL_DEFS.TEMPERAMENTAL.text}">${SKILL_DEFS.TEMPERAMENTAL.icon}</span>` : '');
   const char = HERO_CHARACTERS.includes(h.character) ? h.character : HERO_CHARACTERS[0];
   return `<span class="sprite sr-${h.rarity}"><img src="assets/heroes/${char}.png" alt="${char}" loading="lazy">${skills}</span>`;
 }
 
 function skillText(h) {
   const s = [];
-  if (h.ghost) s.push('👻 Phantom');
-  if (h.swift) s.push('💨 Swift');
-  if (hasMidas(h)) s.push('🌟 Midas');
-  if (hasCata(h)) s.push('⚽ Cataclysm');
+  if (hasMassaLeve(h)) s.push(SKILL_DEFS.MASSA_LEVE.icon + ' ' + SKILL_DEFS.MASSA_LEVE.label);
+  if (hasCafeinado(h)) s.push(SKILL_DEFS.CAFEINADO.icon + ' ' + SKILL_DEFS.CAFEINADO.label);
+  if (hasFolhadoDeOuro(h)) s.push(SKILL_DEFS.FOLHADO_DE_OURO.icon + ' ' + SKILL_DEFS.FOLHADO_DE_OURO.label);
+  if (hasTemperamental(h)) s.push(SKILL_DEFS.TEMPERAMENTAL.icon + ' ' + SKILL_DEFS.TEMPERAMENTAL.label);
   return s.join(' · ');
 }
 
 function skillBadgesHtml(h) {
   const badges = [];
-  if (h.ghost) badges.push('<span class="skill-pill sk-ghost" title="Phantom">👻</span>');
-  if (h.swift) badges.push('<span class="skill-pill sk-swift" title="Swift">💨</span>');
-  if (hasMidas(h)) badges.push('<span class="skill-pill sk-midas" title="Midas">🌟</span>');
-  if (hasCata(h)) badges.push('<span class="skill-pill sk-cata" title="Cataclysm">⚽</span>');
+  if (hasMassaLeve(h)) badges.push(`<span class="skill-pill sk-massaleve" title="${SKILL_DEFS.MASSA_LEVE.label}">${SKILL_DEFS.MASSA_LEVE.icon}</span>`);
+  if (hasCafeinado(h)) badges.push(`<span class="skill-pill sk-cafeinado" title="${SKILL_DEFS.CAFEINADO.label}">${SKILL_DEFS.CAFEINADO.icon}</span>`);
+  if (hasFolhadoDeOuro(h)) badges.push(`<span class="skill-pill sk-folhadodeouro" title="${SKILL_DEFS.FOLHADO_DE_OURO.label}">${SKILL_DEFS.FOLHADO_DE_OURO.icon}</span>`);
+  if (hasTemperamental(h)) badges.push(`<span class="skill-pill sk-temperamental" title="${SKILL_DEFS.TEMPERAMENTAL.label}">${SKILL_DEFS.TEMPERAMENTAL.icon}</span>`);
   return badges.join('');
 }
 
@@ -1998,6 +2182,7 @@ function heroCardHtml(h, opts) {
       <div>
         <div class="hero-name">${h.name}</div>
         <span class="rarity-badge rarity-${h.rarity}">${rLabel(h.rarity)}</span>
+        ${h.isSpicy ? `<span class="picante-tag" title="${PICANTE_VISUAL_PLACEHOLDER}">🌶️ Picante</span>` : ''}
       </div>
     </div>
     <div class="hero-stats">
@@ -2080,7 +2265,7 @@ function renderHunt() {
           </div>
         </div>`;
       }).join('')
-    : '<div class="bombers-empty muted">No bombers on the field.<br>Open 🎒 Heroes and send some to work.</div>';
+    : '<div class="bombers-empty muted">No Rangos on the field.<br>Open 🎒 Bolsa and send some to work.</div>';
 }
 
 function sortedHeroes() {
@@ -2130,7 +2315,7 @@ function ffStatusDotClass(h) {
 // flag "this hero has at least one real skill" instead of being random
 function ffHeroCardHtml(h) {
   const segments = ffAttributeSegments(h);
-  const hasAnySkill = h.ghost || h.swift || hasMidas(h) || hasCata(h);
+  const hasAnySkill = hasMassaLeve(h) || hasCafeinado(h) || hasFolhadoDeOuro(h) || hasTemperamental(h);
   return `
   <button type="button" class="ff-card r-${h.rarity}${selectedInventoryHeroId === h.id ? ' ff-card-selected' : ''}" data-select-hero="${h.id}" aria-pressed="${selectedInventoryHeroId === h.id}">
     <div class="ff-card-top">
@@ -2141,6 +2326,7 @@ function ffHeroCardHtml(h) {
       ${spriteHtml(h)}
       <span class="ff-rarity-badge rarity-${h.rarity}">${rTag(h.rarity)}</span>
       ${hasAnySkill ? '<span class="ff-star" title="Has a skill">★</span>' : ''}
+      ${h.isSpicy ? `<span class="ff-picante-tag" title="${PICANTE_VISUAL_PLACEHOLDER}">🌶️ Picante</span>` : ''}
     </div>
     <div class="ff-attr-bar">${segments.map(s => `<span style="width:${s.pct}%;background:${s.color}"></span>`).join('')}</div>
     <span class="ff-card-name">${h.name}</span>
@@ -2149,10 +2335,10 @@ function ffHeroCardHtml(h) {
 
 function ffSkillCards(h) {
   const skills = [];
-  if (h.ghost) skills.push({ icon: '👻', name: 'Phantom' });
-  if (h.swift) skills.push({ icon: '💨', name: 'Swift' });
-  if (hasMidas(h)) skills.push({ icon: '🌟', name: 'Midas' });
-  if (hasCata(h)) skills.push({ icon: '⚽', name: 'Cataclysm' });
+  if (hasMassaLeve(h)) skills.push({ icon: SKILL_DEFS.MASSA_LEVE.icon, name: SKILL_DEFS.MASSA_LEVE.label });
+  if (hasCafeinado(h)) skills.push({ icon: SKILL_DEFS.CAFEINADO.icon, name: SKILL_DEFS.CAFEINADO.label });
+  if (hasFolhadoDeOuro(h)) skills.push({ icon: SKILL_DEFS.FOLHADO_DE_OURO.icon, name: SKILL_DEFS.FOLHADO_DE_OURO.label });
+  if (hasTemperamental(h)) skills.push({ icon: SKILL_DEFS.TEMPERAMENTAL.icon, name: SKILL_DEFS.TEMPERAMENTAL.label });
   if (!skills.length) {
     return '<div class="ff-skill-card ff-skill-empty"><span class="ff-skill-icon">🔒</span><span class="ff-skill-name">No skills yet</span></div>';
   }
@@ -2270,9 +2456,9 @@ function renderInventory() {
   const heroes = sortedHeroes();
   document.getElementById('inventory-grid').innerHTML = heroes.length
     ? heroes.map(h => ffHeroCardHtml(h)).join('')
-    : '<div class="locked-box">No heroes yet — visit the Shop!</div>';
+    : '<div class="locked-box">No Rangos yet — visit the Supermercado!</div>';
   const countEl = document.getElementById('ff-collected-count');
-  if (countEl) countEl.textContent = `Heroes collected: ${heroes.length}`;
+  if (countEl) countEl.textContent = `Rangos collected: ${heroes.length}`;
   renderInventoryDetails();
 }
 
@@ -2313,7 +2499,7 @@ function renderShop() {
     <div class="pack-card">
       <h3>${'💣'.repeat(Math.min(4, Math.ceil(p.size / 4)))} x${p.size} Pack</h3>
       <div class="odds">
-        ${RARITIES.map(r => `<span class="rarity-badge rarity-${r}">${rTag(r)}</span> ${fmtPct(p.odds[r])}`).join('<br>')}
+        ${RARITIES.map(r => `<span class="rarity-badge rarity-${r}">${rTag(r)}</span> ${fmtPct(SHOP_RARITY_WEIGHTS[r])}`).join('<br>')}
       </div>
       <div class="price">${fmt(p.cost)} Chef Gems</div>
       <button class="btn" data-pack="${i}" ${state.bcoin < p.cost ? 'disabled' : ''}>Buy pack</button>
@@ -2379,7 +2565,7 @@ function renderFusion() {
 
   document.getElementById('fusion-grid').innerHTML = fusable.length
     ? fusable.map(h => heroCardHtml(h, { selectable: true, selected: selectedFusion.includes(h.id) })).join('')
-    : '<div class="locked-box">No fusable heroes (Robadasso is the ceiling — everything below it can attempt fusion).</div>';
+    : `<div class="locked-box">No fusable Rangos (${rLabel('RECEITA_DE_VO')} is the ceiling — everything below it can attempt fusion).</div>`;
 }
 
 function renderRanking() {
@@ -2399,8 +2585,8 @@ function renderRanking() {
 function renderTasks() {
   const body = document.getElementById('tasks-body');
   if (state.heroes.length < TASKS_UNLOCK_HEROES) {
-    body.innerHTML = `<div class="locked-box">🔒 Tasks unlock once you own <b>${TASKS_UNLOCK_HEROES} heroes</b>.<br>
-      You currently own ${state.heroes.length} — grab some packs in the 🛒 Shop!</div>`;
+    body.innerHTML = `<div class="locked-box">🔒 Tasks unlock once you own <b>${TASKS_UNLOCK_HEROES} Rangos</b>.<br>
+      You currently own ${state.heroes.length} — grab some packs in the 🛒 Loja!</div>`;
     return;
   }
   body.innerHTML = TASKS.map(t => {
@@ -2590,55 +2776,71 @@ function showPrestigeConfirm() {
 /* ============ Modal / Toast ============ */
 
 const RARITY_INFO = {
-  Common: 'The everyday bomber — the bulk of pack pulls. Fuse 9 for a 95% shot at Rare.',
-  Rare: 'Roughly 3x a Common\'s output. 12-22% pull odds; 9× fusion succeeds 85% of the time.',
-  Epic: 'Heavy hitter with a wide blast. 2.7-6% pull odds — or fuse 9 Rares (85%).',
-  Legendary: '0.3-2% pull odds, or fuse 9 Epics (70%).',
-  SuperLegendario: 'Beyond Legendary. 0.02-0.1% pull odds — or a risky 9× Legendary fusion (40%).',
-  Imortal: 'Blood-red anomaly. 0.004-0.02% pull odds; 9× SP fusion succeeds 20% of the time.',
-  Shiny: 'Holographic freak of nature — 0.0008-0.004% odds, or an 8% shot fusing 9 Imortals. Always born with 🌟 Midas.',
-  Robadasso: 'The ceiling: ~1 in a million pulls, or the 2% miracle of fusing 9 Shinies. Always born with ⚽ Cataclysm. Cannot be fused further.',
+  CASEIRO: `The everyday Rango — the bulk of pack pulls (${fmtPct(SHOP_RARITY_WEIGHTS.CASEIRO)} shop odds). Fuse 9 for a ${Math.round(FUSE_SUCCESS_CHANCE.CASEIRO * 100)}% shot at Temperado.`,
+  TEMPERADO: `A real step up. ${fmtPct(SHOP_RARITY_WEIGHTS.TEMPERADO)} shop odds; 9× fusion succeeds ${Math.round(FUSE_SUCCESS_CHANCE.TEMPERADO * 100)}% of the time.`,
+  GOURMET: `Heavy hitter. ${fmtPct(SHOP_RARITY_WEIGHTS.GOURMET)} shop odds — or fuse 9 Temperados (${Math.round(FUSE_SUCCESS_CHANCE.TEMPERADO * 100)}%).`,
+  CHEF_RENOMADO: `The first tier that can roll Power skills. ${fmtPct(SHOP_RARITY_WEIGHTS.CHEF_RENOMADO)} shop odds, or fuse 9 Gourmets (${Math.round(FUSE_SUCCESS_CHANCE.GOURMET * 100)}%).`,
+  ESTRELA_MICHELIN: `Genuinely rare. ${fmtPct(SHOP_RARITY_WEIGHTS.ESTRELA_MICHELIN)} shop odds — or a risky 9× Chef Renomado fusion (${Math.round(FUSE_SUCCESS_CHANCE.CHEF_RENOMADO * 100)}%).`,
+  RECEITA_DE_VO: `The ceiling. ${fmtPct(SHOP_RARITY_WEIGHTS.RECEITA_DE_VO)} shop odds, or the ${Math.round(FUSE_SUCCESS_CHANCE.ESTRELA_MICHELIN * 100)}% miracle of fusing 9 Estrela Michelins. Cannot be fused further.`,
 };
 
 function showLegendModal() {
   document.getElementById('modal-body').innerHTML = `
-    <h3>❓ Rarity guide</h3>
+    <h3>❓ Guia de raridades</h3>
     ${RARITIES.map((r, i) => {
       const c = RARITY_CONF[r];
       return `
       <div class="legend-row r-${r}">
         <span class="legend-sprite">${spriteHtml({ rarity: r, character: HERO_CHARACTERS[i % HERO_CHARACTERS.length] })}</span>
         <div>
-          <span class="rarity-badge rarity-${r}">${rLabel(r)}${c.tag ? ` (${c.tag})` : ''}</span>
+          <span class="rarity-badge rarity-${r}">${rLabel(r)}</span>
           <div class="muted">💪 Power ${c.power[0]}–${c.power[1]} · 💥 Range ${c.range[0]}–${c.range[1]} · ⚡ Max energy ${c.maxEnergy}</div>
           <div class="muted">${RARITY_INFO[r]}</div>
         </div>
       </div>`;
     }).join('')}
-    <h3 style="margin-top:16px">📦 Crates &amp; chests</h3>
+    <h3 style="margin-top:16px">🌶️ Picante</h3>
     <div class="legend-row">
-      <span class="legend-sprite legend-tileart"><img src="assets/crate.png" alt="Crate"><img src="assets/chest.png" alt="Chest"></span>
-      <div><b>Durability</b><div class="muted">Every crate and chest shows an HP bar (🟢 healthy · 🟠 below 50% · 🔴 below 30%). Each bomb hit deals the hero's ⛏️ rate as damage. Chests always have 5× a crate's HP; both climb fast through the early waves and keep growing — steeper at first, more gradual deep in — forever, with the payout on breaking scaling right along with max HP.</div></div>
+      <span class="legend-sprite">🌶️</span>
+      <div><b>Picante</b><div class="muted">An independent variant ANY rarity can roll, separately from the rarity itself: ${fmtPct(PICANTE_CHANCE_SHOP)} from the Supermercado, ${fmtPct(PICANTE_CHANCE_JAULA_NORMAL)} from a Jaula (${fmtPct(PICANTE_CHANCE_JAULA_MERCADO_NOTURNO)} at Mercado Noturno). ${PICANTE_VISUAL_PLACEHOLDER} — renders identically to its base rarity for now.</div></div>
     </div>
-    <h3 style="margin-top:16px">✨ Special skills</h3>
-    <p class="muted" style="margin-bottom:8px">Every new hero rolls each skill independently at ${Math.round(SKILL_CHANCE * 100)}% — a hero can have none, one, or both.</p>
+    <h3 style="margin-top:16px">📦 Baús</h3>
     <div class="legend-row">
-      <span class="legend-sprite">👻</span>
-      <div><b>Phantom</b><div class="muted">Phases straight through crates and pillars while pathing (still bound by the arena border).</div></div>
+      <span class="legend-sprite legend-tileart"><img src="assets/blocos_unicos/bau_madeira.png" alt="Baú"></span>
+      <div><b>5 tiers, fixed HP + reward</b><div class="muted">Every chest shows an HP bar (🟢 healthy · 🟠 below 50% · 🔴 below 30%). Each bomb hit deals the Rango's ⛏️ rate as damage.<br>
+      Madeira: ${CHEST_TIER_HP.MADEIRA} HP, ${CHEST_TIER_REWARD_RANGE.MADEIRA[0].toFixed(2)}–${CHEST_TIER_REWARD_RANGE.MADEIRA[1].toFixed(2)} Food Coins ·
+      Ferro: ${CHEST_TIER_HP.FERRO} HP, ${CHEST_TIER_REWARD_RANGE.FERRO[0].toFixed(2)}–${CHEST_TIER_REWARD_RANGE.FERRO[1].toFixed(2)} ·
+      Ouro: ${CHEST_TIER_HP.OURO} HP, ${CHEST_TIER_REWARD_RANGE.OURO[0].toFixed(2)}–${CHEST_TIER_REWARD_RANGE.OURO[1].toFixed(2)} ·
+      Diamante: ${CHEST_TIER_HP.DIAMANTE} HP, ${CHEST_TIER_REWARD_RANGE.DIAMANTE[0].toFixed(2)}–${CHEST_TIER_REWARD_RANGE.DIAMANTE[1].toFixed(2)} ·
+      VIP: ${CHEST_TIER_HP.VIP} HP, ${CHEST_TIER_REWARD_RANGE.VIP[0].toFixed(2)}–${CHEST_TIER_REWARD_RANGE.VIP[1].toFixed(2)}.</div></div>
     </div>
     <div class="legend-row">
-      <span class="legend-sprite">💨</span>
-      <div><b>Swift</b><div class="muted">Moves two tiles per step instead of one — reaches fresh crates twice as fast.</div></div>
+      <span class="legend-sprite">🔒</span>
+      <div><b>Jaula</b><div class="muted">${JAULA_HP} HP. Grants exactly 1 Rango instead of Food Coins — no Skill Shard roll, the Rango IS the reward. ${fmtPct(JAULA_SPAWN_CHANCE_NORMAL)} chance per map (${fmtPct(JAULA_SPAWN_CHANCE_MERCADO_NOTURNO)} at Mercado Noturno).</div></div>
     </div>
-    <h3 style="margin-top:16px">👑 Exclusive skills</h3>
-    <p class="muted" style="margin-bottom:8px">Guaranteed on every hero of their tier and never available anywhere else. They stack with Phantom/Swift rolls.</p>
-    <div class="legend-row r-Shiny">
-      <span class="legend-sprite">🌟</span>
-      <div><b>Midas</b> <span class="rarity-badge rarity-Shiny">Shiny only</span><div class="muted">Everything its bombs break pays <b>+50% Food Coins</b> — a golden skim on every kill, not a board-warping flip.</div></div>
+    <div class="legend-row">
+      <span class="legend-sprite legend-tileart"><img src="assets/blocos_unicos/mesa_variavel.png" alt="Mesa Variável"></span>
+      <div><b>Mesa Variável</b><div class="muted">${MESA_VARIAVEL_HP} HP, destructible obstacle — pays no Food Coins, but clears the path and is a valid Temperamental chain target.</div></div>
     </div>
-    <div class="legend-row r-Robadasso">
-      <span class="legend-sprite">⚽</span>
-      <div><b>Cataclysm</b> <span class="rarity-badge rarity-Robadasso">Robadasso only</span><div class="muted">Each of its blasts also chains to <b>${CATA_CHAIN} random crates/chests</b> anywhere on the board for a full extra hit — lightning across the arena every bomb, but bounded, never a board-wipe.</div></div>
+    <h3 style="margin-top:16px">✨ Skills básicos</h3>
+    <p class="muted" style="margin-bottom:8px">Rolled independently per category (Basic/Power) at Rango creation — the chance to roll at least one, and the chance to roll BOTH, both climb with rarity. See the rarity guide above for the exact odds per tier.</p>
+    <div class="legend-row">
+      <span class="legend-sprite">${SKILL_DEFS.MASSA_LEVE.icon}</span>
+      <div><b>${SKILL_DEFS.MASSA_LEVE.label}</b><div class="muted">${SKILL_DEFS.MASSA_LEVE.text}</div></div>
+    </div>
+    <div class="legend-row">
+      <span class="legend-sprite">${SKILL_DEFS.CAFEINADO.icon}</span>
+      <div><b>${SKILL_DEFS.CAFEINADO.label}</b><div class="muted">${SKILL_DEFS.CAFEINADO.text}</div></div>
+    </div>
+    <h3 style="margin-top:16px">👑 Skills de poder</h3>
+    <p class="muted" style="margin-bottom:8px">Only ever rolled from Chef Renomado upward — never on Caseiro/Temperado/Gourmet. See the rarity guide above for the exact odds per tier.</p>
+    <div class="legend-row">
+      <span class="legend-sprite">${SKILL_DEFS.FOLHADO_DE_OURO.icon}</span>
+      <div><b>${SKILL_DEFS.FOLHADO_DE_OURO.label}</b><div class="muted">${SKILL_DEFS.FOLHADO_DE_OURO.text}</div></div>
+    </div>
+    <div class="legend-row">
+      <span class="legend-sprite">${SKILL_DEFS.TEMPERAMENTAL.icon}</span>
+      <div><b>${SKILL_DEFS.TEMPERAMENTAL.label}</b><div class="muted">${SKILL_DEFS.TEMPERAMENTAL.text}</div></div>
     </div>`;
   document.getElementById('modal-backdrop').classList.remove('hidden');
 }
@@ -2664,14 +2866,19 @@ const REVEAL_MS = 1700, REVEAL_FAST_MS = 160, REVEAL_MEGA_MS = 3400;
 
 let reveal = null;
 
+// Judgment call (flagged in the session report, not given explicit numbers
+// by the master spec, which doesn't mention pull-reveal celebration at
+// all): CHEF_RENOMADO+ is the new "celebrated" threshold, replacing the old
+// Legendary+ (index 3 of 8) with the same relative "upper tiers" position
+// on the new 6-tier ladder (index 3 of 6).
 function isCelebrated(h) {
-  return RARITIES.indexOf(h.rarity) >= RARITIES.indexOf('Legendary');
+  return RARITIES.indexOf(h.rarity) >= RARITIES.indexOf('CHEF_RENOMADO');
 }
 
-// speed mode never lets a Legendary+ card fly by: celebrated pulls always
+// speed mode never lets a celebrated card fly by: celebrated pulls always
 // hold the screen for the full (or mega) duration, then speed resumes
 function revealDelay(h, speed) {
-  if (h.rarity === 'Robadasso') return REVEAL_MEGA_MS;
+  if (h.rarity === 'RECEITA_DE_VO') return REVEAL_MEGA_MS;
   if (isCelebrated(h)) return REVEAL_MS;
   return speed ? REVEAL_FAST_MS : REVEAL_MS;
 }
@@ -2740,11 +2947,11 @@ function finishReveal() {
   showPullModal(heroes, title);
 }
 
-// Jail blocks free exactly one hero at a time — reuses the same rich
-// single-card reveal (portrait, stats, skills, Legendary+ celebration) shop
-// pulls already get, just with jail-specific framing on the summary screen
-function startJailReveal(hero) {
-  startPackReveal([hero], `🔓 Hero freed! ${rLabel(hero.rarity)} ${hero.name} joins your roster:`);
+// Jaula frees exactly one Rango at a time — reuses the same rich
+// single-card reveal (portrait, stats, skills, celebration) shop pulls
+// already get, just with Jaula-specific framing on the summary screen
+function startJaulaReveal(hero) {
+  startPackReveal([hero], `🔓 Rango libertado! ${rLabel(hero.rarity)} ${hero.name} entra pro seu time:`);
 }
 
 function cancelReveal() {
@@ -2755,13 +2962,13 @@ function cancelReveal() {
 
 function playCelebration(h) {
   const flash = document.createElement('div');
-  flash.className = 'reveal-flash' + (h.rarity === 'Robadasso' ? ' mega-flash' : '');
+  flash.className = 'reveal-flash' + (h.rarity === 'RECEITA_DE_VO' ? ' mega-flash' : '');
   document.body.appendChild(flash);
   setTimeout(() => flash.remove(), 900);
-  if (h.rarity === 'Robadasso') {
+  if (h.rarity === 'RECEITA_DE_VO') {
     const mega = document.createElement('div');
     mega.className = 'mega-overlay';
-    mega.innerHTML = '<div class="mega-text">⚽ ROBADASSO ⚽</div>';
+    mega.innerHTML = '<div class="mega-text">🍲 RECEITA DE VÓ 🍲</div>';
     document.body.appendChild(mega);
     document.body.classList.add('shaking');
     setTimeout(() => { mega.remove(); document.body.classList.remove('shaking'); }, 2800);

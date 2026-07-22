@@ -536,14 +536,14 @@ main {
   padding: 9px 10px;
   margin-bottom: 8px;
 }
-.bomber-item.r-Common { border-left-color: var(--c-common); }
-.bomber-item.r-Rare { border-left-color: var(--c-rare); }
-.bomber-item.r-Epic { border-left-color: var(--c-epic); }
-.bomber-item.r-Legendary { border-left-color: var(--c-legendary); }
-.bomber-item.r-SuperLegendario { border-left-color: var(--c-sp); }
-.bomber-item.r-Imortal { border-left-color: var(--c-im); }
-.bomber-item.r-Shiny { border-left-color: #b388ff; }
-.bomber-item.r-Robadasso { border-left-color: var(--c-im); }
+.bomber-item.r-CASEIRO { border-left-color: var(--c-common); }
+.bomber-item.r-TEMPERADO { border-left-color: var(--c-rare); }
+.bomber-item.r-GOURMET { border-left-color: var(--c-epic); }
+.bomber-item.r-CHEF_RENOMADO { border-left-color: var(--c-legendary); }
+.bomber-item.r-ESTRELA_MICHELIN { border-left-color: var(--c-sp); }
+.bomber-item.r-ESTRELA_MICHELIN { border-left-color: var(--c-im); }
+.bomber-item.r-RECEITA_DE_VO { border-left-color: #b388ff; }
+.bomber-item.r-RECEITA_DE_VO { border-left-color: var(--c-im); }
 .bomber-sprite { font-size: 1.9rem; line-height: 1; flex: none; margin-top: 1px; }
 .bomber-info { flex: 1; min-width: 0; }
 .bomber-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px; }
@@ -697,18 +697,37 @@ main {
 .actor {
   /* Sized to the FULL tile and positioned at the tile's exact top-left
      corner (no fractional-offset math) — the .sprite child (1em x 1em,
-     i.e. 0.78 x tileSize via the font-size below) is centered inside by
-     flexbox, not by hand-tuned translate offsets. Flex centering is exact
-     regardless of inline-box/line-height metrics, which is what made the
-     old shrink-to-fit + magic-fraction approach fragile and asymmetric. */
+     i.e. --hero-scale x tileSize via the font-size below) is centered
+     inside by flexbox, not by hand-tuned translate offsets. Flex centering
+     is exact regardless of inline-box/line-height metrics, which is what
+     made the old shrink-to-fit + magic-fraction approach fragile and
+     asymmetric.
+     --hero-scale is the single knob for sprite size relative to the tile —
+     intentionally > 1 (sprite bigger than its own tile) per the user's
+     ask; bump this ONE number (e.g. to 1.5) to iterate instead of hunting
+     for a hardcoded value in multiple places. Safe to exceed 1: .actor
+     itself has no overflow restriction, nor does #arena or #arena-frame
+     (only #arena-wrap, well outside .actor, clips) — so the oversized
+     .sprite is free to visually spill into neighboring tile space. */
+  --hero-scale: 1.9;
   position: absolute;
   z-index: 4;
   width: var(--ts, 44px);
   height: var(--ts, 44px);
   display: flex;
-  align-items: center;
+  /* flex-end (not center): pins the .sprite child's BOTTOM edge to the
+     bottom of .actor's own box (exactly one tile tall) — as --hero-scale
+     grows the sprite, it extends UPWARD from that fixed bottom anchor
+     instead of growing symmetrically above AND below, so a hero reads as
+     "standing on this tile" rather than floating over the tile beneath it.
+     .actor is display:flex with the default row direction, so align-items
+     controls the CROSS axis (vertical) — flex-end there means the
+     cross-end (bottom) edges of container and child align. justify-content
+     stays centered: that's the MAIN axis (horizontal) in a row container,
+     and horizontal bleed is explicitly fine to stay symmetric left/right. */
+  align-items: flex-end;
   justify-content: center;
-  font-size: calc(var(--ts, 44px) * 0.78);
+  font-size: calc(var(--ts, 44px) * var(--hero-scale));
   transition: transform 0.45s linear;
   pointer-events: none;
 }
@@ -804,21 +823,34 @@ main {
   border-radius: 10px;
   color: #14110d;
 }
-.rarity-Common { background: var(--c-common); }
-.rarity-Rare { background: var(--c-rare); }
-.rarity-Epic { background: var(--c-epic); color: #fff; }
-.rarity-Legendary { background: var(--c-legendary); }
-.rarity-SuperLegendario {
+/* Picante (master spec #3): a plain TEXT tag only, deliberately no aura/
+   shader/recoloring on the sprite itself — "no visual yet" per the spec. */
+.picante-tag, .ff-picante-tag {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 8px;
+  margin-left: 4px;
+  background: rgba(255, 87, 34, 0.18);
+  color: #ff7043;
+  border: 1px solid rgba(255, 112, 67, 0.4);
+}
+.rarity-CASEIRO { background: var(--c-common); }
+.rarity-TEMPERADO { background: var(--c-rare); }
+.rarity-GOURMET { background: var(--c-epic); color: #fff; }
+.rarity-CHEF_RENOMADO { background: var(--c-legendary); }
+.rarity-ESTRELA_MICHELIN {
   background: linear-gradient(105deg, #ffea00, #fff59d, #ffd600);
   box-shadow: 0 0 8px rgba(255, 234, 0, 0.7);
 }
-.rarity-Imortal { background: var(--c-im); color: #fff; box-shadow: 0 0 8px rgba(255, 23, 68, 0.6); }
-.rarity-Shiny {
+.rarity-ESTRELA_MICHELIN { background: var(--c-im); color: #fff; box-shadow: 0 0 8px rgba(255, 23, 68, 0.6); }
+.rarity-RECEITA_DE_VO {
   background: linear-gradient(90deg, #ff5252, #ffb300, #ffee58, #69f0ae, #40c4ff, #b388ff, #ff5252);
   background-size: 300% 100%;
   animation: holoSlide 2.5s linear infinite;
 }
-.rarity-Robadasso {
+.rarity-RECEITA_DE_VO {
   background: linear-gradient(105deg, #d50000, #1a0000, #ff1744, #000, #d50000);
   background-size: 300% 100%;
   animation: holoSlide 1.6s linear infinite;
@@ -830,18 +862,18 @@ main {
   to { background-position: 300% 50%; }
 }
 
-.hero-card.r-Common { border-left: 4px solid var(--c-common); }
-.hero-card.r-Rare { border-left: 4px solid var(--c-rare); }
-.hero-card.r-Epic { border-left: 4px solid var(--c-epic); }
-.hero-card.r-Legendary { border-left: 4px solid var(--c-legendary); }
-.hero-card.r-SuperLegendario { border-left: 4px solid var(--c-sp); box-shadow: 0 0 12px rgba(255, 234, 0, 0.25); }
-.hero-card.r-Imortal { border-left: 4px solid var(--c-im); box-shadow: 0 0 12px rgba(255, 23, 68, 0.25); }
-.hero-card.r-Shiny { border-left: 4px solid #b388ff; }
-.hero-card.r-Robadasso { border-left: 4px solid var(--c-im); }
-.hero-card.r-Shiny, .bomber-item.r-Shiny, .legend-row.r-Shiny, .reveal-card.r-Shiny {
+.hero-card.r-CASEIRO { border-left: 4px solid var(--c-common); }
+.hero-card.r-TEMPERADO { border-left: 4px solid var(--c-rare); }
+.hero-card.r-GOURMET { border-left: 4px solid var(--c-epic); }
+.hero-card.r-CHEF_RENOMADO { border-left: 4px solid var(--c-legendary); }
+.hero-card.r-ESTRELA_MICHELIN { border-left: 4px solid var(--c-sp); box-shadow: 0 0 12px rgba(255, 234, 0, 0.25); }
+.hero-card.r-ESTRELA_MICHELIN { border-left: 4px solid var(--c-im); box-shadow: 0 0 12px rgba(255, 23, 68, 0.25); }
+.hero-card.r-RECEITA_DE_VO { border-left: 4px solid #b388ff; }
+.hero-card.r-RECEITA_DE_VO { border-left: 4px solid var(--c-im); }
+.hero-card.r-RECEITA_DE_VO, .bomber-item.r-RECEITA_DE_VO, .legend-row.r-RECEITA_DE_VO, .reveal-card.r-RECEITA_DE_VO {
   animation: shinyBorder 3s linear infinite;
 }
-.hero-card.r-Robadasso, .bomber-item.r-Robadasso, .legend-row.r-Robadasso, .reveal-card.r-Robadasso {
+.hero-card.r-RECEITA_DE_VO, .bomber-item.r-RECEITA_DE_VO, .legend-row.r-RECEITA_DE_VO, .reveal-card.r-RECEITA_DE_VO {
   animation: robaBorder 1.1s ease-in-out infinite alternate;
 }
 @keyframes shinyBorder {
@@ -944,14 +976,14 @@ select {
   padding: 10px 14px;
   margin-bottom: 8px;
 }
-.legend-row.r-Common { border-left-color: var(--c-common); }
-.legend-row.r-Rare { border-left-color: var(--c-rare); }
-.legend-row.r-Epic { border-left-color: var(--c-epic); }
-.legend-row.r-Legendary { border-left-color: var(--c-legendary); }
-.legend-row.r-SuperLegendario { border-left-color: var(--c-sp); }
-.legend-row.r-Imortal { border-left-color: var(--c-im); }
-.legend-row.r-Shiny { border-left-color: #b388ff; }
-.legend-row.r-Robadasso { border-left-color: var(--c-im); }
+.legend-row.r-CASEIRO { border-left-color: var(--c-common); }
+.legend-row.r-TEMPERADO { border-left-color: var(--c-rare); }
+.legend-row.r-GOURMET { border-left-color: var(--c-epic); }
+.legend-row.r-CHEF_RENOMADO { border-left-color: var(--c-legendary); }
+.legend-row.r-ESTRELA_MICHELIN { border-left-color: var(--c-sp); }
+.legend-row.r-ESTRELA_MICHELIN { border-left-color: var(--c-im); }
+.legend-row.r-RECEITA_DE_VO { border-left-color: #b388ff; }
+.legend-row.r-RECEITA_DE_VO { border-left-color: var(--c-im); }
 .legend-row .legend-sprite { font-size: 2.4rem; line-height: 1; }
 .legend-row .legend-tileart { display: flex; gap: 6px; }
 .legend-row .legend-tileart img { width: 2rem; height: 2rem; object-fit: contain; }
@@ -1055,18 +1087,38 @@ select {
    still defined here since card accents / the arena aura / badges all key
    off it. */
 
+/* flex-shrink: 0 is the actual fix behind the "--hero-scale doesn't visibly
+   grow the hero" mystery (checked 1.35, then 2.0, then 6.0 — none of them
+   visibly changed anything despite DevTools confirming the font-size calc()
+   itself resolved correctly every time). Root cause: .actor is `display:
+   flex` and .sprite is its only child, which makes .sprite an automatic
+   FLEX ITEM — and flex-shrink's initial value is 1 for every flex item
+   unless told otherwise. Once --hero-scale pushed .sprite's preferred size
+   (1em, i.e. font-size, which now exceeds .actor's own tile-sized width/
+   height) past its flex container's available space, the browser's default
+   flex-shrink behavior silently shrank .sprite back down toward .actor's
+   own box size on every layout pass — completely independent of whatever
+   font-size the custom property correctly computed to. This is why the
+   COMPUTED font-size checked out fine in DevTools (that calculation was
+   never the problem) while the PAINTED size stayed roughly tile-sized
+   regardless of the multiplier: flex-shrink was silently re-clamping it
+   after the fact, every time, for every value tried. This bug was latent
+   from the start (a flex item with a fixed width/height always had
+   flex-shrink:1 applied) but only became visible once --hero-scale pushed
+   past 1.0 — before that, .sprite's size (0.78 x tile) never exceeded its
+   container, so there was nothing to shrink and no reason to have noticed. */
 .sprite {
   position: relative; display: inline-block; width: 1em; height: 1em; vertical-align: middle;
+  flex-shrink: 0;
 }
 .sprite img { width: 100%; height: 100%; object-fit: contain; display: block; }
-.sr-Common { --rc: var(--c-common); }
-.sr-Rare { --rc: var(--c-rare); }
-.sr-Epic { --rc: var(--c-epic); }
-.sr-Legendary { --rc: var(--c-legendary); }
-.sr-SuperLegendario { --rc: var(--c-sp); }
-.sr-Imortal { --rc: var(--c-im); }
-.sr-Shiny { --rc: #b388ff; }
-.sr-Robadasso { --rc: var(--c-im); }
+.sr-CASEIRO { --rc: var(--c-common); }
+.sr-TEMPERADO { --rc: var(--c-rare); }
+.sr-GOURMET { --rc: var(--c-epic); }
+.sr-CHEF_RENOMADO { --rc: var(--c-legendary); }
+.sr-ESTRELA_MICHELIN { --rc: var(--c-sp); }
+.sr-ESTRELA_MICHELIN { --rc: var(--c-im); }
+.sr-RECEITA_DE_VO { --rc: var(--c-im); }
 
 /* Arena-only aura: a soft blurred glow following the portrait's silhouette
    (drop-shadow respects PNG alpha, unlike box-shadow), not a hard ring.
@@ -1076,21 +1128,20 @@ select {
 .actor .sprite img {
   filter: drop-shadow(0 0 0.1em var(--rc)) drop-shadow(0 0 0.28em var(--rc));
 }
-.actor .sr-SuperLegendario img {
+.actor .sr-ESTRELA_MICHELIN img {
   filter: drop-shadow(0 0 0.12em var(--c-sp)) drop-shadow(0 0 0.36em rgba(255, 234, 0, 0.7));
 }
-.actor .sr-Imortal img {
+.actor .sr-ESTRELA_MICHELIN img {
   filter: drop-shadow(0 0 0.12em var(--c-im)) drop-shadow(0 0 0.36em rgba(255, 23, 68, 0.6));
 }
-.actor .sr-Shiny img { animation: auraHolo 2.5s linear infinite; }
-@keyframes auraHolo {
-  0% { filter: drop-shadow(0 0 0.14em #ff5252) drop-shadow(0 0 0.36em #ff5252); }
-  25% { filter: drop-shadow(0 0 0.14em #ffee58) drop-shadow(0 0 0.36em #ffee58); }
-  50% { filter: drop-shadow(0 0 0.14em #69f0ae) drop-shadow(0 0 0.36em #69f0ae); }
-  75% { filter: drop-shadow(0 0 0.14em #40c4ff) drop-shadow(0 0 0.36em #40c4ff); }
-  100% { filter: drop-shadow(0 0 0.14em #ff5252) drop-shadow(0 0 0.36em #ff5252); }
-}
-.actor .sr-Robadasso img { animation: auraRoba 1.2s ease-in-out infinite alternate; }
+/* the old Shiny-specific holo-aura (.sr-Shiny, @keyframes auraHolo) is
+   REMOVED entirely per master spec #3/terminology — Shiny no longer exists
+   as a rarity, and its aura is deliberately NOT repurposed for Picante
+   (which gets no special visual treatment yet) or kept alive under a new
+   name. RECEITA_DE_VO (the tier that absorbs old Shiny+Robadasso) keeps
+   only the OLD Robadasso-derived aura below, which was never called out
+   for removal. */
+.actor .sr-RECEITA_DE_VO img { animation: auraRoba 1.2s ease-in-out infinite alternate; }
 @keyframes auraRoba {
   from { filter: drop-shadow(0 0 0.14em #ff1744) drop-shadow(0 0 0.36em rgba(213, 0, 0, 0.7)); }
   to { filter: drop-shadow(0 0 0.08em #200000) drop-shadow(0 0 0.44em rgba(0, 0, 0, 0.85)) brightness(1.15); }
@@ -1105,9 +1156,17 @@ select {
   text-shadow: 0 1px 2px #000;
   z-index: 2;
 }
-.sp-skill.sk-s { right: auto; left: -10%; }
-.sp-skill.sk-m { top: auto; bottom: -10%; right: -12%; }
-.sp-skill.sk-c { top: auto; bottom: -10%; right: auto; left: -12%; }
+.sp-skill.sk-cf { right: auto; left: -10%; }
+.sp-skill.sk-fo { top: auto; bottom: -10%; right: -12%; }
+.sp-skill.sk-tp { top: auto; bottom: -10%; right: auto; left: -12%; }
+/* Live arena only: hide the skill badges during gameplay (per the user's
+   ask), while every OTHER context that reuses the same spriteHtml() output
+   (Inventory cards, the details panel, pull-reveal cards, the bombers side
+   panel, Lab pickers) keeps showing them normally. Scoped by ancestor
+   rather than touching spriteHtml() itself — that function is shared by
+   every one of those contexts, so stripping the spans there would hide
+   them everywhere, not just the arena. */
+.actor .sp-skill { display: none; }
 
 /* ===== Pack reveal ===== */
 
@@ -1124,14 +1183,14 @@ select {
   cursor: pointer;
   animation: cardIn 0.3s ease;
 }
-.reveal-card.r-Common { border-color: var(--c-common); }
-.reveal-card.r-Rare { border-color: var(--c-rare); }
-.reveal-card.r-Epic { border-color: var(--c-epic); }
-.reveal-card.r-Legendary { border-color: var(--c-legendary); }
-.reveal-card.r-SuperLegendario { border-color: var(--c-sp); }
-.reveal-card.r-Imortal { border-color: var(--c-im); }
-.reveal-card.r-Shiny { border-color: #b388ff; }
-.reveal-card.r-Robadasso { border-color: var(--c-im); }
+.reveal-card.r-CASEIRO { border-color: var(--c-common); }
+.reveal-card.r-TEMPERADO { border-color: var(--c-rare); }
+.reveal-card.r-GOURMET { border-color: var(--c-epic); }
+.reveal-card.r-CHEF_RENOMADO { border-color: var(--c-legendary); }
+.reveal-card.r-ESTRELA_MICHELIN { border-color: var(--c-sp); }
+.reveal-card.r-ESTRELA_MICHELIN { border-color: var(--c-im); }
+.reveal-card.r-RECEITA_DE_VO { border-color: #b388ff; }
+.reveal-card.r-RECEITA_DE_VO { border-color: var(--c-im); }
 @keyframes cardIn {
   from { transform: scale(0.5) rotateY(120deg); opacity: 0; }
   to { transform: scale(1) rotateY(0); opacity: 1; }
@@ -1250,14 +1309,14 @@ body.shaking { animation: bodyShake 0.5s ease-in-out 2; }
 #modal .pull-item.fuse-fail { opacity: 0.55; filter: saturate(0.6); }
 /* portrait itself is unframed now — the reveal card's own left border
    carries the rarity signal, same convention as hero-card/bomber-item/legend-row */
-#modal .pull-item.r-Common { border-left-color: var(--c-common); }
-#modal .pull-item.r-Rare { border-left-color: var(--c-rare); }
-#modal .pull-item.r-Epic { border-left-color: var(--c-epic); }
-#modal .pull-item.r-Legendary { border-left-color: var(--c-legendary); }
-#modal .pull-item.r-SuperLegendario { border-left-color: var(--c-sp); }
-#modal .pull-item.r-Imortal { border-left-color: var(--c-im); }
-#modal .pull-item.r-Shiny { border-left-color: #b388ff; animation: shinyBorder 3s linear infinite; }
-#modal .pull-item.r-Robadasso { border-left-color: var(--c-im); animation: robaBorder 1.1s ease-in-out infinite alternate; }
+#modal .pull-item.r-CASEIRO { border-left-color: var(--c-common); }
+#modal .pull-item.r-TEMPERADO { border-left-color: var(--c-rare); }
+#modal .pull-item.r-GOURMET { border-left-color: var(--c-epic); }
+#modal .pull-item.r-CHEF_RENOMADO { border-left-color: var(--c-legendary); }
+#modal .pull-item.r-ESTRELA_MICHELIN { border-left-color: var(--c-sp); }
+#modal .pull-item.r-ESTRELA_MICHELIN { border-left-color: var(--c-im); }
+#modal .pull-item.r-RECEITA_DE_VO { border-left-color: #b388ff; animation: shinyBorder 3s linear infinite; }
+#modal .pull-item.r-RECEITA_DE_VO { border-left-color: var(--c-im); animation: robaBorder 1.1s ease-in-out infinite alternate; }
 
 #toast {
   position: fixed;
@@ -1423,21 +1482,21 @@ body.shaking { animation: bodyShake 0.5s ease-in-out 2; }
 /* Rarity signal lives on the CARD now (inset ring color), not on the
    portrait — the image itself renders with no frame at all. Reuses the same
    --c-* rarity color tokens the rest of the game already uses. */
-.ff-card.r-Common { box-shadow: 0 0 0 3px var(--c-common) inset, var(--ff-shadow-hard); }
-.ff-card.r-Rare { box-shadow: 0 0 0 3px var(--c-rare) inset, var(--ff-shadow-hard); }
-.ff-card.r-Epic { box-shadow: 0 0 0 3px var(--c-epic) inset, var(--ff-shadow-hard); }
-.ff-card.r-Legendary { box-shadow: 0 0 0 3px var(--c-legendary) inset, var(--ff-shadow-hard); }
-.ff-card.r-SuperLegendario { box-shadow: 0 0 0 3px var(--c-sp) inset, var(--ff-shadow-hard); }
-.ff-card.r-Imortal { box-shadow: 0 0 0 3px var(--c-im) inset, var(--ff-shadow-hard); }
-.ff-card.r-Shiny { animation: ffShinyRing 2.5s linear infinite; }
-@keyframes ffShinyRing {
+.ff-card.r-CASEIRO { box-shadow: 0 0 0 3px var(--c-common) inset, var(--ff-shadow-hard); }
+.ff-card.r-TEMPERADO { box-shadow: 0 0 0 3px var(--c-rare) inset, var(--ff-shadow-hard); }
+.ff-card.r-GOURMET { box-shadow: 0 0 0 3px var(--c-epic) inset, var(--ff-shadow-hard); }
+.ff-card.r-CHEF_RENOMADO { box-shadow: 0 0 0 3px var(--c-legendary) inset, var(--ff-shadow-hard); }
+.ff-card.r-ESTRELA_MICHELIN { box-shadow: 0 0 0 3px var(--c-sp) inset, var(--ff-shadow-hard); }
+.ff-card.r-ESTRELA_MICHELIN { box-shadow: 0 0 0 3px var(--c-im) inset, var(--ff-shadow-hard); }
+.ff-card.r-RECEITA_DE_VO { animation: ffHoloRing 2.5s linear infinite; }
+@keyframes ffHoloRing {
   0% { box-shadow: 0 0 0 3px #ff5252 inset, var(--ff-shadow-hard); }
   25% { box-shadow: 0 0 0 3px #ffee58 inset, var(--ff-shadow-hard); }
   50% { box-shadow: 0 0 0 3px #69f0ae inset, var(--ff-shadow-hard); }
   75% { box-shadow: 0 0 0 3px #40c4ff inset, var(--ff-shadow-hard); }
   100% { box-shadow: 0 0 0 3px #ff5252 inset, var(--ff-shadow-hard); }
 }
-.ff-card.r-Robadasso { animation: ffRobaRing 1.1s ease-in-out infinite alternate; }
+.ff-card.r-RECEITA_DE_VO { animation: ffRobaRing 1.1s ease-in-out infinite alternate; }
 @keyframes ffRobaRing {
   from { box-shadow: 0 0 0 3px #ff1744 inset, var(--ff-shadow-hard); }
   to { box-shadow: 0 0 0 3px #200000 inset, var(--ff-shadow-hard); }
@@ -1499,18 +1558,18 @@ body.shaking { animation: bodyShake 0.5s ease-in-out 2; }
 /* Compound (2-class) selectors so these reliably outrank the flat fallback
    above regardless of source order; reuses the same holoSlide keyframe the
    rest of the game's rarity badges already animate with. */
-.ff-rarity-badge.rarity-Common { background: var(--c-common); }
-.ff-rarity-badge.rarity-Rare { background: var(--c-rare); }
-.ff-rarity-badge.rarity-Epic { background: var(--c-epic); color: #fff; }
-.ff-rarity-badge.rarity-Legendary { background: var(--c-legendary); }
-.ff-rarity-badge.rarity-SuperLegendario { background: linear-gradient(105deg, #ffea00, #fff59d, #ffd600); }
-.ff-rarity-badge.rarity-Imortal { background: var(--c-im); color: #fff; }
-.ff-rarity-badge.rarity-Shiny {
+.ff-rarity-badge.rarity-CASEIRO { background: var(--c-common); }
+.ff-rarity-badge.rarity-TEMPERADO { background: var(--c-rare); }
+.ff-rarity-badge.rarity-GOURMET { background: var(--c-epic); color: #fff; }
+.ff-rarity-badge.rarity-CHEF_RENOMADO { background: var(--c-legendary); }
+.ff-rarity-badge.rarity-ESTRELA_MICHELIN { background: linear-gradient(105deg, #ffea00, #fff59d, #ffd600); }
+.ff-rarity-badge.rarity-ESTRELA_MICHELIN { background: var(--c-im); color: #fff; }
+.ff-rarity-badge.rarity-RECEITA_DE_VO {
   background: linear-gradient(90deg, #ff5252, #ffb300, #ffee58, #69f0ae, #40c4ff, #b388ff, #ff5252);
   background-size: 300% 100%;
   animation: holoSlide 2.5s linear infinite;
 }
-.ff-rarity-badge.rarity-Robadasso {
+.ff-rarity-badge.rarity-RECEITA_DE_VO {
   background: linear-gradient(105deg, #d50000, #1a0000, #ff1744, #000, #d50000);
   background-size: 300% 100%;
   animation: holoSlide 1.6s linear infinite;
@@ -1677,18 +1736,18 @@ body.shaking { animation: bodyShake 0.5s ease-in-out 2; }
   padding: 3px 7px;
 }
 .ff-chip-rarity { color: var(--ff-ink); background: var(--ff-orange); } /* fallback — overridden below per rarity */
-.ff-chip-rarity.rarity-Common { background: var(--c-common); }
-.ff-chip-rarity.rarity-Rare { background: var(--c-rare); }
-.ff-chip-rarity.rarity-Epic { background: var(--c-epic); color: #fff; }
-.ff-chip-rarity.rarity-Legendary { background: var(--c-legendary); }
-.ff-chip-rarity.rarity-SuperLegendario { background: linear-gradient(105deg, #ffea00, #fff59d, #ffd600); }
-.ff-chip-rarity.rarity-Imortal { background: var(--c-im); color: #fff; }
-.ff-chip-rarity.rarity-Shiny {
+.ff-chip-rarity.rarity-CASEIRO { background: var(--c-common); }
+.ff-chip-rarity.rarity-TEMPERADO { background: var(--c-rare); }
+.ff-chip-rarity.rarity-GOURMET { background: var(--c-epic); color: #fff; }
+.ff-chip-rarity.rarity-CHEF_RENOMADO { background: var(--c-legendary); }
+.ff-chip-rarity.rarity-ESTRELA_MICHELIN { background: linear-gradient(105deg, #ffea00, #fff59d, #ffd600); }
+.ff-chip-rarity.rarity-ESTRELA_MICHELIN { background: var(--c-im); color: #fff; }
+.ff-chip-rarity.rarity-RECEITA_DE_VO {
   background: linear-gradient(90deg, #ff5252, #ffb300, #ffee58, #69f0ae, #40c4ff, #b388ff, #ff5252);
   background-size: 300% 100%;
   animation: holoSlide 2.5s linear infinite;
 }
-.ff-chip-rarity.rarity-Robadasso {
+.ff-chip-rarity.rarity-RECEITA_DE_VO {
   background: linear-gradient(105deg, #d50000, #1a0000, #ff1744, #000, #d50000);
   background-size: 300% 100%;
   animation: holoSlide 1.6s linear infinite;

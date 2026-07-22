@@ -34,7 +34,7 @@
     <button id="legend-btn" class="ff-icon-btn" title="Rarity &amp; skills guide">❓</button>
     <button id="trophy-btn" class="ff-icon-btn" title="Ranking">🏆</button>
     <button id="mail-btn" class="ff-icon-btn" title="Tasks">📧<span class="ff-badge" id="mail-badge">0</span></button>
-    <button id="account-btn" class="ff-icon-btn" title="Cloud account — sync progress across devices">☁️</button>
+    <button id="account-btn" class="ff-icon-btn" title="Cloud account — sync progress across devices">🔄</button>
     <button id="settings-btn" class="ff-icon-btn" title="Settings">🔧</button>
   </div>
 </header>
@@ -110,7 +110,7 @@
           </div>
         </div>
         <aside id="bombers-panel">
-          <h3>Active bombers</h3>
+          <h3>Active Rangos</h3>
           <div id="bombers"></div>
         </aside>
       </div>
@@ -118,7 +118,7 @@
 
     <section id="tab-inventory" class="tab-panel ff-scope">
       <div class="panel-head">
-        <h2>Your Heroes</h2>
+        <h2>Meus Rangos</h2>
         <div class="bulk-row">
           <button class="btn btn-small bulk-work">⛏️ All to Work</button>
           <button class="btn btn-small btn-ghost bulk-rest">😴 All to Rest</button>
@@ -135,30 +135,30 @@
       <div class="ff-inventory-main">
         <div class="ff-left-panel">
           <div id="inventory-grid" class="ff-grid"></div>
-          <div class="ff-grid-footer"><span id="ff-collected-count">Heroes collected: 0</span></div>
+          <div class="ff-grid-footer"><span id="ff-collected-count">Rangos collected: 0</span></div>
         </div>
         <section id="inventory-details" class="ff-details"></section>
       </div>
     </section>
 
     <section id="tab-shop" class="tab-panel">
-      <div class="panel-head"><h2>Hero Packs</h2>
-        <p class="muted">Bigger packs cost more but roll better rarity odds.</p></div>
+      <div class="panel-head"><h2>Rango Packs</h2>
+        <p class="muted">Bigger packs give you more rolls — every roll uses the exact same rarity odds regardless of pack size.</p></div>
       <div id="pack-grid" class="card-grid packs"></div>
       <div class="panel-head"><h2>Houses</h2>
-        <p class="muted">Each house permanently speeds up energy recovery for all resting heroes.</p></div>
+        <p class="muted">Each house permanently speeds up energy recovery for all resting Rangos.</p></div>
       <div id="house-grid" class="card-grid packs"></div>
     </section>
 
     <section id="tab-fusion" class="tab-panel">
       <div class="panel-head">
-        <h2>Fusion Lab</h2>
-        <p class="muted"><b>9 same-rarity heroes → 1 fusion attempt.</b> Success upgrades to the next rarity — with a small chance of a <b>+2 tier jump</b>. Failure still returns 1 fresh hero of the same rarity, so an attempt is never a total wipe. The higher the tier, the lower the odds (shown per row). Auto-fuse picks your 9 <b>lowest-level</b> heroes so your invested ones stay safe. Only Robadasso can't be fused further.</p>
+        <h2>Fusão Culinária</h2>
+        <p class="muted"><b>9 same-rarity Rangos → 1 fusion attempt.</b> Success upgrades to the next rarity — with a small chance of a <b>+2 tier jump</b>. Failure still returns 1 fresh Rango of the same rarity, so an attempt is never a total wipe. The higher the tier, the lower the odds (shown per row). Auto-fuse picks your 9 <b>lowest-level</b> Rangos so your invested ones stay safe. Only Receita de Vó can't be fused further.</p>
       </div>
       <div id="fusion-auto"></div>
       <div class="panel-head">
         <h2>Manual select</h2>
-        <p class="muted">Prefer to choose exactly which heroes get fused? Pick 9 below.</p>
+        <p class="muted">Prefer to choose exactly which Rangos get fused? Pick 9 below.</p>
       </div>
       <div id="fusion-controls"></div>
       <div id="fusion-grid" class="card-grid"></div>
