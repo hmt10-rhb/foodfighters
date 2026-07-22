@@ -92,17 +92,6 @@ const TASKS = [
 ];
 const TASKS_UNLOCK_HEROES = 15;
 
-// NPC scores creep upward over real time so the board looks alive between visits
-const NPC_EPOCH = Date.parse('2026-07-01T00:00:00Z');
-const NPCS = [
-  { name: 'FuseKing77',    base: 91200, perHour: 310 },
-  { name: 'CinderQueen',   base: 64800, perHour: 260 },
-  { name: 'BlastRadius',   base: 41350, perHour: 190 },
-  { name: 'MinerMoe',      base: 22400, perHour: 140 },
-  { name: 'xX_Sparky_Xx',  base: 9800,  perHour: 95  },
-  { name: 'PowderPuff',    base: 3150,  perHour: 60  },
-];
-
 const HERO_EMOJI = ['💣', '🧨', '🎇', '💥', '🔥', '⚡', '🌋', '☄️', '🎆', '🧯'];
 // 12 fixed character portraits, fully decoupled from rarity — any of these 12
 // can be rolled at ANY of the 8 rarities, purely by independent chance
@@ -2394,11 +2383,9 @@ function renderFusion() {
 }
 
 function renderRanking() {
-  const hours = (Date.now() - NPC_EPOCH) / 3600000;
-  const rows = NPCS.map(n => ({ name: n.name, score: n.base + n.perHour * hours, player: false }));
-  leaderboardCache
+  const rows = leaderboardCache
     .filter(r => r.username !== cloudUsername) // avoid double-listing yourself
-    .forEach(r => rows.push({ name: r.username, score: r.total_mined, player: false }));
+    .map(r => ({ name: r.username, score: r.total_mined, player: false }));
   rows.push({ name: (cloudUsername || 'You') + ' 💣', score: state.totalMined, player: true });
   rows.sort((a, b) => b.score - a.score);
   document.querySelector('#ranking-table tbody').innerHTML = rows.map((r, i) => `
