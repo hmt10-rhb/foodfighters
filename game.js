@@ -1391,14 +1391,16 @@ function plantBomb(h, a) {
 function canWalk(h, r, c) {
   const t = tileAt(r, c);
   if (t === undefined) return false;
-  // Massa Leve phases through destructible obstacles (Mesa Variável and
-  // anything else destructible) during pathing — but NOT Mesa Fixa or the
-  // map borders (those are the only permanently-blocking tiles left; see
-  // isBlockingObstacle()). With the border ring guaranteed walkable EMPTY
-  // for everyone (isTableCell() never places a table there), there's no
-  // obstacle type left that a phasing Rango needs a special exception for,
-  // so they can go anywhere within the grid's bounds.
-  if (h && hasMassaLeve(h)) return true;
+  // BUG FIX (2026-07-22, user-reported via screenshot): this used to
+  // unconditionally `return true` for any hasMassaLeve() hero regardless of
+  // tile type — which let it phase onto (and stand on) Mesa Fixa (T_WALL)
+  // too, even though the comment here always claimed otherwise. Mesa Fixa
+  // must be a truly permanent, unpassable obstacle for EVERY Rango, no
+  // exceptions. Massa Leve's phasing is now an explicit whitelist matching
+  // the user's exact rule: only Mesa Variável/Baú/Jaula (isDestructible()'s
+  // tile types) plus ordinary floor — never T_WALL, never out of bounds
+  // (already excluded by the `t === undefined` check above).
+  if (h && hasMassaLeve(h)) return t === T_FLOOR || isDestructible(t);
   return t === T_FLOOR && !bombAt(r, c);
 }
 
@@ -1437,7 +1439,18 @@ function aiTick() {
     // single step per tick now, for every Rango.
     const steps = 1;
     for (let i = 0; i < steps; i++) {
-      const nearCrate = isDestructible(tileAt(a.r, a.c)) ||
+      // BUG FIX (2026-07-22, user correction — supersedes the previous
+      // "onMesa" partial fix): a Rango can NEVER plant while standing on
+      // top of ANY prop — Mesa Fixa, Mesa Variável, Baú, or Jaula — full
+      // stop, for every Rango regardless of skills. Planting now requires
+      // the Rango's own tile to be plain empty floor; the only way to bomb
+      // a destructible is from an adjacent empty tile via blast radius
+      // (unchanged, below). This removes the old "standing directly on a
+      // Baú/Jaula can plant from there" allowance entirely — Massa Leve can
+      // still walk/phase THROUGH Baú/Mesa Variável/Jaula while pathing
+      // (canWalk() is untouched), it just now has to route itself onto an
+      // empty tile before it's allowed to plant.
+      const nearCrate = tileAt(a.r, a.c) === T_FLOOR &&
         DIRS.some(([dr, dc]) => isDestructible(tileAt(a.r + dr, a.c + dc)));
       if (nearCrate && a.cd === 0 && !bombAt(a.r, a.c) && !waveRegen) {
         plantBomb(h, a);
@@ -1458,7 +1471,18 @@ function explode(b) {
   bombs.splice(i, 1);
   b.el.remove();
   boomAt(b.r, b.c);
-  // a ghost can plant while standing on a crate tile, so the center may hold one
+  // DEAD-CODE NOTE (2026-07-22): this used to matter when a phasing Rango
+  // could plant while standing directly on a destructible (the stale
+  // comment here used to say so) — that allowance is now fully removed
+  // (aiTick() requires the Rango's own tile to be T_FLOOR to plant at all),
+  // and nothing else in the game ever spawns a NEW destructible onto an
+  // already-floor tile mid-wave (destructibles only get placed by
+  // seedCrates() at wave/theme generation). So b.r,b.c is now ALWAYS
+  // T_FLOOR by the time a bomb explodes, and hitTile()'s own
+  // isDestructible() guard makes this call a permanent, harmless no-op.
+  // Left in place (rather than deleted) as cheap defensive robustness in
+  // case a future feature ever plants a destructible under a live bomb —
+  // not confusing dead logic, just intentionally inert for now.
   hitTile(b.r, b.c, b);
   for (const [dr, dc] of DIRS) {
     for (let s = 1; s <= b.radius; s++) {
