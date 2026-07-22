@@ -1,4 +1,4 @@
--- Food Fighters / Bombfodase — cloud save + shared ranking
+-- Food Fighters — cloud save + shared ranking
 -- Run this once in the Supabase dashboard: Project > SQL Editor > New query > paste > Run.
 
 -- ============ Cloud saves (private, full game state) ============

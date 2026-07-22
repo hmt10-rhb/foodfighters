@@ -2,7 +2,15 @@
 
 /* ============ Config ============ */
 
-const SAVE_KEY = 'bombheroes-save-v1';
+const SAVE_KEY = 'foodfighters-save-v1';
+// Brand rename (2026-07-22): "Bombfodase"/"Bomb Heroes" -> "Food Fighters".
+// The OLD localStorage key below may still hold real player progress —
+// renaming SAVE_KEY outright would silently orphan every existing save.
+// One-time migration lives in load(): if the new key is empty but the old
+// key has data, that old data is read and immediately re-saved under the
+// new key (see load()'s very first lines). The old key is left in place
+// afterward (harmless leftover), never deleted.
+const OLD_SAVE_KEY = 'bombheroes-save-v1';
 const EXCHANGE_RATE = 10;          // 10 Food Coins -> 1 Chef Gems
 const BASE_RECOVERY = 0.25;        // energy/s while resting, before house bonuses
 const BASE_DRAIN = 0.35;           // energy/s while working; ~5 min of work per full bar
@@ -270,7 +278,7 @@ function defaultState() {
     activeThemeId: ACTIVE_THEME,
     mapsInTheme: 0,
     automine: 'none',
-    refCode: 'BH-' + Math.random().toString(36).slice(2, 8).toUpperCase(),
+    refCode: 'FF-' + Math.random().toString(36).slice(2, 8).toUpperCase(),
     nextHeroId: 1,
     lastSeen: Date.now(),
     sleepMode: false,
@@ -298,6 +306,17 @@ function save() {
 }
 
 function load() {
+  // One-time brand-rename migration (2026-07-22): if the new key is empty
+  // but the OLD key still holds real player data, adopt it under the new
+  // key before anything else ever reads SAVE_KEY — same graceful-migration
+  // pattern used for every other save-shape change in this function. The
+  // old key is left in place afterward (harmless leftover), never deleted.
+  try {
+    if (localStorage.getItem(SAVE_KEY) === null) {
+      const oldRaw = localStorage.getItem(OLD_SAVE_KEY);
+      if (oldRaw !== null) localStorage.setItem(SAVE_KEY, oldRaw);
+    }
+  } catch (e) {}
   let raw = null;
   try { raw = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) { raw = null; }
   if (!raw || !Array.isArray(raw.heroes)) {
@@ -707,16 +726,31 @@ const THEMES = {
     // drives the border/floor CSS for this theme, scoped under #arena-frame
     className: 'theme-jardim-fresquinho',
   },
+  // "Opção B" (2026-07-22): a genuinely SECOND, DISTINCT theme entry for the
+  // SAME Jardim Fresquinho world, built from real pre-sliced art (border
+  // strips + floor tiles) instead of the CSS-recreated approximation above —
+  // meant to sit side by side with jardim_fresquinho for visual comparison,
+  // not replace it. Deliberately reuses the IDENTICAL background image
+  // (same bg path) so the only variable between the two is border/floor
+  // rendering technique. See style.css's `.theme-jardim-fresquinho-sliced`
+  // block for the actual border-image/floor-checkerboard CSS.
+  jardim_fresquinho_sliced: {
+    name: 'Jardim Fresquinho',
+    bg: 'assets/themes/jardim_fresquinho/jardim_fresquinho_bg.png',
+    className: 'theme-jardim-fresquinho-sliced',
+  },
 };
 // Explicit rotation ORDER — the user's eventual full list (Cozinha Real,
 // Forno Vulcânico, Freezer Congelado, Mercado Noturno, Ilha do Sushi,
 // Fazenda Crocante, Fast Food City, Castelo do Banquete, Confeitaria
-// Bonanza) isn't built yet, so only jardim_fresquinho is registered here —
-// deliberately NOT fabricating placeholder entries for ids that don't exist
-// as real themes yet. With only one id, rotation just loops back to itself
-// every 50 maps (see waveClear()) — that's expected, not a bug; it becomes
-// visually noticeable once more themes are added to both THEMES and this list.
-const THEME_ROTATION = ['jardim_fresquinho'];
+// Bonanza) isn't built yet, so only the two Jardim Fresquinho variants are
+// registered here — deliberately NOT fabricating placeholder entries for
+// ids that don't exist as real themes yet. With 2 real ids now (as of
+// 2026-07-22), rotation genuinely alternates between them every 50 cleared
+// maps (see waveClear()) instead of looping on itself — the infinite-loop
+// wraparound (back to the first entry after the last) is now actually
+// exercised for the first time, not just a defensive no-op for a 1-entry list.
+const THEME_ROTATION = ['jardim_fresquinho', 'jardim_fresquinho_sliced'];
 // default/fallback for a brand-new save; the LIVE active theme is tracked
 // in state.activeThemeId (persisted — see defaultState()/load()) once a
 // save exists, so it survives reload and rotation advances correctly
@@ -1541,6 +1575,20 @@ function damageTile(r, c, dmg, folhadoDeOuroBomb, isCrit) {
   const key = r + ',' + c;
   const box = tileHp[key];
   if (!box) return;
+  // BUG FIX (2026-07-22, urgent, confirmed live): Mesa Variável must break
+  // from ANY hit regardless of the hitting Rango's strength ("se quebrando
+  // com qualquer dano") — but the generic HP-subtract-then-threshold-check
+  // below only destroys once box.hp <= 0.0001, and a weak Caseiro's
+  // mineRate can be as low as ~0.21 (power=5, the stat-table minimum),
+  // well under MESA_VARIAVEL_HP's 1 point — needing ~5 hits to cross the
+  // threshold instead of one. Special-cased here: skip the HP math
+  // entirely for Mesa Variável and destroy unconditionally on first
+  // contact, regardless of dmg's actual magnitude. Chests/Jaula are
+  // untouched — they still use the normal HP-accumulation math below.
+  if (box.obstacle) {
+    destroyTile(r, c, box, folhadoDeOuroBomb);
+    return;
+  }
   box.hp -= dmg;
   if (box.hp > 0.0001) {
     updateHpBar(r, c);
@@ -3220,7 +3268,7 @@ function bindEvents() {
   });
 
   document.getElementById('ref-copy').addEventListener('click', () => {
-    const link = `https://bombheroes.example/ref/${state.refCode}`;
+    const link = `https://foodfighters.example/ref/${state.refCode}`;
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(link).then(
         () => toast('Referral link copied (demo — leads nowhere).'),
@@ -3240,7 +3288,7 @@ function bindEvents() {
   });
 
   document.getElementById('reset-btn').addEventListener('click', () => {
-    if (confirm('Wipe all Bombfodase progress?')) {
+    if (confirm('Wipe all Food Fighters progress?')) {
       localStorage.removeItem(SAVE_KEY);
       location.reload();
     }
@@ -3271,7 +3319,7 @@ const sb = (window.supabase && window.SUPABASE_URL)
 let cloudSession = null;
 let cloudUsername = null;
 let leaderboardCache = [];
-const USERNAME_KEY = 'bombheroes-username';
+const USERNAME_KEY = 'foodfighters-username'; // brand rename (2026-07-22) — migrated from 'bombheroes-username' near the bottom of this file, alongside SAVE_KEY/UI_PREF_KEY
 
 function cloudSignedIn() { return !!cloudSession; }
 
@@ -3401,7 +3449,7 @@ function showAccountModal() {
 
 /* ============ Init ============ */
 
-const UI_PREF_KEY = 'bombheroes-ui';
+const UI_PREF_KEY = 'foodfighters-ui'; // brand rename (2026-07-22) — migrated from 'bombheroes-ui' just below, alongside SAVE_KEY/USERNAME_KEY
 
 // Same collapse mechanism the old side rail used (same localStorage key,
 // same {collapsed} shape, same "defer layoutArena so the CSS transition
@@ -3424,8 +3472,26 @@ function loadUiPrefs() {
   } catch (e) {}
 }
 
+// Brand rename (2026-07-22): same one-time-migration reasoning as
+// SAVE_KEY/OLD_SAVE_KEY above, applied to the other 2 old
+// "bombheroes-*" localStorage keys — a returning player's cloud username
+// or nav-collapse preference shouldn't silently reset just because the
+// storage key's name changed underneath them. Run once, before load()
+// (which does SAVE_KEY's own migration internally) and loadUiPrefs()
+// (which reads UI_PREF_KEY) ever touch these keys.
+function migrateOldBrandKey(oldKey, newKey) {
+  try {
+    if (localStorage.getItem(newKey) === null) {
+      const old = localStorage.getItem(oldKey);
+      if (old !== null) localStorage.setItem(newKey, old);
+    }
+  } catch (e) {}
+}
+migrateOldBrandKey('bombheroes-username', USERNAME_KEY);
+migrateOldBrandKey('bombheroes-ui', UI_PREF_KEY);
+
 load();
-document.getElementById('ref-code').textContent = `https://bombheroes.example/ref/${state.refCode}`;
+document.getElementById('ref-code').textContent = `https://foodfighters.example/ref/${state.refCode}`;
 loadUiPrefs();
 bindEvents();
 applyTheme(state.activeThemeId); // whichever theme rotation last landed on, persisted

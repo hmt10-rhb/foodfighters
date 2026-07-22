@@ -228,7 +228,7 @@ body {
    header icons instead — see .ff-hud-actions above). "Chefs" is an honest
    "coming soon" placeholder, not a Ranking shortcut.
    Collapse/expand mirrors the old side rail's exact mechanism
-   (setBottomNavCollapsed(), same bombheroes-ui localStorage key/shape) but
+   (setBottomNavCollapsed(), same foodfighters-ui localStorage key/shape) but
    on the vertical axis: collapsing shrinks #bottom-nav-tabs to zero height,
    handing that space back to #arena-wrap, which layoutArena() picks up on
    its next recalculation exactly like it already does when its available
@@ -446,6 +446,12 @@ main {
   padding: clamp(36px, 4.4vw, 46px) clamp(16px, 2.6vw, 24px) clamp(32px, 4.4vw, 42px);
   border-radius: 16px;
 }
+/* Shared, theme-agnostic default: real-image border strips (see the
+   jardim_fresquinho_sliced theme below) are inert/invisible for every
+   OTHER theme — only `.theme-jardim-fresquinho-sliced` below turns them on. */
+.theme-border {
+  display: none;
+}
 .arena-plaque {
   position: absolute;
   top: 6px;
@@ -506,6 +512,84 @@ main {
     linear-gradient(45deg, #cfe0ab 25%, transparent 25%, transparent 75%, #cfe0ab 75%);
   background-size: calc(var(--ts, 44px) * 0.6) calc(var(--ts, 44px) * 0.6);
   background-position: 0 0, calc(var(--ts, 44px) * 0.3) calc(var(--ts, 44px) * 0.3);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
+}
+
+/* ----- Theme: Jardim Fresquinho, "opção B" — real pre-sliced art -----
+   Second, DISTINCT theme entry for the SAME garden world, built from real
+   images instead of CSS-recreated shapes: 4 literal border-strip images
+   (top/bottom span the FULL frame width/corners; left/right fill only the
+   height BETWEEN them, avoiding double corners — a standard 9-slice-style
+   layout, matching how the vertical strips' own baked-in corner brackets
+   already line up against the horizontal strips' ends) + 2 real floor
+   tile images alternated in a checkerboard.
+   Border sizing deliberately reuses #arena-frame's EXACT own padding
+   clamp() values (top/left-right/bottom) so the inner grid area lines up
+   pixel-for-pixel with the CSS-recreated theme above — the two are meant to
+   be a fair, directly-comparable side-by-side, not different layouts.
+   background-size: 100% 100% (full non-uniform stretch, not tiling) is a
+   deliberate choice over border-image/repeat: these are single continuous
+   scenes (a shelf run of distinct props, not a repeatable motif), so
+   tiling would visibly repeat "JARDIM FRESQUINHO" plaques/flower pots
+   instead of showing one continuous strip — a worse artifact than the
+   minor non-uniform stretch this technique trades in at extreme tile
+   sizes (24-80px). */
+.theme-jardim-fresquinho-sliced {
+  background: linear-gradient(180deg, #a9713f, #8a5a30 45%, #6e461f);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.45);
+  border-radius: 10px; /* the border strips are square-cornered images, not rounded like the CSS theme's frame */
+}
+/* the border art already has "JARDIM FRESQUINHO" baked into the top-left of
+   moldura_superior.png — the separate JS-driven .arena-plaque text element
+   would sit right on top of it and visibly duplicate the label, so it's
+   hidden specifically for this theme only (every other theme keeps it) */
+.theme-jardim-fresquinho-sliced .arena-plaque {
+  display: none;
+}
+.theme-jardim-fresquinho-sliced .theme-border {
+  display: block;
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+}
+.theme-jardim-fresquinho-sliced .theme-border-top {
+  top: 0; left: 0; right: 0;
+  height: clamp(36px, 4.4vw, 46px);
+  background-image: url('assets/themes/jardim_fresquinho/moldura_superior.png');
+}
+.theme-jardim-fresquinho-sliced .theme-border-bottom {
+  bottom: 0; left: 0; right: 0;
+  height: clamp(32px, 4.4vw, 42px);
+  background-image: url('assets/themes/jardim_fresquinho/moldura_inferior.png');
+}
+.theme-jardim-fresquinho-sliced .theme-border-left {
+  left: 0;
+  top: clamp(36px, 4.4vw, 46px);
+  bottom: clamp(32px, 4.4vw, 42px);
+  width: clamp(16px, 2.6vw, 24px);
+  background-image: url('assets/themes/jardim_fresquinho/moldura_esquerda.png');
+}
+.theme-jardim-fresquinho-sliced .theme-border-right {
+  right: 0;
+  top: clamp(36px, 4.4vw, 46px);
+  bottom: clamp(32px, 4.4vw, 42px);
+  width: clamp(16px, 2.6vw, 24px);
+  background-image: url('assets/themes/jardim_fresquinho/moldura_direita.png');
+}
+/* real tile1/tile2 images alternated via the SAME two-layer offset trick the
+   CSS-recreated floor above uses (half-tile background-size, second layer
+   offset by half a tile in both axes) — this is a faithful 1:1 translation
+   of that exact technique (not a from-scratch redesign), just swapping
+   flat-color linear-gradients for the two real raster tiles, so the visual
+   cadence genuinely matches "the pattern the CSS floor already approximates". */
+.theme-jardim-fresquinho-sliced .tile.floor {
+  background-image:
+    url('assets/themes/jardim_fresquinho/tile1.png'),
+    url('assets/themes/jardim_fresquinho/tile2.png');
+  background-size: calc(var(--ts, 44px) * 0.5) calc(var(--ts, 44px) * 0.5);
+  background-position: 0 0, calc(var(--ts, 44px) * 0.5) calc(var(--ts, 44px) * 0.5);
   box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
 }
 

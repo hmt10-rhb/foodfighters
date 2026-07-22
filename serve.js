@@ -14,4 +14,4 @@ http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
     res.end(data);
   });
-}).listen(PORT, () => console.log(`Bombfodase running at http://localhost:${PORT}`));
+}).listen(PORT, () => console.log(`Food Fighters running at http://localhost:${PORT}`));

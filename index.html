@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bombfodase</title>
+<title>Food Fighters</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -106,6 +106,17 @@
         <div id="arena-wrap">
           <div id="arena-frame" class="theme-jardim-fresquinho">
             <div class="arena-plaque" id="arena-plaque">Jardim Fresquinho</div>
+            <!-- Real-sliced-asset border strips (opção B, jardim_fresquinho_sliced
+                 theme only) — hidden/no-op for every other theme via
+                 `.theme-border { display: none }`, only sized/backgrounded
+                 under `.theme-jardim-fresquinho-sliced`. Kept as 4 dedicated
+                 elements (not CSS ::before/::after) since a single element
+                 only has 2 pseudo-elements available and this theme needs 4
+                 independent side images. -->
+            <div class="theme-border theme-border-top"></div>
+            <div class="theme-border theme-border-bottom"></div>
+            <div class="theme-border theme-border-left"></div>
+            <div class="theme-border theme-border-right"></div>
             <div id="arena"></div>
           </div>
         </div>
