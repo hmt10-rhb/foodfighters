@@ -3057,6 +3057,16 @@ function bindEvents() {
   // quietly aliasing to something else.
   document.getElementById('chefs-btn').addEventListener('click', () => toast('👨‍🍳 Chefs — coming soon.'));
 
+  // User request (2026-07-22): Fusão/Defesa bottom-nav entry points disabled,
+  // mirroring chefs-btn's exact placeholder pattern — no tab-btn class, no
+  // data-tab, just an honest "coming soon" toast instead of navigating.
+  // The underlying Fusion/Lab tabs and all their logic are UNTOUCHED — only
+  // these two bottom-nav buttons stop reaching them. Other entry points
+  // (e.g. jumpToLabForReroll(), called from Inventory's re-roll shortcut)
+  // deliberately still work — this was scoped to the bottom nav only.
+  document.getElementById('nav-fusion-btn').addEventListener('click', () => toast('⚗️ Fusão — coming soon.'));
+  document.getElementById('nav-lab-btn').addEventListener('click', () => toast('🛡️ Defesa — coming soon.'));
+
   document.querySelectorAll('.bulk-work').forEach(b => b.addEventListener('click', () => setAllModes('work')));
   document.querySelectorAll('.bulk-rest').forEach(b => b.addEventListener('click', () => setAllModes('rest')));
 
