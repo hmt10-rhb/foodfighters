@@ -1,0 +1,1861 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #14110d;
+  --panel: #1f1a13;
+  --card: #292217;
+  --border: #3d3323;
+  --text: #f0e6d2;
+  --muted: #9c8f76;
+  --accent: #ffa726;
+  --accent2: #ffd54f;
+  --green: #66bb6a;
+  --red: #ef5350;
+  --c-common: #9e9e9e;
+  --c-rare: #42a5f5;
+  --c-epic: #ab47bc;
+  --c-legendary: #ffb300;
+  --c-sp: #ffea00;
+  --c-im: #ff1744;
+}
+
+html, body { height: 100%; }
+
+body {
+  /* ambient theme background sits behind the ENTIRE shell (header, side
+     rail, panels), not just the arena — every piece of UI chrome already
+     paints its own opaque --panel/--card background on top, so legibility
+     holds automatically; the dark scrim gradient is extra insurance for the
+     gaps between panels where the photo shows through directly.
+     --theme-bg-url is set by applyTheme() in game.js; with no active theme
+     it resolves to the `none` keyword and body just shows --bg as before. */
+  background-color: var(--bg);
+  background-image: linear-gradient(rgba(14, 11, 7, 0.72), rgba(14, 11, 7, 0.72)), var(--theme-bg-url, none);
+  background-size: auto, cover;
+  background-position: center, center;
+  background-repeat: no-repeat, no-repeat;
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ===== Top bar: "Food Fighters" HUD shell (header + #bottom-nav) =====
+   This is a deliberately different visual language from the rest of the app
+   (dark amber UI) AND from the Inventory tab's pixel-art reskin: a glossy
+   "candy cartoon" mobile-game HUD recreated from a written reference spec —
+   soft rounded shapes, painterly gradients, thick cream text outlines, soft
+   drop shadows. That style inconsistency between tabs is a known, accepted
+   tradeoff (flagged by the user, not something to reconcile here). Everything
+   below is scoped under ff-hud-*/ff-icon-btn/ff-*/#bottom-nav/#powers-panel
+   classes so it can't leak into or fight with any other tab's styling.
+   Responsive approach: flex-wrap on the header (so it degrades to a second
+   row rather than clipping on narrow viewports) and a fixed-width
+   #powers-panel exactly like the pre-existing #bombers-panel — #arena-wrap
+   already measures its own remaining space and hands it to layoutArena()
+   every resize/collapse, so adding another fixed-width flex sibling doesn't
+   need any new responsive code. Primary navigation itself now lives in
+   #bottom-nav (relocated from the old collapsible side rail — see that
+   section further down for the collapse/expand + resize contract). */
+
+.ff-hud-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  background: linear-gradient(180deg, #4b3f86, #34285f);
+  border-bottom: 3px solid #241c47;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35);
+  flex: none;
+  /* MUST stay one row — this used to be flex-wrap:wrap "for narrow
+     viewports", but that was the actual bug reported: at anything
+     narrower than ~860px the logo alone fit on line 1 (with a big empty
+     gap next to it) while currencies+actions both got pushed to a
+     disconnected line 2. nowrap + an internal horizontal scroll is the
+     correct safety valve — it degrades to "scrolls within the bar" on a
+     truly tiny viewport instead of "silently becomes two stacked bars". */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* generic glossy round icon button — sleep/legend/mail/gear/trophy header icons and the #bottom-nav toggle chevron all share this */
+.ff-icon-btn {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #7a68c9, #5b4aa8);
+  color: #fff;
+  font-size: 1.05rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.28), 0 5px 8px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  transition: transform 0.08s ease;
+}
+.ff-icon-btn:hover { filter: brightness(1.08); }
+.ff-icon-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(0, 0, 0, 0.28), 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.35); }
+.ff-icon-btn.sleep-on { background: linear-gradient(180deg, #ffcf5c, #f0a53a); border-color: #fff3d0; color: #4a2e00; }
+
+.ff-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: #ff4757;
+  border: 2px solid #2c2154;
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+/* mail-badge shows how many tasks are ready to claim; hidden entirely (not
+   just showing "0") when there's nothing to claim right now */
+.ff-badge.hidden { display: none; }
+
+/* ----- logo plaque: rounded cream/tan plaque, top-left, per the reference ----- */
+.ff-logo-plaque {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: linear-gradient(180deg, #fff6df, #f2dfb2);
+  border: 2px solid #d8bf86;
+  border-radius: 16px;
+  padding: 3px 16px 5px;
+  box-shadow: 0 3px 0 #c9a962, 0 5px 10px rgba(0, 0, 0, 0.3);
+  flex: none;
+}
+.ff-logo-icon { font-size: 1rem; line-height: 1; margin-bottom: -2px; }
+.ff-logo-text {
+  font-weight: 900;
+  font-size: 1.05rem;
+  letter-spacing: 0.03em;
+  line-height: 1.1;
+  white-space: nowrap;
+  /* frosting-style bubble letters: thick cream outline + orange-to-pink
+     gradient fill. -webkit-text-stroke/background-clip:text are Chromium/
+     WebKit features (this is a Chromium-targeted demo); color: is the plain
+     fallback for engines that ignore them, so the wordmark never disappears. */
+  color: #ff6f3c;
+  background: linear-gradient(180deg, #ffb14d 0%, #ff6f3c 45%, #ff3d78 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  -webkit-text-stroke: 2px #fff8e6;
+  paint-order: stroke fill;
+  text-shadow: 0 2px 2px rgba(0, 0, 0, 0.25);
+}
+
+/* ----- currency pills ----- */
+.ff-hud-currencies {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap; /* stays one line — the header itself scrolls, not this sub-group, if space ever runs out */
+  flex: none;
+  margin-left: auto;
+}
+.ff-currency-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(180deg, #fff8ea, #eeddb4);
+  border: 2px solid #cdb27e;
+  border-radius: 999px;
+  padding: 3px 4px 3px 10px;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.15), 0 3px 6px rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+}
+/* real icon art for Food Coins (⭐ replacement) / Chef Gems (🪙 replacement) */
+.ff-currency-pill img.cur-icon { width: 22px; height: 22px; object-fit: contain; }
+.ff-currency-pill b { color: #5a3d1c; font-size: 0.92rem; }
+.ff-plus-btn {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  background: linear-gradient(180deg, #8de26a, #45b23a);
+  color: #fff;
+  font-weight: 900;
+  font-size: 0.85rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+.ff-plus-btn:hover { filter: brightness(1.08); }
+.ff-plus-btn:active { transform: translateY(1px); }
+
+.ff-mini-currency {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.82rem;
+  color: #ece6ff;
+  white-space: nowrap;
+}
+.ff-mini-currency b { color: #fff; }
+
+.ff-hud-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+
+/* ===== Bottom navigation — relocated here from the old collapsible side
+   rail; this IS the primary navigation now, not a cosmetic utility strip
+   (that earlier concept, including the Trophy/Settings icons that would now
+   be redundant with the header, and the back arrow/center pill that had no
+   real function at all, was dropped in this consolidation — see game.js/
+   bindEvents() comments and the report for exactly what happened to each).
+   Persistent across all tabs: sibling of #shell, never inside a .tab-panel.
+   6 slots per the reference (Fusão/Defesa/Bolsa/Casa/Loja/Chefs — Hunt has
+   no icon, it's the default view; Ranking/Extras/Tasks are reached via
+   header icons instead — see .ff-hud-actions above). "Chefs" is an honest
+   "coming soon" placeholder, not a Ranking shortcut.
+   Collapse/expand mirrors the old side rail's exact mechanism
+   (setBottomNavCollapsed(), same bombheroes-ui localStorage key/shape) but
+   on the vertical axis: collapsing shrinks #bottom-nav-tabs to zero height,
+   handing that space back to #arena-wrap, which layoutArena() picks up on
+   its next recalculation exactly like it already does when its available
+   WIDTH changes (that used to be the side rail's job; same contract, new axis). */
+#bottom-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 14px;
+  background: linear-gradient(180deg, #34285f, #241c47);
+  border-top: 3px solid #1a1438;
+  box-shadow: 0 -3px 10px rgba(0, 0, 0, 0.35);
+  flex: none;
+  transition: padding 0.2s ease;
+}
+#bottom-nav-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+  transition: height 0.2s ease, opacity 0.15s ease;
+}
+.bottom-nav-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  flex: none;
+  width: 62px;
+  padding: 6px 4px 5px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #7a68c9, #5b4aa8);
+  color: #fff;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.28), 0 5px 8px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  transition: transform 0.08s ease;
+}
+.bottom-nav-btn:hover { filter: brightness(1.08); }
+.bottom-nav-btn:active { transform: translateY(2px); }
+.bottom-nav-btn.active {
+  background: linear-gradient(180deg, #ffcf5c, #f0a53a);
+  border-color: #fff3d0;
+  color: #4a2e00;
+}
+.bottom-nav-ico { font-size: 1.4rem; line-height: 1; }
+.bottom-nav-label { font-size: 0.6rem; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap; }
+
+/* collapsed: the tab row shrinks to nothing, #bottom-nav-toggle stays put so
+   it's always reachable to re-expand — this is what actually hands vertical
+   room back to #arena-wrap, not just a cosmetic class flip */
+#bottom-nav.collapsed #bottom-nav-tabs {
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ===== Side "powers" panel (Treasure Hunt tab only — contextual to active
+   gameplay, unlike the header/bottom bar). Honest placeholder: this game has
+   no active-consumable/power-up system, so every slot is explicitly marked
+   inert (grayscale + reduced opacity + a "soon" tag, same honest-stub
+   language as the Referral/Automine placeholders in Extras) rather than
+   pretending any of this does something. Fixed width, same pattern as the
+   pre-existing #bombers-panel — #arena-wrap already adapts around whatever
+   width its flex siblings leave it. ===== */
+#powers-panel {
+  width: 84px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 6px;
+}
+.power-slot { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 100%; }
+.power-icon-wrap {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #4a4a52, #2c2c32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: grayscale(0.85);
+  opacity: 0.6;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.06);
+}
+.power-icon { font-size: 24px; }
+.power-count {
+  position: absolute;
+  bottom: -4px;
+  right: -4px;
+  background: #1a1a1e;
+  border: 1px solid #555;
+  color: #ccc;
+  font-size: 0.6rem;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 1px 5px;
+  min-width: 14px;
+  text-align: center;
+}
+.power-tag {
+  position: absolute;
+  top: -5px;
+  left: -6px;
+  background: var(--border);
+  color: var(--muted);
+  font-size: 0.5rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 8px;
+}
+.power-label { font-size: 0.6rem; color: var(--muted); text-align: center; line-height: 1.2; }
+
+/* ===== Shell: main content (the side rail was removed — navigation lives
+   in #bottom-nav now) ===== */
+
+#shell { display: flex; flex: 1; min-height: 0; }
+
+main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 14px 16px;
+}
+
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+#tab-hunt.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+.panel-head { margin-bottom: 16px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; }
+.panel-head h2 { color: var(--accent2); font-size: 1.25rem; width: 100%; }
+.panel-head p { width: 100%; }
+.muted { color: var(--muted); font-size: 0.88rem; }
+
+/* ===== Treasure Hunt HUD ===== */
+
+#hud-top {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  flex-wrap: wrap;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  flex: none;
+}
+.hud-stat {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 2px 14px 2px 0;
+  border-right: 1px solid var(--border);
+  min-width: 84px;
+}
+.hud-label { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.hud-value { font-size: 1.05rem; font-weight: 700; color: var(--text); white-space: nowrap; }
+.hud-stat.big .hud-value { font-size: 1.3rem; color: var(--accent2); }
+.hud-stat.big em { font-style: normal; font-size: 0.85rem; color: var(--accent); vertical-align: middle; }
+.hud-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+
+#hunt-main { display: flex; flex: 1; gap: 14px; min-height: 0; }
+
+#arena-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+#arena {
+  position: relative;
+  background: #171209;
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.4);
+  flex: none;
+}
+
+/* ===== Arena themes =====
+   #arena-frame is a permanent wrapper around #arena — it is NEVER touched by
+   buildArena()'s innerHTML reset (that only clears #arena itself), so the
+   plaque/border decorations here survive every rebuild. A theme is just a
+   className on this element (see applyTheme() in game.js) plus a CSS block
+   below scoped under that class: background/pseudo-element decoration on
+   the frame itself, an override for .arena-plaque colors, and an override
+   for .tile.floor's background (floor tiles paint their own background per
+   cell, so "the floor pattern" is a .tile.floor rule, not an arena-wide
+   image). All sizing here uses var(--ts, 44px) or clamp()/em units so it
+   holds up across the 24-80px dynamic tile-size range and on resize —
+   never fixed pixel assumptions about the arena's overall size. */
+#arena-frame {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  padding: clamp(36px, 4.4vw, 46px) clamp(16px, 2.6vw, 24px) clamp(32px, 4.4vw, 42px);
+  border-radius: 16px;
+}
+.arena-plaque {
+  position: absolute;
+  top: 6px;
+  left: 14px;
+  z-index: 2;
+  font-weight: 800;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 5px 12px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.35);
+}
+
+/* ----- Theme: Jardim Fresquinho (garden/wood-shelf world) ----- */
+.theme-jardim-fresquinho {
+  background:
+    repeating-linear-gradient(180deg, rgba(0,0,0,0.09) 0 2px, transparent 2px 11px),
+    linear-gradient(180deg, #a9713f, #8a5a30 45%, #6e461f);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.45), inset 0 0 0 3px #4d2f14, inset 0 0 0 6px rgba(255,255,255,0.07);
+}
+/* single small garden accent, bottom-LEFT — deliberately kept to one short
+   element anchored near the frame's own edge (not spanning toward the
+   opposite side) so it can never grow wide enough to intrude on the grid
+   even at the narrowest padding (24px tile size, thinnest clamp() values);
+   the plaque (top-left) and this tag (bottom-left) sit in the two thickest
+   padding bands (top/bottom) and never share a corner, so there's no
+   collision risk to reason about at any arena size */
+.theme-jardim-fresquinho::after {
+  content: '🌱 SEMENTES';
+  position: absolute;
+  bottom: 6px;
+  left: 14px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #f5eddc;
+  background: #5a3a1c;
+  border: 1px solid #3a2410;
+  padding: 2px 7px;
+  border-radius: 5px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.theme-jardim-fresquinho .arena-plaque {
+  background: linear-gradient(180deg, #f7efdd, #e9dcbc);
+  color: #4a3820;
+  border: 2px solid #7a5a34;
+}
+/* cream/light-green diamond floor, scaled to the live tile size so it holds
+   up at both the 24px and 80px extremes and on resize */
+.theme-jardim-fresquinho .tile.floor {
+  background-color: #ecdfba;
+  background-image:
+    linear-gradient(45deg, #cfe0ab 25%, transparent 25%, transparent 75%, #cfe0ab 75%),
+    linear-gradient(45deg, #cfe0ab 25%, transparent 25%, transparent 75%, #cfe0ab 75%);
+  background-size: calc(var(--ts, 44px) * 0.6) calc(var(--ts, 44px) * 0.6);
+  background-position: 0 0, calc(var(--ts, 44px) * 0.3) calc(var(--ts, 44px) * 0.3);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
+}
+
+#bombers-panel {
+  width: 272px;
+  flex: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  overflow-y: auto;
+  min-height: 0;
+}
+#bombers-panel h3 {
+  color: var(--accent2);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+.bomber-item {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  background: var(--card);
+  border-radius: 10px;
+  border-left: 3px solid var(--border);
+  padding: 9px 10px;
+  margin-bottom: 8px;
+}
+.bomber-item.r-Common { border-left-color: var(--c-common); }
+.bomber-item.r-Rare { border-left-color: var(--c-rare); }
+.bomber-item.r-Epic { border-left-color: var(--c-epic); }
+.bomber-item.r-Legendary { border-left-color: var(--c-legendary); }
+.bomber-item.r-SuperLegendario { border-left-color: var(--c-sp); }
+.bomber-item.r-Imortal { border-left-color: var(--c-im); }
+.bomber-item.r-Shiny { border-left-color: #b388ff; }
+.bomber-item.r-Robadasso { border-left-color: var(--c-im); }
+.bomber-sprite { font-size: 1.9rem; line-height: 1; flex: none; margin-top: 1px; }
+.bomber-info { flex: 1; min-width: 0; }
+.bomber-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px; }
+.bomber-name { font-size: 0.82rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bomber-badge { font-size: 0.6rem; padding: 1px 6px; flex: none; }
+.bomber-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.bomber-ascend { color: var(--accent2); font-weight: 700; }
+.bomber-skills { display: flex; gap: 4px; margin-bottom: 5px; }
+.skill-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.3em;
+  height: 1.3em;
+  font-size: 0.85rem;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 50%;
+}
+.bomber-energy-label { font-size: 0.68rem; color: var(--muted); margin-top: 3px; }
+.bombers-empty { text-align: center; padding: 18px 6px; line-height: 1.6; }
+
+@media (max-width: 760px) {
+  #hunt-main { flex-direction: column; }
+  #bombers-panel { width: auto; max-height: 220px; }
+}
+
+/* ===== Arena tiles & actors (sized by --ts, set from JS) ===== */
+
+.tile { position: absolute; width: var(--ts, 44px); height: var(--ts, 44px); }
+/* The grid cell div ALWAYS renders as the plain floor look now — wall/
+   obstacle/chest/jail art (and the HP bar) no longer lives on this div's OWN
+   background at all. It moved to .tile-prop, a separate full-tile overlay
+   CHILD element (see game.js's setTile()), mirroring how .actor already
+   renders correctly: a distinct element layered above the grid, never
+   fighting the grid cell's own background/sizing for control. This replaces
+   the "background-size: cover on .tile.wall/.tile.chest/etc directly"
+   approach — that was textually correct (verified: no more-specific
+   selector or inline JS style was overriding it) but chest tiles still
+   rendered as a small image in a dark box while wall tiles rendered
+   correctly from the exact same CSS treatment, which the .tile-prop overlay
+   sidesteps entirely rather than continuing to chase (see game.js comments
+   near classNameForProp() for the full writeup). */
+.tile.floor { background: #241d12; box-shadow: inset 0 0 0 1px #1b150c; }
+
+.tile-prop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background-repeat: no-repeat;
+  background-position: center;
+  /* every prop's source art is a perfect 52x52 square and the tile is
+     always square too, so cover renders every one of these edge-to-edge
+     with zero crop and zero distortion (equivalent to 100% 100% here, but
+     robust if a tile or asset ever stops being 1:1) */
+  background-size: cover;
+}
+/* real art for the fixed "tables" (mesa fixa — gray riveted stone/metal
+   block, no interaction, never walked through, no reward). Every T_WALL
+   tile is a table now — the outer border ring can never be a wall (the
+   deterministic table-placement formula in game.js excludes it by
+   construction, per the new "border is always walkable" rule), so there's
+   no separate border-wall look to maintain anymore. */
+.tile-prop.wall {
+  background-image: url('assets/blocos_unicos/mesa_fixa.png');
+  border-radius: 0;
+}
+/* variable per-wave obstacle (mesa_variavel.png) — indestructible, blocks
+   movement + bomb blast exactly like .tile-prop.wall (see
+   isBlockingObstacle() in game.js), just re-rolled to a different set of
+   cells every wave instead of being one of the 136 permanently-fixed table
+   positions. No --dmg filter: it can never take damage, nothing to darken
+   toward. */
+.tile-prop.obstacle {
+  background-image: url('assets/blocos_unicos/mesa_variavel.png');
+  border-radius: 0;
+}
+.tile-prop.crate, .tile-prop.chest {
+  /* damage darkens/desaturates the artwork instead of swapping a CSS shape —
+     --dmg is set per-prop from JS (0 = full HP, 1 = about to break) */
+  filter: saturate(calc(1 - 0.45 * var(--dmg, 0))) brightness(calc(1 - 0.3 * var(--dmg, 0)));
+  transition: filter 0.25s ease;
+}
+.tile-prop.crate { background-image: url('assets/crate.png'); }
+/* Plain .tile-prop.chest is now just a fallback (every real chest also gets
+   a tier modifier class — chest-wood/iron/gold/diamond/special/vip — from
+   setTile(), which is what actually selects the bau_*.png art per tier).
+   Falls back to the wood look if a tier is ever somehow missing. */
+.tile-prop.chest { background-image: url('assets/blocos_unicos/bau_madeira.png'); }
+.tile-prop.chest.chest-wood { background-image: url('assets/blocos_unicos/bau_madeira.png'); }
+.tile-prop.chest.chest-iron { background-image: url('assets/blocos_unicos/bau_ferro.png'); }
+.tile-prop.chest.chest-gold { background-image: url('assets/blocos_unicos/bau_ouro.png'); }
+.tile-prop.chest.chest-diamond { background-image: url('assets/blocos_unicos/bau_diamante.png'); }
+.tile-prop.chest.chest-special { background-image: url('assets/blocos_unicos/bau_especial.png'); }
+.tile-prop.chest.chest-vip { background-image: url('assets/blocos_unicos/bau_vip.png'); }
+/* No art was provided for jail blocks — simple CSS + emoji treatment, same
+   spirit as how crate/chest looked before their PNGs arrived. Same damage
+   darken/desaturate filter and HP bar as every other destructible. */
+.tile-prop.jail {
+  /* position/inset already come from the base .tile-prop rule above */
+  background: linear-gradient(#2b2b30, #16161a);
+  box-shadow: inset 0 0 0 3px #0b0b0d, inset 0 0 0 6px #3c3c44;
+  border-radius: 4px;
+  filter: saturate(calc(1 - 0.45 * var(--dmg, 0))) brightness(calc(1 - 0.3 * var(--dmg, 0)));
+  transition: filter 0.25s ease;
+}
+.tile-prop.jail::before {
+  content: '🔒';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--ts, 44px) * 0.48);
+  line-height: 1;
+}
+/* Overlay HP bar, a child of .tile-prop, anchored to the tile's bottom edge
+   on top of the full-bleed artwork. Its own dark backing strip (background
+   below) is what keeps it readable against busy chest/table art instead of
+   relying on empty space around the image; color/width logic
+   (hpBarColor()/hpBarHtml() in game.js) is unchanged — only WHERE it sits
+   changed, not how it decides its color or fill %. */
+.chp {
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  bottom: 4%;
+  /* stays readable across the 24-80px dynamic tile range */
+  height: max(4px, 13%);
+  background: rgba(0, 0, 0, 0.8);
+  border-radius: 2px;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.chp-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.25s ease;
+}
+.chp-fill.hp-g { background: #66bb6a; }
+.chp-fill.hp-o { background: #ffa726; }
+.chp-fill.hp-r { background: #ef5350; }
+
+.actor {
+  /* Sized to the FULL tile and positioned at the tile's exact top-left
+     corner (no fractional-offset math) — the .sprite child (1em x 1em,
+     i.e. 0.78 x tileSize via the font-size below) is centered inside by
+     flexbox, not by hand-tuned translate offsets. Flex centering is exact
+     regardless of inline-box/line-height metrics, which is what made the
+     old shrink-to-fit + magic-fraction approach fragile and asymmetric. */
+  position: absolute;
+  z-index: 4;
+  width: var(--ts, 44px);
+  height: var(--ts, 44px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--ts, 44px) * 0.78);
+  transition: transform 0.45s linear;
+  pointer-events: none;
+}
+
+.bomb {
+  position: absolute;
+  z-index: 3;
+  width: calc(var(--ts, 44px) * 0.6);
+  height: calc(var(--ts, 44px) * 0.6);
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #4c4c56, #0c0c10);
+  border: 2px solid #000;
+  animation: bombPulse 0.5s infinite alternate;
+}
+.bomb::after {
+  content: '';
+  position: absolute;
+  top: -22%;
+  left: 38%;
+  width: 18%;
+  height: 18%;
+  border-radius: 50%;
+  background: var(--accent2);
+  box-shadow: 0 0 6px var(--accent);
+}
+@keyframes bombPulse {
+  from { transform: scale(1); }
+  to { transform: scale(1.18); box-shadow: 0 0 12px var(--accent); }
+}
+
+.boom {
+  position: absolute;
+  z-index: 5;
+  width: var(--ts, 44px);
+  height: var(--ts, 44px);
+  pointer-events: none;
+  background: radial-gradient(circle, #fff3c4 0%, #ffd54f 30%, #ff7043 60%, transparent 78%);
+  animation: boomFade 0.4s forwards;
+}
+@keyframes boomFade {
+  from { opacity: 1; transform: scale(0.55); }
+  to { opacity: 0; transform: scale(1.2); }
+}
+
+.float-label {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+  font-weight: 700;
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-shadow: 0 1px 3px #000;
+  animation: floatUp 1.1s forwards;
+  white-space: nowrap;
+}
+.float-label.chest { font-size: 1rem; color: #ffe082; }
+.float-label.crit { color: #ff5252; font-weight: 900; text-shadow: 0 0 6px rgba(255, 82, 82, 0.6); }
+@keyframes floatUp {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-34px); }
+}
+
+/* ===== Cards & grids ===== */
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+.card-grid.packs { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+
+.hero-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  position: relative;
+}
+.hero-card.working { border-color: var(--accent); }
+.hero-card .hero-top { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.hero-card .hero-emoji { font-size: 2.4rem; line-height: 1; }
+.hero-card .hero-name { font-weight: 700; }
+.hero-card .hero-stats { font-size: 0.82rem; color: var(--muted); line-height: 1.6; }
+.hero-card .hero-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
+.rarity-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: #14110d;
+}
+.rarity-Common { background: var(--c-common); }
+.rarity-Rare { background: var(--c-rare); }
+.rarity-Epic { background: var(--c-epic); color: #fff; }
+.rarity-Legendary { background: var(--c-legendary); }
+.rarity-SuperLegendario {
+  background: linear-gradient(105deg, #ffea00, #fff59d, #ffd600);
+  box-shadow: 0 0 8px rgba(255, 234, 0, 0.7);
+}
+.rarity-Imortal { background: var(--c-im); color: #fff; box-shadow: 0 0 8px rgba(255, 23, 68, 0.6); }
+.rarity-Shiny {
+  background: linear-gradient(90deg, #ff5252, #ffb300, #ffee58, #69f0ae, #40c4ff, #b388ff, #ff5252);
+  background-size: 300% 100%;
+  animation: holoSlide 2.5s linear infinite;
+}
+.rarity-Robadasso {
+  background: linear-gradient(105deg, #d50000, #1a0000, #ff1744, #000, #d50000);
+  background-size: 300% 100%;
+  animation: holoSlide 1.6s linear infinite;
+  color: #fff;
+  box-shadow: 0 0 10px rgba(255, 23, 68, 0.8);
+}
+@keyframes holoSlide {
+  from { background-position: 0% 50%; }
+  to { background-position: 300% 50%; }
+}
+
+.hero-card.r-Common { border-left: 4px solid var(--c-common); }
+.hero-card.r-Rare { border-left: 4px solid var(--c-rare); }
+.hero-card.r-Epic { border-left: 4px solid var(--c-epic); }
+.hero-card.r-Legendary { border-left: 4px solid var(--c-legendary); }
+.hero-card.r-SuperLegendario { border-left: 4px solid var(--c-sp); box-shadow: 0 0 12px rgba(255, 234, 0, 0.25); }
+.hero-card.r-Imortal { border-left: 4px solid var(--c-im); box-shadow: 0 0 12px rgba(255, 23, 68, 0.25); }
+.hero-card.r-Shiny { border-left: 4px solid #b388ff; }
+.hero-card.r-Robadasso { border-left: 4px solid var(--c-im); }
+.hero-card.r-Shiny, .bomber-item.r-Shiny, .legend-row.r-Shiny, .reveal-card.r-Shiny {
+  animation: shinyBorder 3s linear infinite;
+}
+.hero-card.r-Robadasso, .bomber-item.r-Robadasso, .legend-row.r-Robadasso, .reveal-card.r-Robadasso {
+  animation: robaBorder 1.1s ease-in-out infinite alternate;
+}
+@keyframes shinyBorder {
+  0% { border-color: #ff5252; }
+  25% { border-color: #ffee58; }
+  50% { border-color: #69f0ae; }
+  75% { border-color: #40c4ff; }
+  100% { border-color: #ff5252; }
+}
+@keyframes robaBorder {
+  from { border-color: #ff1744; box-shadow: 0 0 14px rgba(255, 23, 68, 0.5); }
+  to { border-color: #200000; box-shadow: 0 0 4px rgba(0, 0, 0, 0.8); }
+}
+
+.energy-bar {
+  height: 8px;
+  background: #141009;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+.bomber-item .energy-bar { margin-top: 0; height: 6px; }
+.energy-bar .fill { height: 100%; background: var(--green); border-radius: 4px; transition: width 0.4s linear; }
+.energy-bar .fill.low { background: var(--red); }
+.energy-label { font-size: 0.75rem; color: var(--muted); margin-top: 3px; }
+
+.btn {
+  background: var(--accent);
+  color: #14110d;
+  border: none;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+.btn:hover { background: var(--accent2); }
+.btn:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+.btn-small { padding: 6px 12px; font-size: 0.8rem; }
+.btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+.btn-ghost:hover { background: var(--card); border-color: var(--accent); }
+.btn-danger { background: var(--red); color: #fff; }
+.btn-danger:hover { background: #ff6b68; }
+
+.pack-card, .house-card, .extra-box {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+}
+.pack-card h3, .house-card h3 { margin-bottom: 6px; color: var(--accent2); }
+.pack-card .odds { font-size: 0.78rem; color: var(--muted); line-height: 1.7; margin: 8px 0; }
+.pack-card .price, .house-card .price { font-weight: 700; margin: 8px 0; }
+.house-card .owned { font-size: 0.82rem; color: var(--green); margin: 4px 0; }
+
+select {
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+.sort-label { color: var(--muted); font-size: 0.88rem; margin-left: auto; }
+
+.bulk-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ===== Fusion ===== */
+
+.fusion-row {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.fusion-row-info { flex: 1; min-width: 230px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fusion-row .arrow { color: var(--accent2); font-weight: 700; }
+
+#fusion-controls { margin-bottom: 16px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.fusion-hint { color: var(--muted); font-size: 0.9rem; }
+.hero-card.selectable { cursor: pointer; user-select: none; }
+.hero-card.selected { outline: 2px solid var(--accent2); background: #332a1a; }
+
+/* ===== Legend ===== */
+
+.legend-row {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  background: var(--card);
+  border-radius: 10px;
+  border-left: 4px solid var(--border);
+  padding: 10px 14px;
+  margin-bottom: 8px;
+}
+.legend-row.r-Common { border-left-color: var(--c-common); }
+.legend-row.r-Rare { border-left-color: var(--c-rare); }
+.legend-row.r-Epic { border-left-color: var(--c-epic); }
+.legend-row.r-Legendary { border-left-color: var(--c-legendary); }
+.legend-row.r-SuperLegendario { border-left-color: var(--c-sp); }
+.legend-row.r-Imortal { border-left-color: var(--c-im); }
+.legend-row.r-Shiny { border-left-color: #b388ff; }
+.legend-row.r-Robadasso { border-left-color: var(--c-im); }
+.legend-row .legend-sprite { font-size: 2.4rem; line-height: 1; }
+.legend-row .legend-tileart { display: flex; gap: 6px; }
+.legend-row .legend-tileart img { width: 2rem; height: 2rem; object-fit: contain; }
+.legend-row .muted { line-height: 1.5; }
+
+/* ===== Lab / Prestige ===== */
+
+.lab-box {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+.lab-box h3 { color: var(--accent2); margin-bottom: 6px; }
+.lab-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+.lab-row select { min-width: 200px; }
+.lab-hero-preview { font-size: 1.8rem; display: inline-flex; vertical-align: middle; min-width: 1.8rem; }
+.checklist {
+  max-height: 190px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-top: 10px;
+}
+.checklist label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 2px;
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+.checklist label:last-child { border-bottom: none; }
+.checklist .muted-tiny { color: var(--muted); font-size: 0.72rem; margin-left: auto; }
+
+.upgrade-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+}
+.upgrade-card h3 { color: var(--accent2); margin-bottom: 4px; }
+.upgrade-card .lvl { font-size: 0.82rem; color: var(--green); margin: 6px 0; }
+.upgrade-card .price { font-weight: 700; margin: 6px 0; }
+
+/* ===== Ranking / Tasks / Extras ===== */
+
+#ranking-table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 12px; overflow: hidden; }
+#ranking-table th, #ranking-table td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+#ranking-table th { background: var(--panel); color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+#ranking-table tr.player-row { background: #33290f; }
+#ranking-table tr.player-row td { color: var(--accent2); font-weight: 700; }
+
+.task-item {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.task-item .task-info { flex: 1; min-width: 200px; }
+.task-item .task-name { font-weight: 700; }
+.task-item .task-reward { color: var(--accent2); font-size: 0.85rem; }
+.task-item.done { opacity: 0.55; }
+.locked-box {
+  background: var(--card);
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 30px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.extra-box { margin-bottom: 14px; }
+.extra-box h3 { margin-bottom: 6px; }
+.extra-box.danger { border-color: #5c2b2a; }
+.stub-tag {
+  font-size: 0.65rem;
+  background: var(--border);
+  color: var(--muted);
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+.ref-row { display: flex; gap: 10px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+.ref-row code { background: #141009; padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; }
+
+/* ===== Hero portraits (12 fixed character images, decoupled from rarity) ===== */
+/* No wrapper border/frame around the portrait anywhere — it's a clean PNG.
+   Rarity shows via context instead: card/panel border-accents + colored
+   badge text everywhere EXCEPT the Treasure Hunt arena, where it shows as a
+   soft aura/glow around the sprite (see ".actor .sprite" below). --rc is
+   still defined here since card accents / the arena aura / badges all key
+   off it. */
+
+.sprite {
+  position: relative; display: inline-block; width: 1em; height: 1em; vertical-align: middle;
+}
+.sprite img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.sr-Common { --rc: var(--c-common); }
+.sr-Rare { --rc: var(--c-rare); }
+.sr-Epic { --rc: var(--c-epic); }
+.sr-Legendary { --rc: var(--c-legendary); }
+.sr-SuperLegendario { --rc: var(--c-sp); }
+.sr-Imortal { --rc: var(--c-im); }
+.sr-Shiny { --rc: #b388ff; }
+.sr-Robadasso { --rc: var(--c-im); }
+
+/* Arena-only aura: a soft blurred glow following the portrait's silhouette
+   (drop-shadow respects PNG alpha, unlike box-shadow), not a hard ring.
+   Scoped to .actor (the live Bomberman-grid sprites) only — cards, the
+   details panel, pull-reveal cards, the bombers side panel, the legend and
+   Lab pickers stay plain portrait + colored text/border accent, per spec. */
+.actor .sprite img {
+  filter: drop-shadow(0 0 0.1em var(--rc)) drop-shadow(0 0 0.28em var(--rc));
+}
+.actor .sr-SuperLegendario img {
+  filter: drop-shadow(0 0 0.12em var(--c-sp)) drop-shadow(0 0 0.36em rgba(255, 234, 0, 0.7));
+}
+.actor .sr-Imortal img {
+  filter: drop-shadow(0 0 0.12em var(--c-im)) drop-shadow(0 0 0.36em rgba(255, 23, 68, 0.6));
+}
+.actor .sr-Shiny img { animation: auraHolo 2.5s linear infinite; }
+@keyframes auraHolo {
+  0% { filter: drop-shadow(0 0 0.14em #ff5252) drop-shadow(0 0 0.36em #ff5252); }
+  25% { filter: drop-shadow(0 0 0.14em #ffee58) drop-shadow(0 0 0.36em #ffee58); }
+  50% { filter: drop-shadow(0 0 0.14em #69f0ae) drop-shadow(0 0 0.36em #69f0ae); }
+  75% { filter: drop-shadow(0 0 0.14em #40c4ff) drop-shadow(0 0 0.36em #40c4ff); }
+  100% { filter: drop-shadow(0 0 0.14em #ff5252) drop-shadow(0 0 0.36em #ff5252); }
+}
+.actor .sr-Robadasso img { animation: auraRoba 1.2s ease-in-out infinite alternate; }
+@keyframes auraRoba {
+  from { filter: drop-shadow(0 0 0.14em #ff1744) drop-shadow(0 0 0.36em rgba(213, 0, 0, 0.7)); }
+  to { filter: drop-shadow(0 0 0.08em #200000) drop-shadow(0 0 0.44em rgba(0, 0, 0, 0.85)) brightness(1.15); }
+}
+
+.sp-skill {
+  position: absolute;
+  font-size: 0.34em;
+  line-height: 1;
+  top: -12%;
+  right: -10%;
+  text-shadow: 0 1px 2px #000;
+  z-index: 2;
+}
+.sp-skill.sk-s { right: auto; left: -10%; }
+.sp-skill.sk-m { top: auto; bottom: -10%; right: -12%; }
+.sp-skill.sk-c { top: auto; bottom: -10%; right: auto; left: -12%; }
+
+/* ===== Pack reveal ===== */
+
+.reveal-wrap { text-align: center; }
+.reveal-count { color: var(--muted); font-size: 0.85rem; margin-bottom: 10px; }
+.reveal-card {
+  position: relative;
+  width: 256px;
+  margin: 0 auto;
+  padding: 26px 20px;
+  background: var(--card);
+  border: 2px solid var(--border);
+  border-radius: 16px;
+  cursor: pointer;
+  animation: cardIn 0.3s ease;
+}
+.reveal-card.r-Common { border-color: var(--c-common); }
+.reveal-card.r-Rare { border-color: var(--c-rare); }
+.reveal-card.r-Epic { border-color: var(--c-epic); }
+.reveal-card.r-Legendary { border-color: var(--c-legendary); }
+.reveal-card.r-SuperLegendario { border-color: var(--c-sp); }
+.reveal-card.r-Imortal { border-color: var(--c-im); }
+.reveal-card.r-Shiny { border-color: #b388ff; }
+.reveal-card.r-Robadasso { border-color: var(--c-im); }
+@keyframes cardIn {
+  from { transform: scale(0.5) rotateY(120deg); opacity: 0; }
+  to { transform: scale(1) rotateY(0); opacity: 1; }
+}
+.reveal-sprite { font-size: 92px; display: inline-block; margin-bottom: 10px; }
+.reveal-name { font-weight: 700; font-size: 1.05rem; margin: 6px 0; }
+.reveal-stats { color: var(--muted); font-size: 0.85rem; margin-top: 10px; line-height: 1.7; }
+.reveal-skills { margin-top: 8px; color: var(--accent2); font-size: 0.9rem; font-weight: 700; }
+.reveal-controls { display: flex; justify-content: center; gap: 10px; margin-top: 16px; }
+#reveal-speed.speed-on { border-color: var(--accent); color: var(--accent2); background: var(--card); }
+
+.reveal-card.celebrate { animation: cardIn 0.3s ease, celebrateGlow 1.4s ease 0.15s; }
+.reveal-card.celebrate::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 20px;
+  pointer-events: none;
+  animation: celebrateRing 1s ease-out 0.2s backwards;
+}
+@keyframes celebrateGlow {
+  30% { box-shadow: 0 0 44px 10px rgba(255, 213, 79, 0.6); transform: scale(1.06); }
+}
+@keyframes celebrateRing {
+  0% { box-shadow: 0 0 0 0 rgba(255, 213, 79, 0.85); }
+  100% { box-shadow: 0 0 70px 36px rgba(255, 213, 79, 0); }
+}
+
+.reveal-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(255, 213, 79, 0.5), transparent 65%);
+  animation: flashFade 0.85s forwards;
+}
+.reveal-flash.mega-flash {
+  background: radial-gradient(circle, rgba(255, 23, 68, 0.65), rgba(0, 0, 0, 0.45) 78%);
+}
+@keyframes flashFade { from { opacity: 1; } to { opacity: 0; } }
+
+.mega-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 72;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: repeating-conic-gradient(from 0deg, rgba(213, 0, 0, 0.28) 0 15deg, rgba(0, 0, 0, 0.4) 15deg 30deg);
+  animation: megaFade 2.8s ease forwards;
+}
+.mega-text {
+  font-size: clamp(2rem, 8vw, 4rem);
+  font-weight: 900;
+  color: #fff;
+  letter-spacing: 0.06em;
+  text-shadow: 0 0 20px #ff1744, 0 0 44px #d50000, 0 0 70px #000;
+  animation: megaText 2.8s ease forwards;
+}
+@keyframes megaFade {
+  0% { opacity: 0; }
+  12% { opacity: 1; }
+  82% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes megaText {
+  0% { transform: scale(0.2) rotate(-10deg); }
+  22% { transform: scale(1.2) rotate(4deg); }
+  36% { transform: scale(1) rotate(0deg); }
+  100% { transform: scale(1.08); }
+}
+body.shaking { animation: bodyShake 0.5s ease-in-out 2; }
+@keyframes bodyShake {
+  0%, 100% { transform: translate(0, 0); }
+  20% { transform: translate(-7px, 4px); }
+  40% { transform: translate(6px, -5px); }
+  60% { transform: translate(-5px, -3px); }
+  80% { transform: translate(5px, 4px); }
+}
+
+/* ===== Modal & toast ===== */
+
+#modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 20px;
+}
+#modal-backdrop.hidden { display: none; }
+#modal {
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 14px;
+  padding: 22px;
+  max-width: 640px;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+#modal h3 { color: var(--accent2); margin-bottom: 12px; }
+#modal .pull-list { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+#modal .pull-item {
+  background: var(--card);
+  border-radius: 10px;
+  padding: 10px 14px;
+  text-align: center;
+  min-width: 110px;
+  border-left: 3px solid var(--border);
+}
+#modal .pull-item .hero-emoji { display: block; margin-bottom: 4px; }
+#modal .pull-item.fuse-fail { opacity: 0.55; filter: saturate(0.6); }
+/* portrait itself is unframed now — the reveal card's own left border
+   carries the rarity signal, same convention as hero-card/bomber-item/legend-row */
+#modal .pull-item.r-Common { border-left-color: var(--c-common); }
+#modal .pull-item.r-Rare { border-left-color: var(--c-rare); }
+#modal .pull-item.r-Epic { border-left-color: var(--c-epic); }
+#modal .pull-item.r-Legendary { border-left-color: var(--c-legendary); }
+#modal .pull-item.r-SuperLegendario { border-left-color: var(--c-sp); }
+#modal .pull-item.r-Imortal { border-left-color: var(--c-im); }
+#modal .pull-item.r-Shiny { border-left-color: #b388ff; animation: shinyBorder 3s linear infinite; }
+#modal .pull-item.r-Robadasso { border-left-color: var(--c-im); animation: robaBorder 1.1s ease-in-out infinite alternate; }
+
+#toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: #14110d;
+  font-weight: 700;
+  padding: 12px 22px;
+  border-radius: 10px;
+  z-index: 60;
+  max-width: 90vw;
+  text-align: center;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+}
+#toast.hidden { display: none; }
+
+/* =====================================================================
+   Food Fighters: Bite Brawl — Inventory tab re-skin
+   Scoped entirely under .ff-scope (#tab-inventory) so the rest of the app
+   (Treasure Hunt, Shop, Fusion, Lab, Prestige, Ranking, Tasks, Extras, the
+   shell/nav) is completely unaffected. Values below are read directly from
+   the food-fighters-inventory prototype's global.css / component CSS, not
+   guessed — palette, border widths, hard-shadow offsets, radii, fonts.
+   ===================================================================== */
+
+/* Self-hosted pixel fonts: real Google Fonts "Pixelify Sans" (display) and
+   "Press Start 2P" (mono/numbers) files, downloaded once and saved locally
+   under assets/fonts/ so the game keeps working fully offline from file://
+   with zero runtime network requests — no <link> to fonts.googleapis.com
+   anywhere. Falls back to the same monospace stack the prototype itself
+   falls back to when it has no network access. */
+@font-face {
+  font-family: 'Pixelify Sans';
+  src: url('assets/fonts/PixelifySans.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Press Start 2P';
+  src: url('assets/fonts/PressStart2P.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+.ff-scope {
+  --ff-petrol-950: #08222d;
+  --ff-petrol-900: #0b2e3c;
+  --ff-petrol-800: #123f52;
+  --ff-petrol-700: #1a4f68;
+  --ff-petrol-600: #24647f;
+  --ff-petrol-500: #2f7c99;
+  --ff-petrol-400: #3f97b8;
+  --ff-coral: #ff6f6f;
+  --ff-coral-dark: #d6413f;
+  --ff-coral-light: #ffb0af;
+  --ff-orange: #ff9a3c;
+  --ff-orange-dark: #c96716;
+  --ff-orange-light: #ffc98a;
+  --ff-cream: #fff3df;
+  --ff-cream-dark: #f0dfb4;
+  --ff-cream-darker: #d8c497;
+  --ff-green: #4fd675;
+  --ff-green-dark: #268a45;
+  --ff-green-light: #a4f0bd;
+  --ff-yellow: #ffd85e;
+  --ff-yellow-dark: #d19c1f;
+  --ff-blue: #5ab0ff;
+  --ff-blue-dark: #2a76c9;
+  --ff-purple: #a56bff;
+  --ff-red: #ff5c5c;
+  --ff-ink: #14202a;
+  --ff-paper: #fff8ec;
+  --ff-border-w: 3px;
+  --ff-shadow-hard: 4px 4px 0 var(--ff-ink);
+  --ff-shadow-hard-sm: 3px 3px 0 var(--ff-ink);
+  --ff-shadow-hard-lg: 6px 6px 0 var(--ff-ink);
+  --ff-radius-sm: 6px;
+  --ff-radius-md: 10px;
+  --ff-radius-lg: 16px;
+  --ff-font-display: 'Pixelify Sans', 'Courier New', ui-monospace, monospace;
+  --ff-font-mono: 'Press Start 2P', 'Courier New', ui-monospace, monospace;
+}
+
+.ff-pixel-panel {
+  border: var(--ff-border-w) solid var(--ff-ink);
+  box-shadow: 0 0 0 3px var(--ff-petrol-500) inset, var(--ff-shadow-hard);
+  border-radius: var(--ff-radius-md);
+}
+
+.ff-inventory-main {
+  display: grid;
+  grid-template-columns: 56fr 44fr;
+  gap: clamp(10px, 1.4vw, 22px);
+  min-height: 0;
+  height: calc(100% - 8px);
+}
+
+.ff-left-panel {
+  min-width: 0;
+  min-height: 0;
+  background: var(--ff-petrol-800);
+  border: var(--ff-border-w) solid var(--ff-ink);
+  box-shadow: 0 0 0 3px var(--ff-petrol-500) inset, var(--ff-shadow-hard);
+  border-radius: var(--ff-radius-md);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: clamp(10px, 1.4vw, 18px);
+}
+
+.ff-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: clamp(8px, 1vw, 14px);
+  align-content: start;
+}
+
+.ff-grid-footer {
+  flex: 0 0 auto;
+  margin-top: clamp(8px, 1.2vh, 14px);
+  display: flex;
+  justify-content: center;
+}
+.ff-grid-footer span {
+  font-family: var(--ff-font-mono);
+  font-size: 10px;
+  color: var(--ff-cream);
+  background: var(--ff-petrol-800);
+  border: 2px solid var(--ff-ink);
+  border-radius: 6px;
+  box-shadow: var(--ff-shadow-hard-sm);
+  padding: 6px 16px;
+  letter-spacing: 0.5px;
+}
+
+/* ---- Card grid ---- */
+
+.ff-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  background: var(--ff-petrol-700);
+  padding: 6px;
+  aspect-ratio: 3 / 4;
+  border: var(--ff-border-w) solid var(--ff-ink);
+  box-shadow: 0 0 0 3px var(--ff-petrol-500) inset, var(--ff-shadow-hard);
+  border-radius: var(--ff-radius-md);
+  transition: transform 0.05s ease;
+  font-family: inherit;
+}
+.ff-card:hover { background: var(--ff-petrol-600); }
+.ff-card:active { transform: translate(2px, 2px); }
+
+/* Rarity signal lives on the CARD now (inset ring color), not on the
+   portrait — the image itself renders with no frame at all. Reuses the same
+   --c-* rarity color tokens the rest of the game already uses. */
+.ff-card.r-Common { box-shadow: 0 0 0 3px var(--c-common) inset, var(--ff-shadow-hard); }
+.ff-card.r-Rare { box-shadow: 0 0 0 3px var(--c-rare) inset, var(--ff-shadow-hard); }
+.ff-card.r-Epic { box-shadow: 0 0 0 3px var(--c-epic) inset, var(--ff-shadow-hard); }
+.ff-card.r-Legendary { box-shadow: 0 0 0 3px var(--c-legendary) inset, var(--ff-shadow-hard); }
+.ff-card.r-SuperLegendario { box-shadow: 0 0 0 3px var(--c-sp) inset, var(--ff-shadow-hard); }
+.ff-card.r-Imortal { box-shadow: 0 0 0 3px var(--c-im) inset, var(--ff-shadow-hard); }
+.ff-card.r-Shiny { animation: ffShinyRing 2.5s linear infinite; }
+@keyframes ffShinyRing {
+  0% { box-shadow: 0 0 0 3px #ff5252 inset, var(--ff-shadow-hard); }
+  25% { box-shadow: 0 0 0 3px #ffee58 inset, var(--ff-shadow-hard); }
+  50% { box-shadow: 0 0 0 3px #69f0ae inset, var(--ff-shadow-hard); }
+  75% { box-shadow: 0 0 0 3px #40c4ff inset, var(--ff-shadow-hard); }
+  100% { box-shadow: 0 0 0 3px #ff5252 inset, var(--ff-shadow-hard); }
+}
+.ff-card.r-Robadasso { animation: ffRobaRing 1.1s ease-in-out infinite alternate; }
+@keyframes ffRobaRing {
+  from { box-shadow: 0 0 0 3px #ff1744 inset, var(--ff-shadow-hard); }
+  to { box-shadow: 0 0 0 3px #200000 inset, var(--ff-shadow-hard); }
+}
+
+/* selection state must outrank the rarity ring above — matched specificity
+   (two classes) plus later source order so it always wins when both apply */
+.ff-card.ff-card-selected {
+  /* Hard, solid selection border — no blur, no glow, flat pixel outline,
+     exactly matching the prototype's .selected treatment. */
+  border: var(--ff-border-w) solid var(--ff-green);
+  box-shadow: 0 0 0 3px var(--ff-ink), 0 0 0 6px var(--ff-green), var(--ff-shadow-hard-sm);
+  animation: none;
+}
+
+.ff-card-top { display: flex; align-items: center; justify-content: space-between; }
+.ff-card-id { font-family: var(--ff-font-mono); font-size: 8px; color: var(--ff-cream-dark); letter-spacing: 0.5px; }
+
+.ff-status-dot { width: 9px; height: 9px; border: 2px solid var(--ff-ink); border-radius: 50%; }
+.ff-dot-work { background: var(--ff-green); }
+.ff-dot-low { background: var(--ff-orange); }
+.ff-dot-rest { background: var(--ff-petrol-500); }
+
+.ff-card-image-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--ff-petrol-800);
+  border: 2px solid var(--ff-ink);
+  border-radius: var(--ff-radius-sm);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(38px, 7vw, 80px);
+}
+.ff-card-image-wrap .sprite { width: 0.9em; height: 0.9em; }
+
+.ff-rarity-badge {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  min-width: 20px;
+  height: 16px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ff-orange); /* fallback only — every real rarity below overrides this */
+  color: var(--ff-ink);
+  border: 2px solid var(--ff-ink);
+  border-radius: 4px;
+  font-family: var(--ff-font-mono);
+  font-size: 8px;
+  font-weight: bold;
+  box-shadow: 2px 2px 0 var(--ff-ink);
+  z-index: 2;
+}
+/* Compound (2-class) selectors so these reliably outrank the flat fallback
+   above regardless of source order; reuses the same holoSlide keyframe the
+   rest of the game's rarity badges already animate with. */
+.ff-rarity-badge.rarity-Common { background: var(--c-common); }
+.ff-rarity-badge.rarity-Rare { background: var(--c-rare); }
+.ff-rarity-badge.rarity-Epic { background: var(--c-epic); color: #fff; }
+.ff-rarity-badge.rarity-Legendary { background: var(--c-legendary); }
+.ff-rarity-badge.rarity-SuperLegendario { background: linear-gradient(105deg, #ffea00, #fff59d, #ffd600); }
+.ff-rarity-badge.rarity-Imortal { background: var(--c-im); color: #fff; }
+.ff-rarity-badge.rarity-Shiny {
+  background: linear-gradient(90deg, #ff5252, #ffb300, #ffee58, #69f0ae, #40c4ff, #b388ff, #ff5252);
+  background-size: 300% 100%;
+  animation: holoSlide 2.5s linear infinite;
+}
+.ff-rarity-badge.rarity-Robadasso {
+  background: linear-gradient(105deg, #d50000, #1a0000, #ff1744, #000, #d50000);
+  background-size: 300% 100%;
+  animation: holoSlide 1.6s linear infinite;
+  color: #fff;
+}
+
+.ff-star {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  color: var(--ff-yellow);
+  font-size: 12px;
+  text-shadow: 1px 1px 0 var(--ff-ink);
+  z-index: 2;
+}
+
+.ff-attr-bar {
+  display: flex;
+  height: 6px;
+  border: 1px solid var(--ff-ink);
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--ff-petrol-900);
+}
+.ff-attr-bar span { height: 100%; display: block; }
+
+.ff-card-name {
+  font-family: var(--ff-font-display);
+  font-size: clamp(9px, 0.8vw, 11px);
+  color: var(--ff-cream);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Details panel ---- */
+
+.ff-details {
+  min-width: 0;
+  min-height: 0;
+  background: var(--ff-cream);
+  border: var(--ff-border-w) solid var(--ff-ink);
+  box-shadow: 0 0 0 3px var(--ff-petrol-500) inset, var(--ff-shadow-hard);
+  border-radius: var(--ff-radius-md);
+  padding: clamp(10px, 1.4vh, 18px);
+  display: flex;
+  flex-direction: column;
+  gap: clamp(8px, 1.2vh, 14px);
+  overflow-y: auto;
+}
+
+.ff-empty-state {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border: 3px dashed var(--ff-petrol-500);
+  border-radius: var(--ff-radius-md);
+}
+.ff-empty-icon { font-size: 48px; opacity: 0.5; }
+.ff-empty-text {
+  font-family: var(--ff-font-display);
+  font-size: 14px;
+  color: var(--ff-petrol-800);
+  text-align: center;
+  max-width: 70%;
+}
+
+.ff-scene {
+  position: relative;
+  flex: 0 0 auto;
+  height: clamp(200px, 30vh, 300px);
+  border: var(--ff-border-w) solid var(--ff-ink);
+  border-radius: var(--ff-radius-md);
+  box-shadow: var(--ff-shadow-hard);
+  overflow: hidden;
+  background: var(--ff-petrol-600);
+}
+.ff-sky {
+  position: absolute;
+  inset: 0;
+  height: 68%;
+  background: linear-gradient(180deg, #7fd8ff 0%, #bdeeff 100%);
+}
+.ff-cloud {
+  position: absolute;
+  width: 46px;
+  height: 18px;
+  background: #ffffff;
+  border: 2px solid var(--ff-ink);
+  border-radius: 10px;
+}
+.ff-ground {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 32%;
+  background: repeating-linear-gradient(90deg, var(--ff-green) 0px, var(--ff-green) 24px, var(--ff-green-dark) 24px, var(--ff-green-dark) 28px);
+  border-top: var(--ff-border-w) solid var(--ff-ink);
+}
+.ff-char-wrap {
+  position: absolute;
+  left: 50%;
+  bottom: 20%;
+  transform: translateX(-50%);
+  z-index: 2;
+  font-size: clamp(100px, 16vw, 170px);
+  filter: drop-shadow(4px 6px 0 rgba(0, 0, 0, 0.35));
+}
+.ff-char-wrap .sprite { width: 1em; height: 1em; }
+.ff-close-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 3;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ff-coral);
+  color: var(--ff-paper);
+  border: 2px solid var(--ff-ink);
+  border-radius: 6px;
+  box-shadow: var(--ff-shadow-hard-sm);
+  font-size: 14px;
+  font-weight: bold;
+  transition: transform 0.05s ease;
+  font-family: inherit;
+}
+.ff-close-btn:hover { background: var(--ff-coral-dark); }
+.ff-close-btn:active { transform: translate(3px, 3px); box-shadow: none; }
+
+.ff-info-block {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  background: rgba(11, 46, 60, 0.88);
+  border-top: var(--ff-border-w) solid var(--ff-ink);
+  padding: 8px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ff-hero-name {
+  margin: 0;
+  font-family: var(--ff-font-display);
+  font-size: clamp(16px, 1.8vw, 22px);
+  color: var(--ff-paper);
+  text-shadow: 2px 2px 0 var(--ff-ink);
+}
+.ff-meta-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ff-chip {
+  font-family: var(--ff-font-mono);
+  font-size: 9px;
+  border: 2px solid var(--ff-ink);
+  border-radius: 5px;
+  padding: 3px 7px;
+}
+.ff-chip-rarity { color: var(--ff-ink); background: var(--ff-orange); } /* fallback — overridden below per rarity */
+.ff-chip-rarity.rarity-Common { background: var(--c-common); }
+.ff-chip-rarity.rarity-Rare { background: var(--c-rare); }
+.ff-chip-rarity.rarity-Epic { background: var(--c-epic); color: #fff; }
+.ff-chip-rarity.rarity-Legendary { background: var(--c-legendary); }
+.ff-chip-rarity.rarity-SuperLegendario { background: linear-gradient(105deg, #ffea00, #fff59d, #ffd600); }
+.ff-chip-rarity.rarity-Imortal { background: var(--c-im); color: #fff; }
+.ff-chip-rarity.rarity-Shiny {
+  background: linear-gradient(90deg, #ff5252, #ffb300, #ffee58, #69f0ae, #40c4ff, #b388ff, #ff5252);
+  background-size: 300% 100%;
+  animation: holoSlide 2.5s linear infinite;
+}
+.ff-chip-rarity.rarity-Robadasso {
+  background: linear-gradient(105deg, #d50000, #1a0000, #ff1744, #000, #d50000);
+  background-size: 300% 100%;
+  animation: holoSlide 1.6s linear infinite;
+  color: #fff;
+}
+.ff-chip-level { color: var(--ff-paper); background: var(--ff-petrol-800); }
+.ff-chip-energy { color: var(--ff-ink); background: var(--ff-green-light); }
+
+.ff-reward-panel {
+  flex: 0 0 auto;
+  background: var(--ff-petrol-700);
+  padding: 10px 14px;
+  border: var(--ff-border-w) solid var(--ff-ink);
+  box-shadow: 0 0 0 3px var(--ff-petrol-500) inset, var(--ff-shadow-hard);
+  border-radius: var(--ff-radius-md);
+}
+.ff-panel-title {
+  margin: 0 0 8px;
+  font-family: var(--ff-font-mono);
+  font-size: 10px;
+  color: var(--ff-yellow);
+  letter-spacing: 1px;
+  text-align: center;
+}
+.ff-reward-row { display: flex; align-items: center; justify-content: space-around; }
+.ff-reward-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.ff-reward-divider { width: 2px; align-self: stretch; background: var(--ff-ink); margin: 0 10px; }
+.ff-reward-icon { font-size: 20px; filter: drop-shadow(1px 1px 0 var(--ff-ink)); }
+.ff-reward-icon img { width: 20px; height: 20px; object-fit: contain; vertical-align: middle; filter: drop-shadow(1px 1px 0 var(--ff-ink)); }
+.ff-reward-value { font-family: var(--ff-font-mono); font-size: 13px; color: var(--ff-green-light); }
+.ff-reward-unit { font-family: var(--ff-font-display); font-size: 10px; color: var(--ff-cream-dark); }
+
+.ff-stats-panel {
+  flex: 0 0 auto;
+  background: var(--ff-petrol-700);
+  padding: 10px 14px;
+  border: var(--ff-border-w) solid var(--ff-ink);
+  box-shadow: 0 0 0 3px var(--ff-petrol-500) inset, var(--ff-shadow-hard);
+  border-radius: var(--ff-radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ff-stat-row { display: flex; align-items: baseline; gap: 8px; }
+.ff-stat-icon { font-size: 14px; flex: 0 0 auto; }
+.ff-stat-label { font-family: var(--ff-font-display); font-size: 13px; color: var(--ff-cream); white-space: nowrap; flex: 0 0 auto; }
+.ff-stat-dots { flex: 1 1 auto; min-width: 12px; border-bottom: 2px dotted var(--ff-petrol-400); height: 0; transform: translateY(-4px); }
+.ff-stat-value { font-family: var(--ff-font-mono); font-size: 13px; flex: 0 0 auto; text-align: right; min-width: 32px; }
+
+.ff-skills-wrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.ff-skills-title { margin: 0 0 8px; font-family: var(--ff-font-mono); font-size: 10px; color: var(--ff-petrol-800); letter-spacing: 1px; }
+.ff-skills-grid { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.ff-skill-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: var(--ff-petrol-700);
+  padding: 6px 4px;
+  aspect-ratio: 1 / 1;
+  border: var(--ff-border-w) solid var(--ff-ink);
+  box-shadow: 0 0 0 3px var(--ff-petrol-500) inset, var(--ff-shadow-hard);
+  border-radius: var(--ff-radius-md);
+  transition: transform 0.05s ease;
+}
+.ff-skill-card:hover { background: var(--ff-petrol-600); }
+.ff-skill-empty { opacity: 0.55; grid-column: span 4; aspect-ratio: auto; flex-direction: row; padding: 10px; }
+.ff-skill-icon { font-size: clamp(18px, 2vw, 26px); line-height: 1; }
+.ff-skill-name { font-family: var(--ff-font-display); font-size: 9px; color: var(--ff-cream); text-align: center; line-height: 1.15; }
+
+.ff-footer { flex: 0 0 auto; display: flex; flex-direction: column; gap: 10px; }
+.ff-xp-wrap { display: flex; align-items: center; gap: 10px; }
+.ff-level-badge {
+  position: relative;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ff-orange);
+  border: 2px solid var(--ff-ink);
+  border-radius: 8px;
+  box-shadow: var(--ff-shadow-hard-sm);
+}
+.ff-level-star { position: absolute; color: var(--ff-paper); font-size: 20px; opacity: 0.9; }
+.ff-level-number { position: relative; font-family: var(--ff-font-mono); font-size: 11px; color: var(--ff-ink); z-index: 1; }
+.ff-xp-track {
+  position: relative;
+  flex: 1 1 auto;
+  height: 22px;
+  background: var(--ff-petrol-900);
+  border: 2px solid var(--ff-ink);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.ff-xp-fill { height: 100%; background: linear-gradient(180deg, var(--ff-yellow) 0%, var(--ff-orange) 100%); border-right: 2px solid var(--ff-ink); transition: width 0.3s ease; }
+.ff-xp-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--ff-font-mono);
+  font-size: 9px;
+  color: var(--ff-paper);
+  text-shadow: 1px 1px 0 var(--ff-ink);
+}
+.ff-evolve-btn {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ff-green);
+  border: 2px solid var(--ff-ink);
+  border-radius: 8px;
+  box-shadow: var(--ff-shadow-hard-sm);
+  color: var(--ff-ink);
+  font-size: 14px;
+  font-weight: bold;
+  transition: transform 0.05s ease;
+  font-family: inherit;
+}
+.ff-evolve-btn:hover { background: var(--ff-green-light); }
+.ff-evolve-btn:active { transform: translate(3px, 3px); box-shadow: none; }
+.ff-evolve-btn:disabled { background: var(--ff-petrol-500); cursor: not-allowed; opacity: 0.6; }
+
+.ff-actions-wrap { display: flex; gap: 10px; }
+.ff-toggle-btn {
+  flex: 1 1 auto;
+  height: 42px;
+  background: var(--ff-orange);
+  border: var(--ff-border-w) solid var(--ff-ink);
+  border-radius: 10px;
+  box-shadow: var(--ff-shadow-hard-sm);
+  font-family: var(--ff-font-mono);
+  font-size: 12px;
+  color: var(--ff-ink);
+  letter-spacing: 1px;
+  transition: transform 0.05s ease;
+}
+.ff-toggle-btn:hover { background: var(--ff-orange-light); }
+.ff-toggle-btn:active { transform: translate(3px, 3px); box-shadow: none; background: var(--ff-orange-dark); }
+.ff-toggle-btn.ff-toggle-rest { background: var(--ff-petrol-500); color: var(--ff-paper); }
+.ff-toggle-btn.ff-toggle-rest:hover { background: var(--ff-petrol-400); }
+
+.ff-lab-btn {
+  flex: 0 0 auto;
+  width: 96px;
+  height: 42px;
+  background: var(--ff-blue);
+  border: var(--ff-border-w) solid var(--ff-ink);
+  border-radius: 10px;
+  box-shadow: var(--ff-shadow-hard-sm);
+  font-family: var(--ff-font-mono);
+  font-size: 11px;
+  color: var(--ff-ink);
+  letter-spacing: 1px;
+  transition: transform 0.05s ease;
+}
+.ff-lab-btn:hover { background: #8ecbff; }
+.ff-lab-btn:active { transform: translate(3px, 3px); box-shadow: none; background: var(--ff-blue-dark); }
+
+@media (max-width: 860px) {
+  .ff-inventory-main { grid-template-columns: 1fr; grid-template-rows: auto auto; }
+  .ff-details { max-height: 60vh; }
+}

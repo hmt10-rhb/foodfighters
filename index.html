@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bombfodase</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="ff-hud-header">
+  <div class="ff-logo-plaque">
+    <span class="ff-logo-icon" aria-hidden="true">🧁</span>
+    <span class="ff-logo-text">FOOD FIGHTERS</span>
+  </div>
+
+  <div class="ff-hud-currencies">
+    <div class="ff-currency-pill" title="Food Coins — earned by bombing crates">
+      <img class="cur-icon" src="assets/coins/food_coin.png" alt="Food Coins">
+      <b id="score-display">0</b>
+      <button id="food-plus-btn" class="ff-plus-btn" title="Earn more Food Coins — jump to Treasure Hunt">+</button>
+    </div>
+    <div class="ff-currency-pill" title="Chef Gems — simulated in-game currency">
+      <img class="cur-icon" src="assets/coins/chef_coin.png" alt="Chef Gems">
+      <b id="bcoin-display">0</b>
+      <button id="exchange-btn" class="ff-plus-btn" title="Convert Food Coins into Chef Gems">+</button>
+    </div>
+    <div class="ff-mini-currency" title="Skill Shards — rare material, dropped from crates/chests, spent in the Lab to implant skills">🔮 <b id="shard-display">0</b></div>
+    <div class="ff-mini-currency" title="Total Prestige count — permanent mineRate multiplier from past resets, see the Prestige tab">🌌 <b id="prestige-display">0</b></div>
+  </div>
+
+  <div class="ff-hud-actions">
+    <button id="sleep-btn" class="ff-icon-btn" title="Sleep Mode OFF: no offline progress, resume exactly as left. Turn ON to earn a slow 15%-rate trickle while away (capped at 8h).">🌙</button>
+    <button id="legend-btn" class="ff-icon-btn" title="Rarity &amp; skills guide">❓</button>
+    <button id="trophy-btn" class="ff-icon-btn" title="Ranking">🏆</button>
+    <button id="mail-btn" class="ff-icon-btn" title="Tasks">📧<span class="ff-badge" id="mail-badge">0</span></button>
+    <button id="settings-btn" class="ff-icon-btn" title="Settings">🔧</button>
+  </div>
+</header>
+
+<div id="shell">
+  <main>
+    <section id="tab-hunt" class="tab-panel active">
+      <div id="hud-top">
+        <div class="hud-stat big">
+          <span class="hud-label">Wave</span>
+          <span class="hud-value"><b id="hud-wave">1</b> <em id="hud-mult" title="Reward multiplier — fixed at ×1.00 now, waves no longer scale reward/difficulty">×1.00</em></span>
+        </div>
+        <div class="hud-stat">
+          <span class="hud-label">Crates</span>
+          <span class="hud-value" id="hud-crates">0 / 0</span>
+        </div>
+        <div class="hud-stat">
+          <span class="hud-label">Workers</span>
+          <span class="hud-value" id="hud-workers">0 / 15</span>
+        </div>
+        <div class="hud-stat">
+          <span class="hud-label">Earn rate</span>
+          <span class="hud-value" id="hud-rate">0.00 Food Coins/s</span>
+        </div>
+        <div class="hud-stat">
+          <span class="hud-label">Recovery</span>
+          <span class="hud-value" id="hud-recovery">0.25 ⚡/s</span>
+        </div>
+        <div class="hud-actions">
+          <button class="btn btn-small bulk-work">⛏️ All to Work</button>
+          <button class="btn btn-small btn-ghost bulk-rest">😴 All to Rest</button>
+        </div>
+      </div>
+      <div id="hunt-main">
+        <aside id="powers-panel" title="Power-ups — not implemented yet, shown here as a preview of future ideas">
+          <div class="power-slot">
+            <div class="power-icon-wrap">
+              <span class="power-icon" aria-hidden="true">🧨</span>
+              <span class="power-count">0</span>
+              <span class="power-tag">soon</span>
+            </div>
+            <span class="power-label">Blast Boost</span>
+          </div>
+          <div class="power-slot">
+            <div class="power-icon-wrap">
+              <span class="power-icon" aria-hidden="true">🛡️</span>
+              <span class="power-count">0</span>
+              <span class="power-tag">soon</span>
+            </div>
+            <span class="power-label">Crumble Shield</span>
+          </div>
+          <div class="power-slot">
+            <div class="power-icon-wrap">
+              <span class="power-icon" aria-hidden="true">⚡</span>
+              <span class="power-count">0</span>
+              <span class="power-tag">soon</span>
+            </div>
+            <span class="power-label">Sugar Rush</span>
+          </div>
+          <div class="power-slot">
+            <div class="power-icon-wrap">
+              <span class="power-icon" aria-hidden="true">🌟</span>
+              <span class="power-count">0</span>
+              <span class="power-tag">soon</span>
+            </div>
+            <span class="power-label">Lucky Sprinkle</span>
+          </div>
+        </aside>
+        <div id="arena-wrap">
+          <div id="arena-frame" class="theme-jardim-fresquinho">
+            <div class="arena-plaque" id="arena-plaque">Jardim Fresquinho</div>
+            <div id="arena"></div>
+          </div>
+        </div>
+        <aside id="bombers-panel">
+          <h3>Active bombers</h3>
+          <div id="bombers"></div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="tab-inventory" class="tab-panel ff-scope">
+      <div class="panel-head">
+        <h2>Your Heroes</h2>
+        <div class="bulk-row">
+          <button class="btn btn-small bulk-work">⛏️ All to Work</button>
+          <button class="btn btn-small btn-ghost bulk-rest">😴 All to Rest</button>
+        </div>
+        <label class="sort-label">Sort by
+          <select id="sort-select">
+            <option value="rarity">Rarity</option>
+            <option value="power">Power</option>
+            <option value="level">Level</option>
+            <option value="energy">Energy</option>
+          </select>
+        </label>
+      </div>
+      <div class="ff-inventory-main">
+        <div class="ff-left-panel">
+          <div id="inventory-grid" class="ff-grid"></div>
+          <div class="ff-grid-footer"><span id="ff-collected-count">Heroes collected: 0</span></div>
+        </div>
+        <section id="inventory-details" class="ff-details"></section>
+      </div>
+    </section>
+
+    <section id="tab-shop" class="tab-panel">
+      <div class="panel-head"><h2>Hero Packs</h2>
+        <p class="muted">Bigger packs cost more but roll better rarity odds.</p></div>
+      <div id="pack-grid" class="card-grid packs"></div>
+      <div class="panel-head"><h2>Houses</h2>
+        <p class="muted">Each house permanently speeds up energy recovery for all resting heroes.</p></div>
+      <div id="house-grid" class="card-grid packs"></div>
+    </section>
+
+    <section id="tab-fusion" class="tab-panel">
+      <div class="panel-head">
+        <h2>Fusion Lab</h2>
+        <p class="muted"><b>9 same-rarity heroes → 1 fusion attempt.</b> Success upgrades to the next rarity — with a small chance of a <b>+2 tier jump</b>. Failure still returns 1 fresh hero of the same rarity, so an attempt is never a total wipe. The higher the tier, the lower the odds (shown per row). Auto-fuse picks your 9 <b>lowest-level</b> heroes so your invested ones stay safe. Only Robadasso can't be fused further.</p>
+      </div>
+      <div id="fusion-auto"></div>
+      <div class="panel-head">
+        <h2>Manual select</h2>
+        <p class="muted">Prefer to choose exactly which heroes get fused? Pick 9 below.</p>
+      </div>
+      <div id="fusion-controls"></div>
+      <div id="fusion-grid" class="card-grid"></div>
+    </section>
+
+    <section id="tab-lab" class="tab-panel">
+      <div class="panel-head">
+        <h2>🧪 Lab</h2>
+        <p class="muted">Hero-modification systems: spend currency, materials or other heroes to reshape one you want to invest in.</p>
+      </div>
+
+      <div class="lab-box">
+        <h3>🎲 Stat Re-roll</h3>
+        <p class="muted">Re-roll a hero's power/range/speed within its own rarity band. Cost scales with rarity and level. Keeps identity, rarity, level, skills and any permanent Sacrifice/Ascension bonuses.</p>
+        <div class="lab-row">
+          <span id="reroll-preview" class="lab-hero-preview"></span>
+          <select id="reroll-select"></select>
+          <span id="reroll-cost" class="muted"></span>
+          <button id="reroll-btn" class="btn btn-small">Re-roll</button>
+        </div>
+      </div>
+
+      <div class="lab-box">
+        <h3>💀 Sacrifice <span class="stub-tag">XP Dust</span></h3>
+        <p class="muted">Burn owned heroes into permanent power for ONE chosen hero. Never changes rarity — that's what Fusion is for.</p>
+        <label class="muted"><span id="sac-target-preview" class="lab-hero-preview"></span> Target hero: <select id="sac-target-select"></select></label>
+        <div id="sac-victim-list" class="checklist"></div>
+        <div class="lab-row">
+          <span id="sac-preview" class="muted"></span>
+          <button id="sac-btn" class="btn btn-small">Sacrifice selected</button>
+        </div>
+      </div>
+
+      <div class="lab-box">
+        <h3>👶 Nursery <span class="stub-tag">Breeding</span></h3>
+        <p class="muted">Pick 2 parents to breed 1 child. Child rarity is always the <b>LOWER</b> of the two parents' — breeding never upgrades rarity, only Fusion does. Phantom/Swift have a real chance to inherit; Midas/Cataclysm can never be inherited.</p>
+        <div class="lab-row">
+          <label class="muted"><span id="breed-p1-preview" class="lab-hero-preview"></span> Parent 1: <select id="breed-p1-select"></select></label>
+          <label class="muted"><span id="breed-p2-preview" class="lab-hero-preview"></span> Parent 2: <select id="breed-p2-select"></select></label>
+          <span id="breed-cost" class="muted"></span>
+          <button id="breed-btn" class="btn btn-small">Breed</button>
+        </div>
+      </div>
+
+      <div class="lab-box">
+        <h3>🔮 Skill Implant</h3>
+        <p class="muted">Spend Skill Shards (dropped rarely — 0.3% per crate, 0.5% per chest destroyed) to attempt implanting Phantom or Swift on a hero who doesn't have it. Shards are consumed either way. Midas/Cataclysm can never be implanted.</p>
+        <div class="lab-row">
+          <span id="implant-preview" class="lab-hero-preview"></span>
+          <label class="muted">Hero: <select id="implant-select"></select></label>
+          <label class="muted"><input type="radio" name="implant-skill" value="ghost" checked> 👻 Phantom</label>
+          <label class="muted"><input type="radio" name="implant-skill" value="swift"> 💨 Swift</label>
+          <span id="implant-cost" class="muted"></span>
+          <button id="implant-btn" class="btn btn-small">Implant</button>
+        </div>
+      </div>
+
+      <div class="lab-box">
+        <h3>🌌 Ascension</h3>
+        <p class="muted">Any Epic+ hero at max level (10) can consume 3 OTHER heroes of the <b>same rarity</b> to Ascend, gaining a permanent stacking mineRate bonus (diminishing per extra ascension on that hero). The main endgame sink once you're out of other things to spend heroes on.</p>
+        <label class="muted"><span id="ascend-target-preview" class="lab-hero-preview"></span> Hero to Ascend: <select id="ascend-target-select"></select></label>
+        <div id="ascend-fodder-list" class="checklist"></div>
+        <div class="lab-row">
+          <span id="ascend-preview" class="muted"></span>
+          <button id="ascend-btn" class="btn btn-small">Ascend</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-prestige" class="tab-panel">
+      <div class="panel-head">
+        <h2>🌌 Prestige</h2>
+        <p class="muted">Permanent meta-progression: burn your current run for a lasting boost.</p>
+      </div>
+
+      <div class="lab-box">
+        <h3>✨ Prestige Reset</h3>
+        <p class="muted">Resets your wave back to 1 and your Food Coins/Chef Gems to starting amounts. Your hero roster is <b>never</b> touched. In exchange you gain a permanent, stacking mineRate multiplier based on how far you got — with diminishing returns per prestige, so resetting repeatedly at a low wave isn't worth it.</p>
+        <div id="prestige-preview" class="stat-row"></div>
+        <button id="prestige-btn" class="btn btn-danger">Prestige now</button>
+      </div>
+
+      <div class="panel-head"><h2>⛏️ Global Upgrade Tree</h2>
+        <p class="muted">Permanent, uncapped Chef Gems sink — every level applies to every hero you own, forever, stacking with everything else.</p></div>
+      <div id="upgrade-grid" class="card-grid packs"></div>
+    </section>
+
+    <section id="tab-ranking" class="tab-panel">
+      <div class="panel-head"><h2>Miner Ranking</h2>
+        <p class="muted">Sorted by total Food Coins mined all-time.</p></div>
+      <table id="ranking-table">
+        <thead><tr><th>#</th><th>Miner</th><th>Food Coins mined</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section id="tab-tasks" class="tab-panel">
+      <div class="panel-head"><h2>Tasks</h2></div>
+      <div id="tasks-body"></div>
+    </section>
+
+    <section id="tab-extras" class="tab-panel">
+      <div class="panel-head"><h2>Extras</h2></div>
+
+      <div class="extra-box">
+        <h3>🔗 Referral <span class="stub-tag">placeholder</span></h3>
+        <p class="muted">Demo stub — this link goes nowhere, referral rewards are not implemented.</p>
+        <div class="ref-row">
+          <code id="ref-code"></code>
+          <button id="ref-copy" class="btn btn-small">Copy link</button>
+        </div>
+      </div>
+
+      <div class="extra-box">
+        <h3>🤖 Automine Package <span class="stub-tag">placeholder</span></h3>
+        <p class="muted">Cosmetic selector only — it does not change mining behavior in this MVP.</p>
+        <select id="automine-select">
+          <option value="none">None</option>
+          <option value="basic">Basic (30 days)</option>
+          <option value="pro">Pro (90 days)</option>
+          <option value="ultra">Ultra (365 days)</option>
+        </select>
+      </div>
+
+      <div class="extra-box">
+        <h3>🏛️ Club</h3>
+        <p class="muted">Coming soon.</p>
+      </div>
+
+      <div class="extra-box danger">
+        <h3>♻️ Reset save</h3>
+        <p class="muted">Wipes all progress from this browser.</p>
+        <button id="reset-btn" class="btn btn-small btn-danger">Reset everything</button>
+      </div>
+
+      <p class="muted">Fan-made single-player mechanics demo for portfolio purposes. No blockchain, no wallets, no real currency — everything is simulated locally in your browser.</p>
+    </section>
+  </main>
+</div>
+
+<!-- Primary navigation, relocated here from the old collapsible side rail.
+     6 slots per the reference (Hunt has no icon — it's the default/home view,
+     always reachable by collapsing back to it or via the Food Coins "+"
+     shortcut in the header). "Chefs" is an honest placeholder for a future
+     dedicated screen, NOT a Ranking shortcut — Ranking is reachable via the
+     🏆 icon reinstated in the header instead. -->
+<nav id="bottom-nav">
+  <div id="bottom-nav-tabs">
+    <button class="tab-btn bottom-nav-btn" data-tab="fusion"><span class="bottom-nav-ico">⚗️</span><span class="bottom-nav-label">Fusão</span></button>
+    <button class="tab-btn bottom-nav-btn" data-tab="lab"><span class="bottom-nav-ico">🛡️</span><span class="bottom-nav-label">Defesa</span></button>
+    <button class="tab-btn bottom-nav-btn" data-tab="inventory"><span class="bottom-nav-ico">🎒</span><span class="bottom-nav-label">Bolsa</span></button>
+    <button class="tab-btn bottom-nav-btn" data-tab="prestige"><span class="bottom-nav-ico">🏠</span><span class="bottom-nav-label">Casa</span></button>
+    <button class="tab-btn bottom-nav-btn" data-tab="shop"><span class="bottom-nav-ico">🛒</span><span class="bottom-nav-label">Loja</span></button>
+    <button id="chefs-btn" class="bottom-nav-btn" title="Chefs — coming soon"><span class="bottom-nav-ico">👨‍🍳</span><span class="bottom-nav-label">Chefs</span></button>
+  </div>
+  <button id="bottom-nav-toggle" class="ff-icon-btn" title="Collapse navigation">▼</button>
+</nav>
+
+<div id="modal-backdrop" class="hidden">
+  <div id="modal">
+    <div id="modal-body"></div>
+    <button id="modal-close" class="btn">Close</button>
+  </div>
+</div>
+
+<div id="toast" class="hidden"></div>
+
+<script src="game.js"></script>
+</body>
+</html>
