@@ -1012,6 +1012,17 @@ function applyTheme(id) {
 // can be changed later without touching any placement/collision logic.
 const G_COLS = 35, G_ROWS = 17;
 let tileSize = 44; // recomputed from the viewport by layoutArena()
+// T_CRATE (2026-07-23 cleanup): kept as a DECLARED-BUT-UNUSED constant
+// rather than deleted+renumbered. It's confirmed dead — seedCrates() never
+// places it in any real generated map, and every reference to it in game
+// LOGIC has been removed below (isDestructible(), tileClassFor()). It's
+// left declared, at its original numeric slot, specifically so nothing
+// ever has to renumber T_CHEST/T_JAULA/T_OBSTACLE: renumbering is real risk
+// for zero benefit here — anything that hardcoded a raw tile number instead
+// of the named constant (a real possibility in code I haven't audited every
+// corner of, and an even bigger risk for any persisted/serialized save data
+// that stored these as plain numbers) would silently break. Leaving the
+// slot reserved and simply never assigning it is the safe version of "gone."
 const T_WALL = 0, T_FLOOR = 1, T_CRATE = 2, T_CHEST = 3, T_JAULA = 4, T_OBSTACLE = 5;
 // true only for tiles with HP that can be bombed open for a reward. Mesa
 // Variável (T_OBSTACLE) is DESTRUCTIBLE now — master spec #9 explicitly
@@ -1026,7 +1037,11 @@ const T_WALL = 0, T_FLOOR = 1, T_CRATE = 2, T_CHEST = 3, T_JAULA = 4, T_OBSTACLE
 // spec (only the 5 named chest tiers get one) — see MESA_VARIAVEL_HP below
 // for the flagged judgment call on what to use instead of inventing an
 // unlisted reward.
-function isDestructible(t) { return t === T_CRATE || t === T_CHEST || t === T_JAULA || t === T_OBSTACLE; }
+// T_CRATE deliberately excluded (2026-07-23 cleanup) — it's a dead tile
+// value (see its own comment above), never placed by seedCrates(), so it
+// was never a real destructible in practice; removing it here is pure
+// cleanup; every other type is unchanged.
+function isDestructible(t) { return t === T_CHEST || t === T_JAULA || t === T_OBSTACLE; }
 // true for anything that PERMANENTLY blocks movement + bomb blast: only the
 // 136 fixed Mesa Fixa tables now (T_WALL) — Mesa Variável moved to
 // isDestructible() above (it still blocks movement/blast UNTIL destroyed,
@@ -1078,15 +1093,20 @@ const JAULA_RARITY_WEIGHTS = {
 // to explode after being planted (was 3 ticks = 1.5s) — a clean integer
 // tick count, no rounding needed.
 const AI_MS = 500, FUSE_TICKS = 7;
-// Each smashed crate pays N seconds' worth of the planter's idle mineRate, so
-// on-screen earnings track the offline averaged rate instead of a separate
-// economy. NOTE: this CRATE_WORTH_S/CHEST_WORTH_S-driven formula no longer
-// applies to the 5 named chest tiers (see CHEST_TIER_REWARD_RANGE below,
-// master spec #8 — those are now fixed reward RANGES, not an HP-derived
-// formula) or to Jaula (grants a Rango, not currency). CRATE_WORTH_S is kept
-// only because Mesa Variável (T_CRATE's numeric slot is unused; Mesa
-// Variável is T_OBSTACLE) pays nothing at all — see MESA_VARIAVEL_HP above.
-const CRATE_WORTH_S = 2, CHEST_WORTH_S = 10;
+// This N-seconds-of-idle-mineRate-driven payout formula no longer applies
+// to the 5 named chest tiers (see CHEST_TIER_REWARD_RANGE below, master
+// spec #8 — those are now fixed reward RANGES, not an HP-derived formula)
+// or to Jaula (grants a Rango, not currency) or to Mesa Variável (pays
+// nothing at all — see MESA_VARIAVEL_HP above). CHEST_WORTH_S itself is
+// vestigial now too (referenced only in comments below, never read by real
+// code) but is left as-is — out of scope for this cleanup, which is
+// specifically about the dead T_CRATE tile type.
+// CRATE_WORTH_S REMOVED (2026-07-23 cleanup): it existed only to price a
+// plain "Caixa" (T_CRATE) tile's reward — T_CRATE is confirmed dead
+// (seedCrates() never places it; see its own comment at the tile-constant
+// declaration), so this constant was never actually read by any live code
+// path either.
+const CHEST_WORTH_S = 10;
 // Folhado de Ouro skims +50% Food Coins on anything its bombs break (same
 // bonus as the old Midas); Temperamental chains each blast to 5 extra random
 // valid targets at NORMAL hit damage (UP from the old Cataclysm's 3, per
@@ -1296,7 +1316,15 @@ function tileClassFor(val) {
   if (val === T_CHEST) return 'chest';
   if (val === T_JAULA) return 'jaula';
   if (val === T_OBSTACLE) return 'obstacle';
-  return 'crate';
+  // T_CRATE cleanup (2026-07-23): this fallback used to implicitly BE the
+  // T_CRATE case ('crate' was the default for "none of the above", since
+  // T_CRATE was the one tile value never explicitly checked) — dead code in
+  // practice, since gridTiles only ever holds the 5 real values above.
+  // Replaced with a safe, non-crate-implying default so nothing regresses
+  // for a genuinely unexpected value; the .tile-prop.crate CSS rule this
+  // used to select is now provably unreachable (flagged in the final report
+  // — out of this cleanup's game.js-only scope).
+  return 'floor';
 }
 
 // Single source of truth for a tile PROP's className (the .tile-prop overlay
