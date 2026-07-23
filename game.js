@@ -1943,6 +1943,30 @@ function aiTick() {
         break;
       }
     }
+    // VISUAL CORNER-CUT FIX (2026-07-23, re-verification requested alongside
+    // the Massa Leve fix above): every individual step here is already
+    // cardinal-only and canWalk()-gated (bfsWalk()/moveActor(), re-verified
+    // from scratch — see the new tests) — the GRID LOGIC never violates the
+    // "4 directions only, no corner-cutting" rule. But when more than one
+    // step lands in the SAME tick (fast Rangos, high Speed), all of them
+    // call positionActor() synchronously before the browser ever paints —
+    // it only ever renders the LAST transform value, animated via .actor's
+    // CSS `transition: transform 0.45s linear` from wherever the sprite was
+    // BEFORE this tick. Since translate(x,y) interpolates both axes
+    // together, a multi-step tick whose net path bends (e.g. 1 tile east
+    // then 1 tile south around an L-shaped corner) would render as one
+    // smooth DIAGONAL slide straight to the final tile — visually cutting
+    // across whatever sits at the diagonal corner between them, even though
+    // no blocking tile was ever logically entered. Standard fix: snap
+    // instantly (no transition) whenever a tick moved more than one tile,
+    // forcing a reflow so the "no transition" state actually takes effect
+    // before it's restored for the next (normal, single-step) tick's smooth
+    // animation. Only paid for the multi-step case, not every tick.
+    if (stepsThisTick > 1) {
+      a.el.style.transition = 'none';
+      void a.el.offsetHeight; // force layout so 'none' is locked in before the transition is restored below
+      a.el.style.transition = '';
+    }
   }
   for (const b of [...bombs]) {
     b.t--;
@@ -2174,19 +2198,38 @@ function waveClear() {
 }
 
 // wave walls can appear under a standing hero; shove them onto open floor
+//
+// BUG FIX (2026-07-23, live production report: "Massa Leve atravessa
+// QUALQUER objeto"): this used to `continue` (skip repositioning
+// entirely) for ANY Massa Leve hero, on the assumption that "Massa Leve can
+// stand on destructibles anyway, so it never needs moving." That reasoning
+// only covers the real whitelist (Mesa Variável/Baú/Jaula) — it does NOT
+// account for the fresh wave's map placing Mesa Fixa (T_WALL) exactly where
+// the hero was standing, which is a real, common case (every wave clear
+// rerolls the whole grid). Since this function is the ONLY place that ever
+// assigns a.r/a.c directly, outside the per-step canWalk()-gated BFS
+// movement in moveActor()/bfsWalk(), it completely bypassed canWalk() —
+// silently leaving a Massa Leve Rango stranded standing ON a Mesa Fixa
+// table (or anything else) after a wave transition, no movement/phasing
+// involved at all. That's almost certainly what read as "walks through/is
+// inside ANY object" in the field: canWalk() itself (verified directly)
+// and the BFS movement path (verified via bfsWalk()'s own canWalk() gate on
+// every edge) were both already correct. Fixed by checking the ACTUAL new
+// tile against the same whitelist canWalk() uses, instead of blanket-
+// exempting Massa Leve regardless of what that tile turned out to be.
 function repositionActors() {
   for (const id of Object.keys(actors)) {
     const a = actors[id];
     const h = state.heroes.find(x => x.id === Number(id));
-    if (h && hasMassaLeve(h)) continue;
-    if (tileAt(a.r, a.c) !== T_FLOOR) {
-      const spots = openFloors();
-      if (!spots.length) continue;
-      const [r, c] = pick(spots);
-      a.r = r;
-      a.c = c;
-      positionActor(a.el, c, r);
-    }
+    const t = tileAt(a.r, a.c);
+    const okToStay = t === T_FLOOR || (h && hasMassaLeve(h) && isDestructible(t));
+    if (okToStay) continue;
+    const spots = openFloors();
+    if (!spots.length) continue;
+    const [r, c] = pick(spots);
+    a.r = r;
+    a.c = c;
+    positionActor(a.el, c, r);
   }
 }
 
