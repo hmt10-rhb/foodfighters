@@ -2726,6 +2726,71 @@ function michelinDebugGrant(amount) {
   toast(`🌟 +${amount} Estrela Michelin (debug — sem PIX real ainda)`);
 }
 
+// Estrela Michelin buy calculator (2026-07-23) — the "+" on the header pill
+// is the ONLY purchase entry point (per explicit instruction: "não tem
+// outro método de comprá-la"), opening this as a centered popup in the
+// existing shared #modal-backdrop (same pattern every other modal in this
+// file already uses — showLegendModal()/showAccountModal() etc.).
+//
+// Tiers are the exact table already agreed in design (see FF - Monetização
+// e VIP in Obsidian) — derived from the old Chef Gems table at 5:1
+// (1 Michelin = 5 Chef Gems), rounded to the nearest centavo. Whichever
+// tier the CHOSEN QUANTITY falls into prices the WHOLE purchase (matching
+// the reference image's own behavior — not a blended/graduated rate).
+const MICHELIN_PRICE_TIERS = [
+  { min: 1, max: 19, price: 0.63 },
+  { min: 20, max: 39, price: 0.58 },
+  { min: 40, max: 79, price: 0.53 },
+  { min: 80, max: 139, price: 0.48 },
+  { min: 140, max: 299, price: 0.43 },
+  { min: 300, max: Infinity, price: 0.38 },
+];
+function michelinTierFor(qty) {
+  return MICHELIN_PRICE_TIERS.find(t => qty >= t.min && qty <= t.max) || MICHELIN_PRICE_TIERS[0];
+}
+function fmtBRL(n) {
+  return 'R$ ' + n.toFixed(2).replace('.', ',');
+}
+
+let michelinBuyQty = 10; // reset to this default every time the modal opens fresh
+function showMichelinBuyModal() {
+  michelinBuyQty = 10;
+  renderMichelinBuyModal();
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+function setMichelinBuyQty(qty) {
+  michelinBuyQty = Math.max(1, Math.min(99999, Math.round(qty) || 1));
+  renderMichelinBuyModal();
+}
+const MICHELIN_QTY_PRESETS = [5, 10, 20, 50, 100, 300];
+function renderMichelinBuyModal() {
+  const qty = michelinBuyQty;
+  const tier = michelinTierFor(qty);
+  const total = qty * tier.price;
+  document.getElementById('modal-body').innerHTML = `
+    <h3>🌟 Comprar Estrela Michelin</h3>
+    <p class="muted">Escolha a quantidade — quanto mais compra de uma vez, menor o preço por unidade.</p>
+    <div class="michelin-presets">
+      ${MICHELIN_QTY_PRESETS.map(p => `<button type="button" class="btn btn-small${p === qty ? ' michelin-preset-active' : ''}" data-michelin-qty="${p}">${p}</button>`).join('')}
+    </div>
+    <div class="michelin-stepper">
+      <button type="button" id="michelin-qty-minus" class="btn btn-small btn-ghost">−</button>
+      <input type="number" id="michelin-qty-input" min="1" step="1" value="${qty}">
+      <button type="button" id="michelin-qty-plus" class="btn btn-small btn-ghost">+</button>
+    </div>
+    <div class="michelin-calc-box">
+      <div class="michelin-calc-row"><span>Quantidade</span><b>${qty} 🌟</b></div>
+      <div class="michelin-calc-row"><span>Faixa</span><b>${tier.min}${tier.max === Infinity ? '+' : '–' + tier.max}</b></div>
+      <div class="michelin-calc-row"><span>Preço/un</span><b>${fmtBRL(tier.price)}</b></div>
+      <div class="michelin-calc-row michelin-calc-total"><span>Total</span><b>${fmtBRL(total)}</b></div>
+    </div>
+    <button type="button" id="michelin-generate-pix" class="btn" style="width:100%;margin-top:10px;">Gerar PIX</button>
+    <p class="muted" style="margin-top:8px;font-size:0.78rem">⚠️ Pagamento real ainda não configurado — este botão é um placeholder até a integração com o gateway de pagamento ser concluída.</p>
+    ${(state.michelinCoin || 0) >= MICHELIN_EXCHANGE_RATE ? `
+    <button type="button" id="michelin-convert-link" class="btn btn-ghost btn-small" style="margin-top:10px;">Converter saldo atual (${fmtCurrency(state.michelinCoin)} 🌟) em Chef Gems</button>` : ''}
+  `;
+}
+
 // wave walls can appear under a standing hero; shove them onto open floor
 //
 // BUG FIX (2026-07-23, live production report: "Massa Leve atravessa
@@ -4915,7 +4980,13 @@ function bindEvents() {
   });
 
   document.getElementById('exchange-btn').addEventListener('click', exchange);
-  document.getElementById('michelin-exchange-btn').addEventListener('click', michelinExchange);
+  // "+" on the Estrela Michelin pill is the ONLY way to acquire it (2026-07-23,
+  // explicit instruction) — opens the buy calculator popup, not a direct
+  // exchange like the Chef Gems "+" does. Converting an EXISTING Michelin
+  // balance down into Chef Gems still exists (michelinExchange()), just
+  // moved inside that popup as a secondary action — see
+  // renderMichelinBuyModal()'s #michelin-convert-link.
+  document.getElementById('michelin-exchange-btn').addEventListener('click', showMichelinBuyModal);
   document.getElementById('legend-btn').addEventListener('click', showLegendModal);
 
   // Roda da Sorte floating button — draggable (2026-07-23): a plain
@@ -5050,6 +5121,30 @@ function bindEvents() {
     if (e.target.closest('#wheel-reveal-continue')) {
       document.getElementById('modal-backdrop').classList.add('hidden');
     }
+  });
+
+  // Estrela Michelin buy calculator (2026-07-23) — renderMichelinBuyModal()
+  // re-renders the whole #modal-body on every quantity change (same simple
+  // full-rerender approach the rest of this file's small live-updating
+  // panels already use), so this delegation just needs to read the CURRENT
+  // input value each time rather than track its own state.
+  document.getElementById('modal-body').addEventListener('click', e => {
+    const preset = e.target.closest('[data-michelin-qty]');
+    if (preset) { setMichelinBuyQty(Number(preset.dataset.michelinQty)); return; }
+    if (e.target.closest('#michelin-qty-minus')) { setMichelinBuyQty(michelinBuyQty - 1); return; }
+    if (e.target.closest('#michelin-qty-plus')) { setMichelinBuyQty(michelinBuyQty + 1); return; }
+    if (e.target.closest('#michelin-generate-pix')) {
+      toast('Pagamento por PIX ainda não está configurado — em breve!');
+      return;
+    }
+    if (e.target.closest('#michelin-convert-link')) {
+      michelinExchange();
+      document.getElementById('modal-backdrop').classList.add('hidden');
+      return;
+    }
+  });
+  document.getElementById('modal-body').addEventListener('change', e => {
+    if (e.target.id === 'michelin-qty-input') setMichelinBuyQty(Number(e.target.value));
   });
 
   document.getElementById('reroll-select').addEventListener('change', updateRerollCost);

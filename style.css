@@ -1654,6 +1654,37 @@ body.shaking { animation: bodyShake 0.5s ease-in-out 2; }
   overflow-y: auto;
 }
 #modal h3 { color: var(--accent2); margin-bottom: 12px; }
+
+/* ===== Estrela Michelin buy calculator (2026-07-23) ===== */
+.michelin-presets { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
+.michelin-presets .michelin-preset-active { background: var(--accent2); }
+.michelin-stepper { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.michelin-stepper input[type="number"] {
+  flex: 1;
+  text-align: center;
+  background: #141009;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 1rem;
+  font-family: inherit;
+}
+.michelin-calc-box {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.michelin-calc-row { display: flex; justify-content: space-between; padding: 4px 0; color: var(--muted); }
+.michelin-calc-row b { color: var(--text); }
+.michelin-calc-row.michelin-calc-total {
+  border-top: 1px solid var(--border);
+  margin-top: 6px;
+  padding-top: 8px;
+  font-size: 1.1rem;
+}
+.michelin-calc-row.michelin-calc-total b { color: var(--accent2); }
 #modal .pull-list { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
 #modal .pull-item {
   background: var(--card);
