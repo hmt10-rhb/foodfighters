@@ -23,6 +23,29 @@
   --c-epic: #4a148c;
   --c-legendary: #ce93d8;
   --c-buteco: #ffd700;
+  /* Lighter tints of each rarity color (2026-07-23, Armário "onda infinita"
+     effect — see .ff-card.r-*/.ff-details.r-*'s ffRarityWave animation and
+     .ff-card-name/.ff-hero-name's holoSlide reuse further down): each is
+     just its own base --c-* mixed toward white via color-mix(), not a
+     hand-picked hex value, so the wave's "light" stage always stays a true
+     tint of that exact rarity color rather than an independently-chosen
+     color that could drift out of sync if the base ever changes.
+     The color-mix() percentage is how much of the ORIGINAL color survives
+     the mix (the rest is white) — LOWER retained-% = MORE lightened = a
+     BIGGER swing between the wave's two stages. That retained-% drops as
+     rarity rank climbs (65/55/45/35% for common/rare/epic/legendary), so
+     the color swing gets progressively more dramatic for higher tiers —
+     that, plus a mildly faster loop per tier (see the animation-duration
+     values below), is the "more pronounced for higher tiers" lever, since a
+     flat brightness/speed bump alone reads as much weaker on the very dark
+     --c-epic purple than a genuine color-distance swing does. Only these 4
+     tiers get a tint variable — Comida de Buteco/Receita de Vó already have
+     their own established, appropriately-more-elaborate effects
+     (butecoShine/ffHoloRing) and don't need one. */
+  --c-common-lt: color-mix(in srgb, var(--c-common) 65%, white);
+  --c-rare-lt: color-mix(in srgb, var(--c-rare) 55%, white);
+  --c-epic-lt: color-mix(in srgb, var(--c-epic) 45%, white);
+  --c-legendary-lt: color-mix(in srgb, var(--c-legendary) 35%, white);
 }
 
 html, body { height: 100%; }
@@ -2141,13 +2164,34 @@ body:not(.ff-authed) #wheel-panel { display: none; }
 
 /* Rarity signal lives on the CARD now (inset ring color), not on the
    portrait — the image itself renders with no frame at all. Reuses the same
-   --c-* rarity color tokens the rest of the game already uses. */
-.ff-card.r-CASEIRO { box-shadow: 0 0 0 3px var(--c-common) inset, var(--ff-shadow-hard); }
-.ff-card.r-TEMPERADO { box-shadow: 0 0 0 3px var(--c-rare) inset, var(--ff-shadow-hard); }
-.ff-card.r-GOURMET { box-shadow: 0 0 0 3px var(--c-epic) inset, var(--ff-shadow-hard); }
-.ff-card.r-ESPECIALIDADE_DA_CASA { box-shadow: 0 0 0 3px var(--c-legendary) inset, var(--ff-shadow-hard); }
+   --c-* rarity color tokens the rest of the game already uses.
+   "Onda infinita" border wave (2026-07-23, user-requested — extending the
+   ffHoloRing/butecoShine precedent, which used to be top-2-tiers-only, to
+   every rarity): box-shadow can't hold a spatial gradient (its color is
+   always one flat value, never a gradient), so the wave here is the SAME
+   kind of animated color-cycle those two already established, just
+   generalized — cycling between each tier's own base color and its --lt
+   tint (declared in :root above) via ONE shared ffRarityWave keyframe
+   (parameterized by --wave-base/--wave-light custom properties set per
+   rule) instead of 4 separate near-duplicate keyframes. Comida de
+   Buteco/Receita de Vó are UNCHANGED — their existing effects are already
+   the appropriately-more-elaborate top-tier treatment this is extending
+   downward to, not something to replace. */
+.ff-card.r-CASEIRO { --wave-base: var(--c-common); --wave-light: var(--c-common-lt); animation: ffRarityWave 6s ease-in-out infinite; }
+.ff-card.r-TEMPERADO { --wave-base: var(--c-rare); --wave-light: var(--c-rare-lt); animation: ffRarityWave 5s ease-in-out infinite; }
+.ff-card.r-GOURMET { --wave-base: var(--c-epic); --wave-light: var(--c-epic-lt); animation: ffRarityWave 4s ease-in-out infinite; }
+.ff-card.r-ESPECIALIDADE_DA_CASA { --wave-base: var(--c-legendary); --wave-light: var(--c-legendary-lt); animation: ffRarityWave 3.2s ease-in-out infinite; }
 .ff-card.r-COMIDA_DE_BUTECO { box-shadow: 0 0 0 3px var(--c-buteco) inset, var(--ff-shadow-hard); animation: butecoShine 1.4s ease-in-out infinite; }
 .ff-card.r-RECEITA_DE_VO { animation: ffHoloRing 2.5s linear infinite; }
+/* Shared by every .ff-card.r-*/.ff-details.r-* rule above/below that sets
+   --wave-base/--wave-light — a gentle inset-ring color pulse between a
+   tier's own base color and its lighter tint. Duration is set per-rule
+   (faster for higher tiers); the swing DISTANCE between base and light is
+   what --c-*-lt's own color-mix() percentage controls (see :root). */
+@keyframes ffRarityWave {
+  0%, 100% { box-shadow: 0 0 0 3px var(--wave-base) inset, var(--ff-shadow-hard); }
+  50% { box-shadow: 0 0 0 3px var(--wave-light) inset, var(--ff-shadow-hard); }
+}
 @keyframes ffHoloRing {
   0% { box-shadow: 0 0 0 3px #ff5252 inset, var(--ff-shadow-hard); }
   25% { box-shadow: 0 0 0 3px #ffee58 inset, var(--ff-shadow-hard); }
@@ -2373,20 +2417,23 @@ body:not(.ff-authed) #wheel-panel { display: none; }
 /* Rarity-colored border around the whole panel (2026-07-23), same --c-*
    color tokens and r-${rarity} class pattern the grid card's box-shadow
    ring already uses (see .ff-card.r-* above) — set via panel.className in
-   renderInventoryDetails(), kept in sync with the selected hero. */
+   renderInventoryDetails(), kept in sync with the selected hero.
+   MOVED (2026-07-23, user feedback on the live wave effect): the animated
+   "onda infinita" wave — for all 6 tiers, including Comida de Buteco/
+   Receita de Vó's own pre-existing butecoShine/ffHoloRingDetails, not just
+   the 4 this task originally added it to — used to live HERE, on this
+   outer panel edge. The user specifically wants the glow on the character
+   SCENE box instead (see .ff-scene.r-* further down) — this outer ring
+   goes back to being a plain STATIC per-rarity color, exactly like the
+   grid card's ring looked before ANY wave was ever added, so the two
+   "rarity signals" (a calm static outer frame, an animated glow on the
+   scene specifically) don't compete or duplicate each other. */
 .ff-details.r-CASEIRO { box-shadow: 0 0 0 3px var(--c-common) inset, var(--ff-shadow-hard); }
 .ff-details.r-TEMPERADO { box-shadow: 0 0 0 3px var(--c-rare) inset, var(--ff-shadow-hard); }
 .ff-details.r-GOURMET { box-shadow: 0 0 0 3px var(--c-epic) inset, var(--ff-shadow-hard); }
 .ff-details.r-ESPECIALIDADE_DA_CASA { box-shadow: 0 0 0 3px var(--c-legendary) inset, var(--ff-shadow-hard); }
-.ff-details.r-COMIDA_DE_BUTECO { box-shadow: 0 0 0 3px var(--c-buteco) inset, var(--ff-shadow-hard); animation: butecoShine 1.4s ease-in-out infinite; }
-.ff-details.r-RECEITA_DE_VO { animation: ffHoloRingDetails 2.5s linear infinite; }
-@keyframes ffHoloRingDetails {
-  0% { box-shadow: 0 0 0 3px #ff5252 inset, var(--ff-shadow-hard); }
-  25% { box-shadow: 0 0 0 3px #ffee58 inset, var(--ff-shadow-hard); }
-  50% { box-shadow: 0 0 0 3px #69f0ae inset, var(--ff-shadow-hard); }
-  75% { box-shadow: 0 0 0 3px #40c4ff inset, var(--ff-shadow-hard); }
-  100% { box-shadow: 0 0 0 3px #ff5252 inset, var(--ff-shadow-hard); }
-}
+.ff-details.r-COMIDA_DE_BUTECO { box-shadow: 0 0 0 3px var(--c-buteco) inset, var(--ff-shadow-hard); }
+.ff-details.r-RECEITA_DE_VO { box-shadow: 0 0 0 3px #ff5252 inset, var(--ff-shadow-hard); }
 
 .ff-empty-state {
   flex: 1 1 auto;
@@ -2417,6 +2464,21 @@ body:not(.ff-authed) #wheel-panel { display: none; }
   overflow: hidden;
   background: var(--ff-petrol-600);
 }
+/* "Onda infinita" rarity wave — MOVED here (2026-07-23, user feedback):
+   this used to animate the WHOLE .ff-details panel's outer edge (see that
+   selector's own comment above); the user specifically circled the
+   character scene box itself as where they want the glow, so it lives here
+   instead now, layered as an extra inset ring alongside .ff-scene's own
+   existing ink-colored border + hard-shadow above (both untouched) rather
+   than replacing them. Reuses the exact same ffRarityWave/butecoShine/
+   ffHoloRing keyframes already established for the grid card above — same
+   colors, same per-tier durations, only the ELEMENT changed. */
+.ff-details.r-CASEIRO .ff-scene { --wave-base: var(--c-common); --wave-light: var(--c-common-lt); animation: ffRarityWave 6s ease-in-out infinite; }
+.ff-details.r-TEMPERADO .ff-scene { --wave-base: var(--c-rare); --wave-light: var(--c-rare-lt); animation: ffRarityWave 5s ease-in-out infinite; }
+.ff-details.r-GOURMET .ff-scene { --wave-base: var(--c-epic); --wave-light: var(--c-epic-lt); animation: ffRarityWave 4s ease-in-out infinite; }
+.ff-details.r-ESPECIALIDADE_DA_CASA .ff-scene { --wave-base: var(--c-legendary); --wave-light: var(--c-legendary-lt); animation: ffRarityWave 3.2s ease-in-out infinite; }
+.ff-details.r-COMIDA_DE_BUTECO .ff-scene { box-shadow: 0 0 0 3px var(--c-buteco) inset, var(--ff-shadow-hard); animation: butecoShine 1.4s ease-in-out infinite; }
+.ff-details.r-RECEITA_DE_VO .ff-scene { animation: ffHoloRing 2.5s linear infinite; }
 .ff-sky {
   position: absolute;
   inset: 0;
