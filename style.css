@@ -714,11 +714,10 @@ main {
    setTile(), which is what actually selects the bau_*.png art per tier).
    Falls back to the wood look if a tier is ever somehow missing. */
 .tile-prop.chest { background-image: url('assets/blocos_unicos/bau_madeira.png'); }
-.tile-prop.chest.chest-wood { background-image: url('assets/blocos_unicos/bau_madeira.png'); }
-.tile-prop.chest.chest-iron { background-image: url('assets/blocos_unicos/bau_ferro.png'); }
-.tile-prop.chest.chest-gold { background-image: url('assets/blocos_unicos/bau_ouro.png'); }
-.tile-prop.chest.chest-diamond { background-image: url('assets/blocos_unicos/bau_diamante.png'); }
-.tile-prop.chest.chest-special { background-image: url('assets/blocos_unicos/bau_especial.png'); }
+.tile-prop.chest.chest-madeira { background-image: url('assets/blocos_unicos/bau_madeira.png'); }
+.tile-prop.chest.chest-ferro { background-image: url('assets/blocos_unicos/bau_ferro.png'); }
+.tile-prop.chest.chest-ouro { background-image: url('assets/blocos_unicos/bau_ouro.png'); }
+.tile-prop.chest.chest-diamante { background-image: url('assets/blocos_unicos/bau_diamante.png'); }
 .tile-prop.chest.chest-vip { background-image: url('assets/blocos_unicos/bau_vip.png'); }
 /* No art was provided for jail blocks — simple CSS + emoji treatment, same
    spirit as how crate/chest looked before their PNGs arrived. Same damage
