@@ -3735,6 +3735,11 @@ function heroCardHtml(h, opts) {
 // number of tasks that are unlocked, unclaimed, AND currently satisfied —
 // i.e. exactly what the Tasks tab would show as "ready to claim" right now
 function readyTaskCount() {
+  // Runs every tick via renderHeader() regardless of which tab is open —
+  // the most reliable place to catch the unlock transition promptly (see
+  // ensureTasksBaseline()'s own comment for why this needs to fire exactly
+  // once, right when it happens, not just whenever the Tasks tab is opened).
+  ensureTasksBaseline();
   if (state.heroes.length < TASKS_UNLOCK_HEROES) return 0;
   checkDailyReset();
   const dailyReady = !state.dailyClaimed && state.dailyChestsBroken >= DAILY_TASK_GOAL ? 1 : 0;
