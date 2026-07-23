@@ -1612,7 +1612,7 @@ function addActor(h) {
   el.innerHTML = spriteHtml(h);
   positionActor(el, c, r);
   document.getElementById('arena').appendChild(el);
-  actors[h.id] = { c, r, cd: 0, moveBudget: 0, el };
+  actors[h.id] = { c, r, cd: 0, moveBudget: 0, el, target: null };
 }
 
 function removeActor(id) {
@@ -1666,15 +1666,125 @@ function bombCountFor(heroId) {
   return bombs.reduce((n, b) => n + (b.heroId === heroId ? 1 : 0), 0);
 }
 
-function nearestCrateDist(r, c) {
-  let best = Infinity;
-  for (let rr = 0; rr < G_ROWS; rr++) for (let cc = 0; cc < G_COLS; cc++) {
-    if (isDestructible(gridTiles[rr][cc])) {
-      const d = Math.abs(rr - r) + Math.abs(cc - c);
-      if (d < best) best = d;
+// TARGETING REWORK (2026-07-23): Rangos now commit to a single "target"
+// destructible (a.target = {r,c}, persisted on the actor) instead of
+// re-chasing whichever destructible is Manhattan-nearest every single step
+// (the old nearestCrateDist() approach) — that greedy-without-memory scheme
+// is what caused the reported "walks up and down aimlessly": it ignored
+// walls/obstacles blocking the straight-line path (pure |dr|+|dc|, no real
+// pathfinding) and could flip targets mid-walk if two candidates became
+// equidistant. bfsWalk() below does real graph-distance pathfinding over
+// canWalk()'s actual walkable tiles, so target APPROACH (which walkable
+// neighbor is on the shortest real route) is exact.
+//
+// RETARGETING REWORK (2026-07-23 follow-up): target SELECTION is
+// deliberately NOT nearest-first anymore — that made every Rango farm the
+// same nearby chest from every open side ("1 bomb per target" below is the
+// actual fix for that; nearest-first would just re-pick the same neighbor
+// target repeatedly too). Selection is now a flat random pick among
+// reachable Baú/Jaula, and a target is used for exactly one bomb before
+// switching — see retarget().
+
+function bfsWalk(h, sr, sc) {
+  const startKey = sr + ',' + sc;
+  const dist = new Map([[startKey, 0]]);
+  const parent = new Map();
+  const queue = [[sr, sc]];
+  for (let qi = 0; qi < queue.length; qi++) {
+    const [r, c] = queue[qi];
+    const d = dist.get(r + ',' + c);
+    for (const [dr, dc] of DIRS) {
+      const nr = r + dr, nc = c + dc, nKey = nr + ',' + nc;
+      if (dist.has(nKey) || !canWalk(h, nr, nc)) continue;
+      dist.set(nKey, d + 1);
+      parent.set(nKey, r + ',' + c);
+      queue.push([nr, nc]);
     }
   }
+  return { dist, parent };
+}
+
+// A destructible isn't itself walkable, so "reachable" means one of its 4
+// floor neighbors is in the BFS distance map.
+function approachTiles(target, dist) {
+  return DIRS.map(([dr, dc]) => [target.r + dr, target.c + dc])
+    .filter(([r, c]) => tileAt(r, c) === T_FLOOR && dist.has(r + ',' + c));
+}
+
+// Prefers a side without a live bomb on it (so arriving there is actually
+// plantable); falls back to the nearest side at all if every side is
+// currently bombed (the Rango just parks there and waits for one to clear).
+function bestApproachTile(target, dist) {
+  const sides = approachTiles(target, dist);
+  if (!sides.length) return null;
+  const open = sides.filter(([r, c]) => !bombAt(r, c));
+  const pool = open.length ? open : sides;
+  pool.sort((p, q) => dist.get(p[0] + ',' + p[1]) - dist.get(q[0] + ',' + q[1]));
+  return pool[0];
+}
+
+// Baú and Jaula are equally prioritized targets (both are the actual
+// "reward" tiles — Jaula pays out a new Rango instead of Food Coins, but
+// it's just as much a priority target as any chest tier). Mesa Variável is
+// NOT in here — it's only ever bombed incidentally, as a path-clearing
+// fallback in pickNewTarget() below.
+function priorityTargetsAlive() {
+  const out = [];
+  for (const key in tileHp) {
+    if (tileHp[key].chest || tileHp[key].jaula) {
+      const [r, c] = key.split(',').map(Number);
+      out.push({ r, c });
+    }
+  }
+  return out;
+}
+
+function isPriorityTargetTile(r, c) {
+  const t = tileAt(r, c);
+  return t === T_CHEST || t === T_JAULA;
+}
+
+// Flat random pick among reachable Baú/Jaula — `exclude` (the target just
+// bombed) is left out of the pool so retarget() never re-picks the same
+// spot right away, UNLESS excluding it leaves nothing else reachable, in
+// which case it's allowed back in rather than freezing the Rango. If NO
+// Baú/Jaula is reachable at all (walled off by Mesa Variável), falls back
+// to the nearest reachable destructible of any kind so the Rango clears its
+// own way out instead of freezing in place — that fallback stays
+// nearest-first since it's just unblocking, not reward-target selection.
+function pickNewTarget(h, a, exclude) {
+  const { dist } = bfsWalk(h, a.r, a.c);
+  const reachable = [];
+  for (const t of priorityTargetsAlive()) {
+    if (exclude && t.r === exclude.r && t.c === exclude.c) continue;
+    if (!approachTiles(t, dist).length) continue;
+    reachable.push(t);
+  }
+  if (reachable.length) return pick(reachable);
+  if (exclude) return pickNewTarget(h, a);
+  let best = null, bestD = Infinity;
+  for (let r = 0; r < G_ROWS; r++) for (let c = 0; c < G_COLS; c++) {
+    if (!isDestructible(tileAt(r, c))) continue;
+    const sides = approachTiles({ r, c }, dist);
+    if (!sides.length) continue;
+    const d = Math.min(...sides.map(([rr, cc]) => dist.get(rr + ',' + cc)));
+    if (d < bestD) { bestD = d; best = { r, c }; }
+  }
   return best;
+}
+
+// Called right after planting a bomb — a target is good for exactly ONE
+// bomb (even if it still has empty sides open) before switching, UNLESS
+// it's the only Baú/Jaula left on the map, in which case there's nothing
+// else to switch to and the Rango keeps attacking it.
+function retarget(h, a) {
+  const cur = a.target;
+  if (cur && isPriorityTargetTile(cur.r, cur.c)) {
+    const alive = priorityTargetsAlive();
+    const onlyOne = alive.length === 1 && alive[0].r === cur.r && alive[0].c === cur.c;
+    if (onlyOne) return;
+  }
+  a.target = pickNewTarget(h, a, cur);
 }
 
 function plantBomb(h, a) {
@@ -1724,24 +1834,27 @@ function canWalk(h, r, c) {
   return t === T_FLOOR && !blockedByBomb;
 }
 
+// Moves exactly ONE tile along the real shortest path toward a.target's
+// best approach tile (BFS parent-chain walk-back from the destination to
+// the first step out of a.r,a.c) — replaces the old ruler-distance greedy
+// hop, which is what let a blocked Rango "flip-flop" between neighbors that
+// only LOOKED closer in a straight line.
 function moveActor(a, h) {
-  const open = [];
-  for (const [dr, dc] of DIRS) {
-    const r = a.r + dr, c = a.c + dc;
-    if (canWalk(h, r, c)) open.push([r, c]);
+  if (!a.target) return;
+  const { dist, parent } = bfsWalk(h, a.r, a.c);
+  const approach = bestApproachTile(a.target, dist);
+  if (!approach) return; // no reachable approach tile this tick — stand still
+  const [tr, tc] = approach;
+  if (a.r === tr && a.c === tc) return;
+  const startKey = a.r + ',' + a.c;
+  let key = tr + ',' + tc, stepR = tr, stepC = tc;
+  while (parent.get(key) !== startKey) {
+    key = parent.get(key);
+    if (key === undefined) return; // safety: no path found
+    [stepR, stepC] = key.split(',').map(Number);
   }
-  if (!open.length) return;
-  let dest = pick(open);
-  // greedy walk toward the nearest crate, with some noise so bombers don't stall
-  if (Math.random() > 0.25) {
-    let best = Infinity;
-    for (const [r, c] of open) {
-      const d = nearestCrateDist(r, c);
-      if (d < best) { best = d; dest = [r, c]; }
-    }
-  }
-  a.r = dest[0];
-  a.c = dest[1];
+  a.r = stepR;
+  a.c = stepC;
   positionActor(a.el, a.c, a.r);
 }
 
@@ -1768,14 +1881,16 @@ const MOVE_BUDGET_CAP = 20;
 const MOVE_STEPS_PER_TICK_CAP = 25;
 
 // shared by both plant-check call sites below: true only when the actor's
-// OWN tile is empty floor, a destructible is adjacent, cooldown is ready,
-// nothing already sits on this tile, the wave isn't mid-regen, AND this
-// Rango hasn't already hit its Bombas (max simultaneous bombs) cap — the
-// one genuinely new gating condition Bombas adds to planting.
+// OWN tile is empty floor, a.target specifically (not just any nearby
+// destructible — TARGETING REWORK 2026-07-23) is adjacent, cooldown is
+// ready, nothing already sits on this tile, the wave isn't mid-regen, AND
+// this Rango hasn't already hit its Bombas (max simultaneous bombs) cap.
 function canPlantHere(h, a) {
-  const nearCrate = tileAt(a.r, a.c) === T_FLOOR &&
-    DIRS.some(([dr, dc]) => isDestructible(tileAt(a.r + dr, a.c + dc)));
-  return nearCrate && a.cd === 0 && !bombAt(a.r, a.c) && !waveRegen &&
+  const t = a.target;
+  const nearTarget = t && isDestructible(tileAt(t.r, t.c)) &&
+    tileAt(a.r, a.c) === T_FLOOR &&
+    DIRS.some(([dr, dc]) => a.r + dr === t.r && a.c + dc === t.c);
+  return nearTarget && a.cd === 0 && !bombAt(a.r, a.c) && !waveRegen &&
     bombCountFor(h.id) < h.bombCapacity;
 }
 
@@ -1799,10 +1914,16 @@ function aiTick() {
 
     a.moveBudget = Math.min(MOVE_BUDGET_CAP, (a.moveBudget || 0) + h.speed * (AI_MS / 1000));
 
+    // Drop a stale target (chest/obstacle already destroyed by this Rango
+    // or anyone else) and pick a fresh one before doing anything else.
+    if (a.target && !isDestructible(tileAt(a.target.r, a.target.c))) a.target = null;
+    if (!a.target) a.target = pickNewTarget(h, a);
+
     // Planting is NEVER gated by movement budget (it isn't movement) —
     // checked first, unconditionally, exactly like before this rework.
     if (canPlantHere(h, a)) {
       plantBomb(h, a);
+      retarget(h, a);
       continue;
     }
     // Not plantable from the current tile: spend the movement budget one
@@ -1818,6 +1939,7 @@ function aiTick() {
       if (beforeKey === a.r + ',' + a.c) break; // genuinely blocked (no open tile) — stop consuming budget this tick
       if (canPlantHere(h, a)) {
         plantBomb(h, a);
+        retarget(h, a);
         break;
       }
     }
@@ -3993,9 +4115,19 @@ async function pushCloudSave() {
 
 async function refreshLeaderboard() {
   if (!sb) return;
+  // FILTER (2026-07-23): only show players with real progress. Without this,
+  // dormant accounts sitting at total_mined:0 (test/throwaway accounts, or
+  // just a brand-new real player who hasn't earned anything yet) clutter the
+  // shared ranking. Display-only — never deletes anything — and a real
+  // player naturally starts showing up the moment they earn their first
+  // Food Coin. This is the ONLY place the leaderboard is queried (the
+  // Realtime subscription below re-fetches through this exact function too,
+  // rather than querying separately — see subscribeLeaderboardRealtime()'s
+  // own comment), so one filter here covers every render path.
   const { data } = await sb
     .from('leaderboard')
     .select('username, total_mined')
+    .gt('total_mined', 0)
     .order('total_mined', { ascending: false })
     .limit(20);
   leaderboardCache = data || [];
