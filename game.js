@@ -358,7 +358,9 @@ let selectedInventoryHeroId = null; // Food Fighters-style Inventory tab: which 
 
 function defaultState() {
   return {
-    bcoin: 500,
+    // Starting Chef Gems (2026-07-23, balance tweak): 500 -> 200 — exactly
+    // enough for one x10 pack at the current PACKS pricing (20/100/200/300).
+    bcoin: 200,
     starCore: 0,
     totalMined: 0,
     fusions: 0,
@@ -3007,6 +3009,15 @@ function ffStatusDotClass(h) {
 // comment) to the new, correct rSigla(h.rarity).
 function ffHeroCardHtml(h) {
   const energyPct = Math.max(0, Math.min(100, (h.energy / maxEnergyFor(h)) * 100));
+  // Floating .sp-skill icon over the head REMOVED here too (2026-07-23,
+  // user-flagged from a grid screenshot — same fix already applied to the
+  // detail panel scene). Replaced with a small icon-only row BELOW the
+  // sprite (reuses ffSkillCards()'s existing icon-only markup/tooltip, just
+  // shrunk further via .ff-card-skills' own scoped CSS — not a new visual
+  // language), sitting between the image and the energy bar so it can't
+  // collide with either. Renders nothing at all for a hero with no skills
+  // (ffSkillCards() already returns '' in that case), same as everywhere else.
+  const cardSkillsHtml = ffSkillCards(h);
   return `
   <button type="button" class="ff-card r-${h.rarity}${selectedInventoryHeroId === h.id ? ' ff-card-selected' : ''}" data-select-hero="${h.id}" aria-pressed="${selectedInventoryHeroId === h.id}">
     <div class="ff-card-top">
@@ -3014,10 +3025,11 @@ function ffHeroCardHtml(h) {
       <span class="ff-status-dot ${ffStatusDotClass(h)}" data-status-dot="${h.id}" title="${h.mode === 'work' ? 'Working' : 'Resting'}"></span>
     </div>
     <div class="ff-card-image-wrap">
-      ${spriteHtml(h)}
+      ${spriteHtml(h, { showSkillIcons: false })}
       <span class="ff-rarity-badge rarity-${h.rarity}">${rSigla(h.rarity)}</span>
       ${h.isSpicy ? `<span class="ff-card-picante" title="${PICANTE_VISUAL_PLACEHOLDER}">🌶️</span>` : ''}
     </div>
+    ${cardSkillsHtml ? `<div class="ff-card-skills">${cardSkillsHtml}</div>` : ''}
     <div class="ff-energy-bar" title="Energy: ${Math.floor(h.energy)}/${maxEnergyFor(h)}"><span style="width:${energyPct}%"></span></div>
     <span class="ff-card-name">${h.name}</span>
   </button>`;

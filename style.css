@@ -1795,6 +1795,27 @@ body:not(.ff-authed) #bottom-nav { display: none; }
   filter: drop-shadow(0 0 4px rgba(255, 0, 0, 0.7));
 }
 
+/* Small skill-icon row below the sprite (2026-07-23, user-flagged): sits
+   between the image and the energy bar so it can't collide with either.
+   Reuses .ff-skill-card/.ff-skill-icon as-is (same markup ffSkillCards()
+   already produces for the detail panel's corner badges) — just a scoped
+   override here to shrink them further for this much smaller card context,
+   not a new visual language. Renders nothing (this wrapper div is simply
+   absent from the DOM, see game.js) for a hero with no skills. */
+.ff-card-skills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 3px;
+}
+.ff-card-skills .ff-skill-card {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  box-shadow: none;
+}
+.ff-card-skills .ff-skill-icon { font-size: 10px; }
+
 /* Replaces the removed 4-segment .ff-attr-bar: a single energy fill,
    standard left-anchored progress-bar physics (width:X% grows/shrinks
    toward the right as energy is gained/spent, no extra animation logic
