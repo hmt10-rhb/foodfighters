@@ -2596,15 +2596,6 @@ function claimTask(id) {
 
 /* ============ Etapa 2: meta-progression ============ */
 
-function toggleSleepMode() {
-  state.sleepMode = !state.sleepMode;
-  save();
-  renderHeader();
-  toast(state.sleepMode
-    ? '💤 Sleep Mode ON — offline progress will apply next time you return, at 15% of your active earn rate.'
-    : '🌙 Sleep Mode OFF — no offline catch-up; progress resumes exactly where you left it.');
-}
-
 // ---- Prestige ----
 
 function prestigeContribution(waveAtReset, prestigeIndex) {
@@ -2916,9 +2907,6 @@ function readyTaskCount() {
 function renderHeader() {
   document.getElementById('bcoin-display').textContent = fmtCurrency(state.bcoin);
   document.getElementById('score-display').textContent = fmtCurrency(state.starCore);
-  const sleepBtn = document.getElementById('sleep-btn');
-  sleepBtn.textContent = state.sleepMode ? '💤' : '🌙';
-  sleepBtn.classList.toggle('sleep-on', !!state.sleepMode);
 
   // mail icon is a real Tasks shortcut now — badge shows how many are ready
   // to claim right now, hidden entirely when there's nothing to claim
@@ -3744,10 +3732,6 @@ function bindEvents() {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
 
-  document.getElementById('bottom-nav-toggle').addEventListener('click', () => {
-    setBottomNavCollapsed(!document.getElementById('bottom-nav').classList.contains('collapsed'));
-  });
-
   let resizeTimer = null;
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
@@ -3762,14 +3746,8 @@ function bindEvents() {
   // Treasure Hunt tab itself, rather than a dead decorative button
   document.getElementById('food-plus-btn').addEventListener('click', () => switchTab('hunt'));
 
-  // Extras is our de facto settings page (Reset, Sleep Mode, etc.)
+  // Extras is our de facto settings page (Reset, Account, etc.)
   document.getElementById('settings-btn').addEventListener('click', () => switchTab('extras'));
-
-  // Ranking is a real tab but isn't one of the 6 bottom-nav slots in the
-  // reference (those are Fusão/Defesa/Bolsa/Casa/Loja/Chefs specifically),
-  // so it needs a real shortcut elsewhere — reinstated here as a header icon
-  // rather than left unreachable.
-  document.getElementById('trophy-btn').addEventListener('click', () => switchTab('ranking'));
 
   // Tasks are legitimately mailbox-like (things sitting there to claim), so
   // the mail icon is a real shortcut now, not a placeholder — see
@@ -3781,16 +3759,6 @@ function bindEvents() {
   // so it shows the affordance and admits it's not built yet rather than
   // quietly aliasing to something else.
   document.getElementById('chefs-btn').addEventListener('click', () => toast('👨‍🍳 Chefs — coming soon.'));
-
-  // User request (2026-07-22): Fusão/Defesa bottom-nav entry points disabled,
-  // mirroring chefs-btn's exact placeholder pattern — no tab-btn class, no
-  // data-tab, just an honest "coming soon" toast instead of navigating.
-  // The underlying Fusion/Lab tabs and all their logic are UNTOUCHED — only
-  // these two bottom-nav buttons stop reaching them. Other entry points
-  // (e.g. jumpToLabForReroll(), called from Inventory's re-roll shortcut)
-  // deliberately still work — this was scoped to the bottom nav only.
-  document.getElementById('nav-fusion-btn').addEventListener('click', () => toast('⚗️ Fusão — coming soon.'));
-  document.getElementById('nav-lab-btn').addEventListener('click', () => toast('🛡️ Defesa — coming soon.'));
 
   document.querySelectorAll('.bulk-work').forEach(b => b.addEventListener('click', () => setAllModes('work')));
   document.querySelectorAll('.bulk-rest').forEach(b => b.addEventListener('click', () => setAllModes('rest')));
@@ -3863,8 +3831,6 @@ function bindEvents() {
     }
     if (e.target.closest('#reveal-card')) advanceReveal();
   });
-
-  document.getElementById('sleep-btn').addEventListener('click', toggleSleepMode);
 
   document.getElementById('reroll-select').addEventListener('change', updateRerollCost);
   document.getElementById('reroll-btn').addEventListener('click', () => {
@@ -4372,7 +4338,6 @@ function enterGame() {
   if (gameStarted) return; // a later login (e.g. after a mid-session sign-out+back-in) shouldn't re-run boot-only setup
   gameStarted = true;
   document.getElementById('ref-code').textContent = `https://foodfighters.example/ref/${state.refCode}`;
-  loadUiPrefs();
   applyTheme(state.activeThemeId);
   buildArena();
   syncActors();
@@ -4395,34 +4360,13 @@ function showLoginScreen() {
 
 const UI_PREF_KEY = 'foodfighters-ui'; // brand rename (2026-07-22) — migrated from 'bombheroes-ui' just below, alongside SAVE_KEY/USERNAME_KEY
 
-// Same collapse mechanism the old side rail used (same localStorage key,
-// same {collapsed} shape, same "defer layoutArena so the CSS transition
-// finishes first" pattern) — just retargeted from the rail's WIDTH to the
-// bottom nav's HEIGHT, since #arena-wrap now depends on how much vertical
-// room #bottom-nav leaves it instead of how much horizontal room #side did.
-function setBottomNavCollapsed(collapsed) {
-  const nav = document.getElementById('bottom-nav');
-  if (nav) nav.classList.toggle('collapsed', collapsed);
-  const toggleBtn = document.getElementById('bottom-nav-toggle');
-  if (toggleBtn) toggleBtn.textContent = collapsed ? '▲' : '▼';
-  try { localStorage.setItem(UI_PREF_KEY, JSON.stringify({ collapsed })); } catch (e) {}
-  setTimeout(layoutArena, 240);
-}
-
-function loadUiPrefs() {
-  try {
-    const p = JSON.parse(localStorage.getItem(UI_PREF_KEY));
-    if (p && p.collapsed) setBottomNavCollapsed(true);
-  } catch (e) {}
-}
-
 // Brand rename (2026-07-22): same one-time-migration reasoning as
-// SAVE_KEY/OLD_SAVE_KEY above, applied to the other 2 old
-// "bombheroes-*" localStorage keys — a returning player's cloud username
-// or nav-collapse preference shouldn't silently reset just because the
-// storage key's name changed underneath them. Run once, before load()
-// (which does SAVE_KEY's own migration internally) and loadUiPrefs()
-// (which reads UI_PREF_KEY) ever touch these keys.
+// SAVE_KEY/OLD_SAVE_KEY above, applied to the other old "bombheroes-*"
+// localStorage key for the returning player's cloud username. UI_PREF_KEY's
+// own migration line is now a harmless no-op — the bottom-nav collapse
+// feature it used to feed (loadUiPrefs()/setBottomNavCollapsed()) was
+// removed 2026-07-23 along with the toggle button, nothing reads this key
+// anymore.
 function migrateOldBrandKey(oldKey, newKey) {
   try {
     if (localStorage.getItem(newKey) === null) {

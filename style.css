@@ -100,7 +100,6 @@ body {
 }
 .ff-icon-btn:hover { filter: brightness(1.08); }
 .ff-icon-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(0, 0, 0, 0.28), 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.35); }
-.ff-icon-btn.sleep-on { background: linear-gradient(180deg, #ffcf5c, #f0a53a); border-color: #fff3d0; color: #4a2e00; }
 
 .ff-badge {
   position: absolute;
@@ -208,38 +207,49 @@ body {
    be redundant with the header, and the back arrow/center pill that had no
    real function at all, was dropped in this consolidation — see game.js/
    bindEvents() comments and the report for exactly what happened to each).
-   Persistent across all tabs: sibling of #shell, never inside a .tab-panel.
-   6 slots per the reference (Fusão/Defesa/Bolsa/Casa/Loja/Chefs — Hunt has
-   no icon, it's the default view; Ranking/Extras/Tasks are reached via
-   header icons instead — see .ff-hud-actions above). "Chefs" is an honest
-   "coming soon" placeholder, not a Ranking shortcut.
-   Collapse/expand mirrors the old side rail's exact mechanism
-   (setBottomNavCollapsed(), same foodfighters-ui localStorage key/shape) but
-   on the vertical axis: collapsing shrinks #bottom-nav-tabs to zero height,
-   handing that space back to #arena-wrap, which layoutArena() picks up on
-   its next recalculation exactly like it already does when its available
-   WIDTH changes (that used to be the side rail's job; same contract, new axis). */
+   "Chefs" is an honest "coming soon" placeholder, not a Ranking shortcut —
+   Ranking is a real bottom-nav icon now.
+   SHRINK-WRAPPED PILL (2026-07-23, revised): a first pass made #bottom-nav
+   itself `position:fixed` so it wouldn't reserve a row at all — but that let
+   #shell/#arena-wrap expand to fill the FULL viewport underneath it, which
+   grew the arena and side panels past their old size (not wanted — flagged
+   explicitly: map/panels must stay exactly the size they were, with any
+   leftover space just showing empty background, not more grid/tiles).
+   Reverted to the ORIGINAL flow model instead: #bottom-nav stays a normal
+   flex:none row sibling of #shell (so #shell's available height is
+   identically capped to what it always was — zero layoutArena() changes
+   needed either way), but #bottom-nav itself is now fully transparent —
+   just a spacer that centers its content. #bottom-nav-tabs is what actually
+   carries the visible "8bit" pill (background/border/shadow), sized to fit
+   its icons instead of stretching full-width. Net effect: same map/panel
+   size as before, but a shrink-wrapped floating-looking pill with empty
+   background showing on both sides of it. */
 #bottom-nav {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  justify-content: center;
   padding: 8px 14px;
-  background: linear-gradient(180deg, #34285f, #241c47);
-  border-top: 3px solid #1a1438;
-  box-shadow: 0 -3px 10px rgba(0, 0, 0, 0.35);
   flex: none;
-  transition: padding 0.2s ease;
 }
 #bottom-nav-tabs {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  gap: 10px;
   flex-wrap: wrap;
-  flex: 1;
-  min-width: 0;
-  transition: height 0.2s ease, opacity 0.15s ease;
+  padding: 8px 14px;
+  background: linear-gradient(180deg, #34285f, #241c47);
+  border: 4px solid #1a1438;
+  border-radius: 12px;
+  box-shadow: 4px 4px 0 #120d2e;
 }
+/* 8-bit frame (2026-07-23): hard, flat-edge pixel treatment — square-ish
+   corners, thick solid ink border, offset hard shadow with no blur — same
+   language as .ff-pixel-panel in the Inventory tab (#tab-inventory), but
+   kept in THIS bar's own purple palette rather than importing Inventory's
+   teal/petrol one, since the two visual languages coexisting elsewhere in
+   the app is a known, still-undecided tradeoff (see Bombidle - Projeto).
+   #1a1438 is the same ink already used for #bottom-nav's own border-top. */
 .bottom-nav-btn {
   display: flex;
   flex-direction: column;
@@ -249,34 +259,24 @@ body {
   flex: none;
   width: 62px;
   padding: 6px 4px 5px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-radius: 16px;
+  border: 3px solid #1a1438;
+  border-radius: 4px;
   background: linear-gradient(180deg, #7a68c9, #5b4aa8);
   color: #fff;
   font-family: inherit;
   cursor: pointer;
-  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.28), 0 5px 8px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.3);
-  transition: transform 0.08s ease;
+  box-shadow: 3px 3px 0 #1a1438;
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
 }
 .bottom-nav-btn:hover { filter: brightness(1.08); }
-.bottom-nav-btn:active { transform: translateY(2px); }
+.bottom-nav-btn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 #1a1438; }
 .bottom-nav-btn.active {
   background: linear-gradient(180deg, #ffcf5c, #f0a53a);
-  border-color: #fff3d0;
+  border-color: #1a1438;
   color: #4a2e00;
 }
 .bottom-nav-ico { font-size: 1.4rem; line-height: 1; }
 .bottom-nav-label { font-size: 0.6rem; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap; }
-
-/* collapsed: the tab row shrinks to nothing, #bottom-nav-toggle stays put so
-   it's always reachable to re-expand — this is what actually hands vertical
-   room back to #arena-wrap, not just a cosmetic class flip */
-#bottom-nav.collapsed #bottom-nav-tabs {
-  height: 0;
-  overflow: hidden;
-  opacity: 0;
-  pointer-events: none;
-}
 
 /* ===== Side "powers" panel (Treasure Hunt tab only — contextual to active
    gameplay, unlike the header/bottom bar). Honest placeholder: this game has
