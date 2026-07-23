@@ -539,9 +539,12 @@ function restoreOrGenerateGrid(raw, waveAtSave) {
 // Factored out of load()'s brand-new-game branch so the reset button can
 // reuse the exact same bootstrap (see reset-btn handler in bindEvents) —
 // duplicating this by hand there was the real risk, not the extraction.
+// No starter heroes (2026-07-23, explicit user request): a new/reset player
+// begins with an empty roster (state.heroes is already [] from
+// defaultState()) and only the starting Chef Gems to buy their first pack —
+// used to seed 3 free CASEIRO Rangos here, removed on purpose.
 function newGameState() {
   state = defaultState();
-  for (let i = 0; i < 3; i++) state.heroes.push(makeHero('CASEIRO'));
   genLayout(); // brand-new game: no persisted grid to restore, roll one
   waveRegen = false;
   localFreshOnBoot = true; // see this flag's own comment — pullCloudSave() needs to know this wasn't a real returning save
