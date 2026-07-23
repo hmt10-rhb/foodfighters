@@ -4022,11 +4022,6 @@ function bindEvents() {
   document.getElementById('exchange-btn').addEventListener('click', exchange);
   document.getElementById('legend-btn').addEventListener('click', showLegendModal);
 
-  // Food Coins "+" — no real "convert something into Food Coins" feature
-  // exists, so this is a real shortcut to the actual way to earn more: the
-  // Treasure Hunt tab itself, rather than a dead decorative button
-  document.getElementById('food-plus-btn').addEventListener('click', () => switchTab('hunt'));
-
   // Extras is our de facto settings page (Reset, Account, etc.)
   document.getElementById('settings-btn').addEventListener('click', () => switchTab('extras'));
 
