@@ -537,7 +537,6 @@ function defaultState() {
     // count. An old save may still carry a leftover mapsInTheme field after
     // Object.assign(defaultState(), raw) in load(); it's simply never read
     // by anything anymore (inert legacy baggage, not deleted from old saves).
-    automine: 'none',
     refCode: 'FF-' + Math.random().toString(36).slice(2, 8).toUpperCase(),
     nextHeroId: 1,
     lastSeen: Date.now(),
@@ -4942,7 +4941,9 @@ function bindEvents() {
   // updateMailBadge() for the "how many are ready to claim" badge count.
   document.getElementById('mail-btn').addEventListener('click', () => switchTab('tasks'));
 
-  // Honest placeholder — same tone as the Referral/Automine stubs in Extras:
+  // Honest placeholder — same tone as the Referral stub in Extras (the
+  // Automine Package/Club stubs that used to sit alongside it were fully
+  // removed 2026-07-23, not just hidden — see their own removal comments):
   // "Chefs" is a future dedicated screen, not a reskinned Ranking shortcut,
   // so it shows the affordance and admits it's not built yet rather than
   // quietly aliasing to something else.
@@ -5109,14 +5110,6 @@ function bindEvents() {
     } else {
       toast('Link: ' + link);
     }
-  });
-
-  const automine = document.getElementById('automine-select');
-  automine.value = state.automine;
-  automine.addEventListener('change', e => {
-    state.automine = e.target.value;
-    save();
-    toast('Automine package set (cosmetic only in this MVP).');
   });
 
   // Estrela Michelin + VIP + "Mais Apimentado" (2026-07-23) — see

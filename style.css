@@ -360,8 +360,10 @@ body {
    gameplay, unlike the header/bottom bar). Honest placeholder: this game has
    no active-consumable/power-up system, so every slot is explicitly marked
    inert (grayscale + reduced opacity + a "soon" tag, same honest-stub
-   language as the Referral/Automine placeholders in Extras) rather than
-   pretending any of this does something. Fixed width, same pattern as the
+   language as the Referral placeholder in Extras — the Automine Package/
+   Club stubs that used to sit alongside it were fully removed 2026-07-23,
+   not just hidden) rather than pretending any of this does something. Fixed
+   width, same pattern as the
    pre-existing #bombers-panel — #arena-wrap already adapts around whatever
    width its flex siblings leave it. ===== */
 #powers-panel {
