@@ -408,7 +408,11 @@
         <button id="admin-btn" class="btn btn-small">Abrir painel admin</button>
       </div>
 
-      <div class="extra-box danger">
+      <!-- Admin-only (2026-07-23): self-reset was removed for regular
+           players ahead of a planned hard wipe of all accounts — see
+           updateAdminVisibility() in game.js, same hidden/isAdmin pattern
+           as #admin-box just above. -->
+      <div class="extra-box danger" id="reset-box" hidden>
         <h3>♻️ Reset save</h3>
         <p class="muted">Wipes all progress from this browser.</p>
         <button id="reset-btn" class="btn btn-small btn-danger">Reset everything</button>

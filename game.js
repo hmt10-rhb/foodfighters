@@ -5524,9 +5524,12 @@ function bindEvents() {
 // boot.
 function updateAdminVisibility() {
   const box = document.getElementById('admin-box');
-  if (!box) return;
   const isAdmin = !!(cloudSession && cloudSession.user && cloudSession.user.email === ADMIN_EMAIL);
-  box.hidden = !isAdmin;
+  if (box) box.hidden = !isAdmin;
+  // Self-reset removed for regular players (2026-07-23), ahead of a planned
+  // hard wipe of all existing accounts — only admin keeps the button.
+  const resetBox = document.getElementById('reset-box');
+  if (resetBox) resetBox.hidden = !isAdmin;
 }
 
 function showAdminModal() {
