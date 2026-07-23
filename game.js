@@ -2771,7 +2771,8 @@ function renderMichelinBuyModal() {
   const tier = michelinTierFor(qty);
   const total = qty * tier.price;
   document.getElementById('modal-body').innerHTML = `
-    <h3>🌟 Comprar Estrela Michelin</h3>
+    <h3 style="text-align:center">🌟 Ajude o DEV</h3>
+    <p style="text-align:center;font-weight:600;color:var(--accent2);margin-bottom:10px;">Garanta suas Estrelas Michelin</p>
     <p class="muted">Escolha a quantidade — quanto mais compra de uma vez, menor o preço por unidade.</p>
     <div class="michelin-presets">
       ${MICHELIN_PRICE_TIERS.map(t => {
@@ -3134,44 +3135,104 @@ function spinWheel(isPaid) {
   }, WHEEL_SPIN_ANIM_MS);
 }
 
-function exchange() {
-  const whole = Math.floor(state.starCore / EXCHANGE_RATE);
-  if (whole < 1) {
-    toast(`Need at least ${EXCHANGE_RATE} Food Coins to exchange.`);
+// ===== Central de Câmbio — hub único de conversão (2026-07-23) =====
+// Substitui os dois botões antigos de "converter tudo de uma vez sem UI"
+// (exchange()/michelinExchange()) por UMA tela compartilhada: escolhe a
+// moeda de origem, o destino (só o que aquela origem pode realmente virar),
+// digita a quantidade, vê o resultado calculado ao vivo, confirma.
+//
+// Chef Gems nunca é uma origem válida (é uma moeda terminal — só compra
+// packs/casas, nunca se reconverte, ver FF - Monetização e VIP). Nada nunca
+// converte PRA Estrela Michelin (só PIX faz isso) — a rota é sempre de mão
+// única, saindo de Michelin, nunca entrando.
+const EXCHANGE_CURRENCIES = {
+  starCore: { label: 'Food Coin', balance: () => state.starCore || 0 },
+  michelinCoin: { label: 'Estrela Michelin', balance: () => state.michelinCoin || 0 },
+  bcoin: { label: 'Chef Gems', balance: () => state.bcoin || 0 },
+};
+const EXCHANGE_ROUTES = {
+  starCore: ['bcoin'],
+  michelinCoin: ['bcoin'],
+};
+function exchangeRateLabel(fromKey, toKey) {
+  if (fromKey === 'starCore' && toKey === 'bcoin') return `${EXCHANGE_RATE} Food Coin = 1 Chef Gem`;
+  if (fromKey === 'michelinCoin' && toKey === 'bcoin') return `1 🌟 Estrela Michelin = ${MICHELIN_EXCHANGE_RATE} Chef Gems`;
+  return '';
+}
+// spend/gain are computed separately because Food Coin only converts in
+// whole 10-blocks (EXCHANGE_RATE) — an amount under that, or with a
+// remainder, only ever spends the convertible portion, same rule the old
+// exchange() always enforced.
+function computeExchange(fromKey, toKey, amount) {
+  const amt = Math.max(0, Number(amount) || 0);
+  if (fromKey === 'starCore' && toKey === 'bcoin') {
+    const whole = Math.floor(amt / EXCHANGE_RATE);
+    return { spend: whole * EXCHANGE_RATE, gain: whole };
+  }
+  if (fromKey === 'michelinCoin' && toKey === 'bcoin') {
+    const whole = Math.floor(amt); // Michelin is always a whole integer anyway
+    return { spend: whole, gain: whole * MICHELIN_EXCHANGE_RATE };
+  }
+  return { spend: 0, gain: 0 };
+}
+function performExchange(fromKey, toKey, amount) {
+  const { spend, gain } = computeExchange(fromKey, toKey, amount);
+  const balance = EXCHANGE_CURRENCIES[fromKey].balance();
+  if (spend <= 0 || gain <= 0) {
+    toast(fromKey === 'starCore' ? `Mínimo de ${EXCHANGE_RATE} Food Coins pra converter.` : 'Quantidade inválida.');
     return;
   }
-  state.starCore -= whole * EXCHANGE_RATE;
-  state.bcoin += whole;
+  if (spend > balance) { toast('Saldo insuficiente.'); return; }
+  state[fromKey] -= spend;
+  state[toKey] = (state[toKey] || 0) + gain;
   save();
-  toast(`Exchanged ${fmtCurrency(whole * EXCHANGE_RATE)} Food Coins → ${fmtCurrency(whole)} Chef Gems`);
+  pushCloudSave();
   renderHeader();
+  toast(`Convertido: ${fmtCurrency(spend)} ${EXCHANGE_CURRENCIES[fromKey].label} → ${fmtCurrency(gain)} ${EXCHANGE_CURRENCIES[toKey].label}`);
+  exchangeModalAmount = 0;
+  renderExchangeModal();
 }
 
-// Estrela Michelin -> Chef Gem, ONE-WAY only (2026-07-23) — no Chef Gem/Food
-// Coin path ever converts back into Michelin. This is the deliberate design
-// principle behind the whole 3-currency split (see FF - Monetização e VIP
-// in Obsidian): Michelin is real-money-only, so letting it flow back out
-// into the grindable currencies is fine (a payer choosing to buy Rango
-// packs instead of VIP/lure), but the reverse would let grinding eventually
-// reach premium-only content, which is exactly what the split exists to
-// prevent.
-//
-// Unlike exchange() (Food->Chef), Michelin is always a whole integer (sold
-// in whole-unit bundles, spent in whole-unit VIP/lure prices — never
-// fractional like Food Coin), so this converts the WHOLE current balance in
-// one go rather than floor-dividing off a remainder.
-function michelinExchange() {
-  const amount = state.michelinCoin || 0;
-  if (amount < 1) {
-    toast('No Estrela Michelin to exchange.');
-    return;
-  }
-  const gained = amount * MICHELIN_EXCHANGE_RATE;
-  state.michelinCoin = 0;
-  state.bcoin += gained;
-  save();
-  toast(`Exchanged ${fmtCurrency(amount)} 🌟 Estrela Michelin → ${fmtCurrency(gained)} Chef Gems`);
-  renderHeader();
+let exchangeModalFrom = 'starCore';
+let exchangeModalAmount = 0;
+function showExchangeModal(defaultFrom) {
+  exchangeModalFrom = (defaultFrom && EXCHANGE_ROUTES[defaultFrom]) ? defaultFrom : 'starCore';
+  exchangeModalAmount = 0;
+  renderExchangeModal();
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+function renderExchangeModal() {
+  const fromKey = exchangeModalFrom;
+  const toOptions = EXCHANGE_ROUTES[fromKey] || [];
+  const toKey = toOptions[0];
+  const balance = EXCHANGE_CURRENCIES[fromKey].balance();
+  const { gain, spend } = computeExchange(fromKey, toKey, exchangeModalAmount);
+  document.getElementById('modal-body').innerHTML = `
+    <h3>💱 Central de Câmbio</h3>
+    <p class="muted">Saldo atual: ${fmtCurrency(balance)} ${EXCHANGE_CURRENCIES[fromKey].label}</p>
+    <div class="exchange-row">
+      <label class="exchange-field">De
+        <select id="exchange-from-select">
+          ${Object.keys(EXCHANGE_ROUTES).map(k => `<option value="${k}"${k === fromKey ? ' selected' : ''}>${EXCHANGE_CURRENCIES[k].label}</option>`).join('')}
+        </select>
+      </label>
+      <label class="exchange-field">Para
+        <select id="exchange-to-select">
+          ${toOptions.map(k => `<option value="${k}">${EXCHANGE_CURRENCIES[k].label}</option>`).join('')}
+        </select>
+      </label>
+    </div>
+    <p class="muted" style="font-size:0.78rem">${exchangeRateLabel(fromKey, toKey)}</p>
+    <div class="exchange-amount-row">
+      <input type="number" id="exchange-amount-input" min="0" value="${exchangeModalAmount || ''}" placeholder="Quantidade">
+      <button type="button" id="exchange-max-btn" class="btn btn-ghost btn-small">MAX</button>
+    </div>
+    <div class="exchange-output-box">
+      <span>Você recebe</span>
+      <b>${fmtCurrency(gain)} ${EXCHANGE_CURRENCIES[toKey].label}</b>
+    </div>
+    <button type="button" id="exchange-confirm-btn" class="btn" style="width:100%;margin-top:10px;" ${(spend <= 0 || spend > balance) ? 'disabled' : ''}>Converter</button>
+  `;
 }
 
 function toggleFusionSelect(id) {
@@ -5070,13 +5131,15 @@ function bindEvents() {
     resizeTimer = setTimeout(layoutArena, 150);
   });
 
-  document.getElementById('exchange-btn').addEventListener('click', exchange);
-  // "+" on the Estrela Michelin pill is the ONLY way to acquire it (2026-07-23,
-  // explicit instruction) — opens the buy calculator popup, not a direct
-  // exchange like the Chef Gems "+" does. Converting an EXISTING Michelin
-  // balance down into Chef Gems still exists (michelinExchange()), just
-  // moved inside that popup as a secondary action — see
-  // renderMichelinBuyModal()'s #michelin-convert-link.
+  // Chef Gems "+" opens the shared Central de Câmbio (2026-07-23) instead of
+  // instantly converting the whole balance — same unified exchange screen
+  // the Michelin popup's convert button also opens (see
+  // renderMichelinBuyModal()'s #michelin-convert-link and showExchangeModal()).
+  document.getElementById('exchange-btn').addEventListener('click', () => showExchangeModal('starCore'));
+  // "+" on the Estrela Michelin pill is the ONLY way to ACQUIRE it (2026-07-23,
+  // explicit instruction) — opens the buy calculator popup, not the exchange
+  // hub. Converting an EXISTING Michelin balance down into Chef Gems is a
+  // different action, reachable from inside that popup instead.
   document.getElementById('michelin-exchange-btn').addEventListener('click', showMichelinBuyModal);
   document.getElementById('legend-btn').addEventListener('click', showLegendModal);
 
@@ -5227,11 +5290,7 @@ function bindEvents() {
     if (e.target.closest('#michelin-qty-minus')) { setMichelinBuyQty(michelinBuyQty - 1); return; }
     if (e.target.closest('#michelin-qty-plus')) { setMichelinBuyQty(michelinBuyQty + 1); return; }
     if (e.target.closest('#michelin-generate-pix')) { generatePixOrder(); return; }
-    if (e.target.closest('#michelin-convert-link')) {
-      michelinExchange();
-      document.getElementById('modal-backdrop').classList.add('hidden');
-      return;
-    }
+    if (e.target.closest('#michelin-convert-link')) { showExchangeModal('michelinCoin'); return; }
     if (e.target.closest('#michelin-pix-copy-btn')) {
       const ta = document.getElementById('michelin-pix-copiapaste');
       if (ta) {
@@ -5250,6 +5309,33 @@ function bindEvents() {
   });
   document.getElementById('modal-body').addEventListener('change', e => {
     if (e.target.id === 'michelin-qty-input') setMichelinBuyQty(Number(e.target.value));
+  });
+
+  // Central de Câmbio (2026-07-23) — from-select changing resets the typed
+  // amount (a leftover Michelin amount wouldn't make sense once switched to
+  // Food Coin, say) and re-renders; the amount input/MAX button only need to
+  // update the live output preview, not the whole from/to selection.
+  document.getElementById('modal-body').addEventListener('change', e => {
+    if (e.target.id === 'exchange-from-select') {
+      exchangeModalFrom = e.target.value;
+      exchangeModalAmount = 0;
+      renderExchangeModal();
+    } else if (e.target.id === 'exchange-amount-input') {
+      exchangeModalAmount = Number(e.target.value) || 0;
+      renderExchangeModal();
+    }
+  });
+  document.getElementById('modal-body').addEventListener('click', e => {
+    if (e.target.closest('#exchange-max-btn')) {
+      exchangeModalAmount = EXCHANGE_CURRENCIES[exchangeModalFrom].balance();
+      renderExchangeModal();
+      return;
+    }
+    if (e.target.closest('#exchange-confirm-btn')) {
+      const toKey = (EXCHANGE_ROUTES[exchangeModalFrom] || [])[0];
+      performExchange(exchangeModalFrom, toKey, exchangeModalAmount);
+      return;
+    }
   });
 
   document.getElementById('reroll-select').addEventListener('change', updateRerollCost);

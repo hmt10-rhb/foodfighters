@@ -1685,6 +1685,49 @@ body.shaking { animation: bodyShake 0.5s ease-in-out 2; }
   font-size: 1.1rem;
 }
 .michelin-calc-row.michelin-calc-total b { color: var(--accent2); }
+
+/* ===== Central de Câmbio (2026-07-23) ===== */
+.exchange-row { display: flex; gap: 10px; margin: 10px 0; }
+.exchange-field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.exchange-field select {
+  background: #141009;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+.exchange-amount-row { display: flex; gap: 8px; align-items: center; margin: 10px 0; }
+.exchange-amount-row input[type="number"] {
+  flex: 1;
+  background: #141009;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 10px;
+  font-family: inherit;
+  font-size: 0.95rem;
+}
+.exchange-output-box {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  color: var(--muted);
+}
+.exchange-output-box b { color: var(--accent2); font-size: 1.1rem; }
+
 #modal .pull-list { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
 #modal .pull-item {
   background: var(--card);
