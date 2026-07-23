@@ -3085,15 +3085,13 @@ function sortedHeroes() {
 }
 
 /* ============ Inventory tab (Food Fighters visual re-skin) ============ */
-// Stat color mapping shared by the grid card's energy bar (well, just the
-// single energy fill now) and the detail panel's 5 raw-stat rows (2026-07-23
-// simplification pass). Renamed `blast` -> `range` (Tamanho is the RAW
-// h.range stat now shown in the details panel, not a derived blastRadius()
-// rate) and added `stamina` (a genuinely new 5th stat row, no prior color).
-// `bombs` is reused for Bombas (h.bombCapacity, a raw count) even though it
-// used to color a derived bombs/min rate — same icon/concept, just a
-// different formula behind it now.
-const FF_STAT_COLORS = { power: '#ff6f6f', speed: '#5ab0ff', range: '#4fd675', bombs: '#ff9a3c', stamina: '#ffd54f' };
+// FF_STAT_COLORS REMOVED (2026-07-23, user-flagged): the detail panel's 5
+// stat-value numbers no longer get a distinct per-stat color — they're all
+// plain white by default now, with a shared Picante-only red+glow treatment
+// (see .ff-stat-picante in style.css) on Poder/Speed/Stamina specifically
+// (the 3 stats PICANTE_STAT_BONUS/applySpicyStatModifier() actually touch)
+// when h.isSpicy is true. This was the only remaining call site, so the
+// whole per-stat color map is dead code now, removed entirely.
 
 function ffStatusDotClass(h) {
   if (h.mode !== 'work') return 'ff-dot-rest';
@@ -3249,11 +3247,11 @@ function renderInventoryDetails() {
     </div>
 
     <div class="ff-stats-panel">
-      <div class="ff-stat-row"><span class="ff-stat-icon">💪</span><span class="ff-stat-label">Poder</span><span class="ff-stat-dots"></span><span class="ff-stat-value" style="color:${FF_STAT_COLORS.power}">${h.power}</span></div>
-      <div class="ff-stat-row"><span class="ff-stat-icon">👟</span><span class="ff-stat-label">Speed</span><span class="ff-stat-dots"></span><span class="ff-stat-value" style="color:${FF_STAT_COLORS.speed}">${h.speed}</span></div>
-      <div class="ff-stat-row"><span class="ff-stat-icon">📏</span><span class="ff-stat-label">Tamanho</span><span class="ff-stat-dots"></span><span class="ff-stat-value" style="color:${FF_STAT_COLORS.range}">${h.range}</span></div>
-      <div class="ff-stat-row"><span class="ff-stat-icon">💣</span><span class="ff-stat-label">Bombas</span><span class="ff-stat-dots"></span><span class="ff-stat-value" style="color:${FF_STAT_COLORS.bombs}">${h.bombCapacity}</span></div>
-      <div class="ff-stat-row"><span class="ff-stat-icon">⚡</span><span class="ff-stat-label">Stamina</span><span class="ff-stat-dots"></span><span class="ff-stat-value" style="color:${FF_STAT_COLORS.stamina}">${h.stamina}</span></div>
+      <div class="ff-stat-row"><span class="ff-stat-icon">💪</span><span class="ff-stat-label">Poder</span><span class="ff-stat-dots"></span><span class="ff-stat-value${h.isSpicy ? ' ff-stat-picante' : ''}">${h.power}</span></div>
+      <div class="ff-stat-row"><span class="ff-stat-icon">👟</span><span class="ff-stat-label">Speed</span><span class="ff-stat-dots"></span><span class="ff-stat-value${h.isSpicy ? ' ff-stat-picante' : ''}">${h.speed}</span></div>
+      <div class="ff-stat-row"><span class="ff-stat-icon">📏</span><span class="ff-stat-label">Tamanho</span><span class="ff-stat-dots"></span><span class="ff-stat-value">${h.range}</span></div>
+      <div class="ff-stat-row"><span class="ff-stat-icon">💣</span><span class="ff-stat-label">Bombas</span><span class="ff-stat-dots"></span><span class="ff-stat-value">${h.bombCapacity}</span></div>
+      <div class="ff-stat-row"><span class="ff-stat-icon">⚡</span><span class="ff-stat-label">Stamina</span><span class="ff-stat-dots"></span><span class="ff-stat-value${h.isSpicy ? ' ff-stat-picante' : ''}">${h.stamina}</span></div>
     </div>
 
     <footer class="ff-footer">

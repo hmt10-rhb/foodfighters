@@ -2090,7 +2090,17 @@ body:not(.ff-authed) #bottom-nav { display: none; }
 .ff-stat-icon { font-size: 20px; flex: 0 0 auto; }
 .ff-stat-label { font-family: var(--ff-font-display); font-size: 16px; color: var(--ff-cream); white-space: nowrap; flex: 0 0 auto; }
 .ff-stat-dots { flex: 1 1 auto; min-width: 12px; border-bottom: 2px dotted var(--ff-petrol-400); height: 0; transform: translateY(-4px); }
-.ff-stat-value { font-family: var(--ff-font-mono); font-size: 18px; flex: 0 0 auto; text-align: right; min-width: 40px; }
+.ff-stat-value { font-family: var(--ff-font-mono); font-size: 18px; flex: 0 0 auto; text-align: right; min-width: 40px; color: #fff; }
+/* Picante-boosted stat highlight (2026-07-23, user-flagged): only applied to
+   Poder/Speed/Stamina (the 3 stats PICANTE_STAT_BONUS/
+   applySpicyStatModifier() actually touch — Tamanho/Bombas never change from
+   Picante, so those two stay plain white even on a spicy hero). This is a
+   STATIC rule tied to h.isSpicy, not a dynamic bonus-amount indicator — every
+   Picante hero's Poder/Speed/Stamina render this way regardless of the
+   actual rolled values. Reuses the same red + text-shadow glow language
+   already established elsewhere in this file (.float-label.crit) rather
+   than inventing a new visual weight. */
+.ff-stat-value.ff-stat-picante { color: #ff5252; text-shadow: 0 0 6px rgba(255, 82, 82, 0.6); }
 
 /* .ff-skills-wrap/.ff-skills-title/.ff-skills-grid REMOVED (2026-07-23,
    user-flagged): the dedicated middle "SKILLS" section (heading + grid) is
