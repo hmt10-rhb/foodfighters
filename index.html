@@ -8,6 +8,32 @@
 </head>
 <body>
 
+<!-- MANDATORY LOGIN GATE (2026-07-23): the game shell (header/#shell/
+     #bottom-nav) stays hidden via the body.ff-authed CSS toggle (see
+     style.css) until a session is confirmed — either restored automatically
+     at boot (restoreCloudSession()) or established here by the player. No
+     markup below this ever initializes/renders the actual game; game.js's
+     enterGame() is the ONLY thing that reveals it. Reuses cloudSignIn()'s
+     existing field ids (cloud-email/cloud-pw) so no changes were needed to
+     that function's own field-reading logic. -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="ff-logo-plaque">
+      <span class="ff-logo-icon" aria-hidden="true">🧁</span>
+      <span class="ff-logo-text">FOOD FIGHTERS</span>
+    </div>
+    <h2>Entrar</h2>
+    <input id="cloud-email" type="email" placeholder="Email" autocomplete="username">
+    <input id="cloud-pw" type="password" placeholder="Senha" autocomplete="current-password">
+    <label class="login-remember">
+      <input type="checkbox" id="remember-me" checked>
+      Lembrar de mim
+    </label>
+    <button id="login-btn" class="btn">Entrar</button>
+    <button id="show-signup-btn" class="btn btn-ghost">Cadastro</button>
+  </div>
+</div>
+
 <header class="ff-hud-header">
   <div class="ff-logo-plaque">
     <span class="ff-logo-icon" aria-hidden="true">🧁</span>

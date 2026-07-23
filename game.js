@@ -374,27 +374,80 @@ function defaultState() {
   };
 }
 
+// Mid-wave resume: snapshot the LIVE grid (tile layout + per-tile HP +
+// reward-slot counters, plus its mapSeed identity) into the save alongside
+// the usual state fields, so a refresh/reopen restores the exact
+// in-progress map instead of rolling a brand-new one. Built as a one-off
+// snapshot object rather than attaching these onto `state` itself — `state`
+// stays exactly the pure economy/meta object it's always been; the grid
+// vars are a separate, module-level concern that only needs to travel
+// THROUGH the save blob, not live on state in memory (see load(), which
+// strips them back off after reading). Shared by BOTH save() (local
+// localStorage) and pushCloudSave() (cloud `saves` row) — pushCloudSave()
+// used to push the bare `state` object with none of this, which meant a
+// cloud pull could never restore a mid-wave map at all, even once
+// pullCloudSave()'s restore LOGIC was fixed (2026-07-23, master spec #1/#5).
+function saveSnapshot() {
+  return Object.assign({}, state, { gridTiles, tileHp, cratesLeft, cratesTotal });
+}
+
 function save() {
   state.lastSeen = Date.now();
-  // Mid-wave resume: snapshot the LIVE grid (tile layout + per-tile HP +
-  // reward-slot counters) into the save alongside the usual state fields, so
-  // a refresh/reopen restores the exact in-progress map instead of rolling a
-  // brand-new one. Built as a one-off snapshot object rather than attaching
-  // these onto `state` itself — `state` stays exactly the pure economy/meta
-  // object it's always been; the grid vars are a separate, module-level
-  // concern that only needs to travel THROUGH the save blob, not live on
-  // state in memory (see load(), which strips them back off after reading).
-  const snapshot = Object.assign({}, state, { gridTiles, tileHp, cratesLeft, cratesTotal });
-  localStorage.setItem(SAVE_KEY, JSON.stringify(snapshot));
+  localStorage.setItem(SAVE_KEY, JSON.stringify(saveSnapshot()));
+}
+
+// Set true only inside load()'s brand-new-game branch (no valid local save
+// found at all — first-ever load, or localStorage/cookies wiped) and false
+// otherwise. BUG FIX (2026-07-23, master spec #1/#5): that branch's own
+// save() call stamps state.lastSeen to Date.now() (i.e. "right now"), which
+// would make a freshly-generated EMPTY game always look newer than any real
+// cloud save no matter how old the cloud data actually is — permanently
+// hiding a logged-in player's real progress behind a blank slate every time
+// local storage is empty/cleared. pullCloudSave() OR's this flag into its
+// "cloud wins" decision instead of trusting the timestamp comparison alone
+// in that specific case, which is also what makes the cloud genuinely
+// authoritative for a logged-in player after a wipe (master spec #5).
+let localFreshOnBoot = false;
+
+// Shared by load() (local save) and pullCloudSave() (cloud save) — restores
+// the exact persisted grid (mid-wave resume) when it's valid AND belongs to
+// the CURRENT wave, otherwise falls back to generating a fresh map. Used to
+// be duplicated: pullCloudSave() had its own, worse version that just called
+// bare genLayout() unconditionally on every cloud-wins pull, discarding any
+// in-progress map even when the persisted grid was perfectly valid (master
+// spec #1, urgent). raw's mapSeed (if present) is carried through as-is,
+// since restoring is explicitly NOT rolling a new map — genLayout() itself
+// is the only place a fresh mapSeed ever gets stamped (master spec #5).
+function restoreOrGenerateGrid(raw, waveAtSave) {
+  const validGridTiles = Array.isArray(raw.gridTiles) && raw.gridTiles.length === G_ROWS &&
+    raw.gridTiles.every(row => Array.isArray(row) && row.length === G_COLS &&
+      row.every(v => Number.isInteger(v) && v >= 0 && v <= 5));
+  const validTileHp = raw.tileHp && typeof raw.tileHp === 'object' && !Array.isArray(raw.tileHp) &&
+    Object.values(raw.tileHp).every(box => box && typeof box.hp === 'number' && typeof box.max === 'number');
+  if (state.wave === waveAtSave && validGridTiles && validTileHp) {
+    gridTiles = raw.gridTiles.map(row => row.slice());
+    tileHp = Object.assign({}, raw.tileHp);
+    cratesLeft = typeof raw.cratesLeft === 'number' ? raw.cratesLeft : 0;
+    cratesTotal = typeof raw.cratesTotal === 'number' ? raw.cratesTotal : cratesLeft;
+    // old saves/cloud rows from before this field existed simply don't have
+    // one yet — genLayout() will stamp a fresh mapSeed the next time a real
+    // new map actually rolls, so this is never left permanently missing
+    if (typeof raw.mapSeed === 'string') state.mapSeed = raw.mapSeed;
+    return true;
+  }
+  genLayout();
+  return false;
 }
 
 // Factored out of load()'s brand-new-game branch so the reset button can
-// reuse the exact same bootstrap (see reset-btn handler in bindEvents).
+// reuse the exact same bootstrap (see reset-btn handler in bindEvents) —
+// duplicating this by hand there was the real risk, not the extraction.
 function newGameState() {
   state = defaultState();
   for (let i = 0; i < 3; i++) state.heroes.push(makeHero('CASEIRO'));
   genLayout(); // brand-new game: no persisted grid to restore, roll one
   waveRegen = false;
+  localFreshOnBoot = true; // see this flag's own comment — pullCloudSave() needs to know this wasn't a real returning save
 }
 
 function load() {
@@ -416,6 +469,7 @@ function load() {
     save();
     return;
   }
+  localFreshOnBoot = false;
   state = Object.assign(defaultState(), raw);
   state.houses = Object.assign({ tent: 0, cabin: 0, villa: 0, fortress: 0 }, raw.houses);
   state.upgrades = Object.assign({ mining: 0, blast: 0, haste: 0 }, raw.upgrades);
@@ -521,22 +575,11 @@ function load() {
   // Old saves (missing/malformed gridTiles/tileHp — the pre-this-feature
   // format, or any other corruption) fall back to today's existing
   // behavior: generate a fresh map, same graceful-migration pattern used
-  // for every other new save field so far.
-  const validGridTiles = Array.isArray(raw.gridTiles) && raw.gridTiles.length === G_ROWS &&
-    raw.gridTiles.every(row => Array.isArray(row) && row.length === G_COLS &&
-      row.every(v => Number.isInteger(v) && v >= 0 && v <= 5));
-  const validTileHp = raw.tileHp && typeof raw.tileHp === 'object' && !Array.isArray(raw.tileHp) &&
-    Object.values(raw.tileHp).every(box => box && typeof box.hp === 'number' && typeof box.max === 'number');
-  let gridRestored = false;
-  if (state.wave === waveAtSave && validGridTiles && validTileHp) {
-    gridTiles = raw.gridTiles.map(row => row.slice());
-    tileHp = Object.assign({}, raw.tileHp);
-    cratesLeft = typeof raw.cratesLeft === 'number' ? raw.cratesLeft : 0;
-    cratesTotal = typeof raw.cratesTotal === 'number' ? raw.cratesTotal : cratesLeft;
-    gridRestored = true;
-  }
+  // for every other new save field so far. Shared with pullCloudSave() via
+  // restoreOrGenerateGrid() (see its own comment) — was duplicated inline
+  // here before, with pullCloudSave() carrying a worse, buggy copy.
   waveRegen = false;
-  if (!gridRestored) genLayout();
+  restoreOrGenerateGrid(raw, waveAtSave);
 }
 
 /* ============ Heroes ============ */
@@ -1031,7 +1074,10 @@ const JAULA_RARITY_WEIGHTS = {
   CHEF_RENOMADO: 0.1300, ESTRELA_MICHELIN: 0.0146, RECEITA_DE_VO: 0.0010,
 };
 
-const AI_MS = 500, FUSE_TICKS = 3;
+// FUSE_TICKS=7 (2026-07-23): bombs now take exactly 7 * AI_MS(500ms) = 3.5s
+// to explode after being planted (was 3 ticks = 1.5s) — a clean integer
+// tick count, no rounding needed.
+const AI_MS = 500, FUSE_TICKS = 7;
 // Each smashed crate pays N seconds' worth of the planter's idle mineRate, so
 // on-screen earnings track the offline averaged rate instead of a separate
 // economy. NOTE: this CRATE_WORTH_S/CHEST_WORTH_S-driven formula no longer
@@ -1327,6 +1373,17 @@ function genLayout() {
     gridTiles.push(row);
   }
   seedCrates();
+  // SERVER-AUTHORITATIVE MAP (2026-07-23, master spec #5): every REAL new
+  // map gets a fresh unique identity, persisted alongside gridTiles/tileHp/
+  // wave in both the local save and the cloud `saves` row (see
+  // saveSnapshot()) — this is the single point where a genuinely NEW map is
+  // ever rolled (new game, old/invalid save fallback, a real wave-clear,
+  // Prestige's reset), so stamping it here (rather than at each call site)
+  // guarantees it always travels with the grid it actually belongs to.
+  // Restoring a persisted grid (restoreOrGenerateGrid()) does NOT call this
+  // — it carries the OLD seed through unchanged, since it's still the same
+  // map, not a new one.
+  state.mapSeed = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
 }
 
 // Generalized to also treat T_OBSTACLE as blocking (not just T_WALL) — an
@@ -1898,6 +1955,7 @@ function destroyTile(r, c, box, folhadoDeOuroBomb) {
     floatLabel(r, c, '🔓 ' + rLabel(rarity) + '!', true);
     cratesLeft = Math.max(0, cratesLeft - 1);
     save();
+    pushCloudSaveThrottled(); // master spec #4: push right after a reward event (throttled), not just the 30s baseline
     renderHeader();
     renderInventory();
     startJaulaReveal(freed);
@@ -1932,6 +1990,7 @@ function destroyTile(r, c, box, folhadoDeOuroBomb) {
     state.skillShards = (state.skillShards || 0) + 1;
     floatLabel(r, c, '🔮 +1', true);
   }
+  pushCloudSaveThrottled(); // master spec #4: push right after a reward event (throttled), not just the 30s baseline
   if (cratesLeft === 0 && !waveRegen) waveClear();
 }
 
@@ -3617,8 +3676,8 @@ function bindEvents() {
 
   document.getElementById('reset-btn').addEventListener('click', async () => {
     if (!confirm('Wipe all Food Fighters progress?')) return;
-    // BUG FIX (2026-07-23): this button never actually worked. Two bugs
-    // stacked:
+    // BUG FIX (2026-07-23): this button never actually worked. Two separate
+    // bugs stacked:
     // 1) It only did `localStorage.removeItem(SAVE_KEY); location.reload();`
     //    — but location.reload() fires 'beforeunload' synchronously BEFORE
     //    navigating, and this file has a `beforeunload` listener that calls
@@ -3627,14 +3686,16 @@ function bindEvents() {
     //    localStorage before the page actually unloads. The removeItem()
     //    was always overwritten a moment later, every single time.
     // 2) For a logged-in cloud player, even a successful local wipe would
-    //    get pulled straight back down from the cloud on that same reload.
+    //    get pulled straight back from the cloud on the reload (localFreshOnBoot
+    //    correctly trusts the cloud after a genuinely-accidental local wipe —
+    //    exactly wrong for THIS deliberate one).
     // Fix: build the fresh state in memory FIRST (same bootstrap load() uses
     // for a brand-new game, via newGameState()) and save() it immediately —
     // so any beforeunload autosave just re-persists the already-wiped state,
     // a harmless no-op instead of a silent revert. Then, if signed in,
     // delete the player's own cloud rows (allowed by the owner-can-delete
-    // policies in supabase/schema.sql) so there's nothing stale left for a
-    // cloud pull to restore on reload either.
+    // policies in supabase/schema.sql) so there's nothing stale left for
+    // pullCloudSave() to restore on reload either.
     if (cloudSignedIn()) {
       const [savesRes, leaderboardRes] = await Promise.all([
         sb.from('saves').delete().eq('user_id', cloudSession.user.id),
@@ -3662,15 +3723,43 @@ function bindEvents() {
 
 /* ============ Cloud Sync (Supabase) ============ */
 //
-// Entirely additive: with no config.js / offline / Supabase down, `sb` stays
-// null and every function below no-ops, so the game behaves exactly as the
-// pure-localStorage version always has. localStorage remains the fast, always
-// -on save path (see save()/load()) — this layer only mirrors that state to
-// the cloud on a slow interval so a logged-in player can pick up on another
-// device and appear on the shared leaderboard.
-const sb = (window.supabase && window.SUPABASE_URL)
-  ? window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY)
-  : null;
+// MANDATORY LOGIN (2026-07-23): login is no longer optional — there is no
+// more anonymous/guest play at all. `sb` staying null (no config.js/offline/
+// Supabase down) is still handled gracefully everywhere below (every
+// function no-ops), but in practice a real deployment always has it
+// configured now, since the game literally cannot be reached without it —
+// see enterGame()/showLoginScreen() and the boot sequence at the bottom of
+// this file. localStorage remains the fast, always-on save path (see
+// save()/load()); this layer mirrors that state to the cloud so a logged-in
+// player can pick up on another device and appear on the shared leaderboard.
+//
+// "Lembrar de mim" (remember me): Supabase JS lets you choose WHERE the
+// session token is written via the `storage` option passed to
+// createClient() — localStorage survives closing the browser entirely,
+// sessionStorage is cleared the instant the browser/tab actually closes but
+// still survives a plain page refresh (persistSession stays true either
+// way — only the storage TARGET changes, matching "unchecked = doesn't
+// survive closing the browser", not "logs out on every refresh"). Since
+// this choice has to be made at createClient() time, `sb` is now a `let`,
+// (re)built by createSupabaseClient() — once at boot using whatever
+// preference was saved last time (so a returning "remembered" session can
+// actually be found), and again at login time if the checkbox differs from
+// that.
+const REMEMBER_ME_KEY = 'foodfighters-remember-me';
+function getRememberMePref() {
+  try { const v = localStorage.getItem(REMEMBER_ME_KEY); return v === null ? true : v === 'true'; } catch (e) { return true; }
+}
+function setRememberMePref(v) {
+  try { localStorage.setItem(REMEMBER_ME_KEY, v ? 'true' : 'false'); } catch (e) {}
+}
+function createSupabaseClient(persist) {
+  if (!(window.supabase && window.SUPABASE_URL)) return null;
+  return window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
+    auth: { persistSession: true, storage: persist ? window.localStorage : window.sessionStorage },
+  });
+}
+let sbPersistMode = getRememberMePref();
+let sb = createSupabaseClient(sbPersistMode);
 
 let cloudSession = null;
 let cloudUsername = null;
@@ -3690,12 +3779,28 @@ async function restoreCloudSession() {
   refreshLeaderboard();
 }
 
+// shared by the login screen's "Entrar" button AND cloudSignIn() itself —
+// reads the remember-me checkbox (if present — the login screen has one;
+// nothing else needs to) and recreates `sb` first if the player's choice
+// differs from whatever it was already built with, so the resulting
+// session is written to the RIGHT storage from the very first request.
+function applyRememberMeChoiceFromCheckbox() {
+  const box = document.getElementById('remember-me');
+  const remember = box ? !!box.checked : true;
+  setRememberMePref(remember);
+  if (remember !== sbPersistMode) {
+    sbPersistMode = remember;
+    sb = createSupabaseClient(remember);
+  }
+}
+
 async function cloudSignUp() {
   if (!sb) return;
   const email = document.getElementById('cloud-email').value.trim();
   const pw = document.getElementById('cloud-pw').value;
   const username = document.getElementById('cloud-username').value.trim();
   if (!email || !pw || !username) { toast('Preencha email, senha e nome de jogador.'); return; }
+  applyRememberMeChoiceFromCheckbox();
   const { data, error } = await sb.auth.signUp({ email, password: pw });
   if (error) { toast('Erro ao criar conta: ' + error.message); return; }
   cloudSession = data.session;
@@ -3704,9 +3809,11 @@ async function cloudSignUp() {
   if (cloudSession) {
     await pushCloudSave();
     toast('Conta criada e sincronizada!');
-    showAccountModal();
+    enterGame(); // mandatory login: signup with an immediate session goes straight into the game, not to the account modal
   } else {
     toast('Conta criada — confirme o email antes de entrar (verifique a caixa de entrada).');
+    const backdrop = document.getElementById('modal-backdrop');
+    if (backdrop) backdrop.classList.add('hidden'); // close the signup modal, back to the login screen to wait for email confirmation
   }
 }
 
@@ -3715,13 +3822,14 @@ async function cloudSignIn() {
   const email = document.getElementById('cloud-email').value.trim();
   const pw = document.getElementById('cloud-pw').value;
   if (!email || !pw) { toast('Preencha email e senha.'); return; }
+  applyRememberMeChoiceFromCheckbox();
   const { data, error } = await sb.auth.signInWithPassword({ email, password: pw });
   if (error) { toast('Erro ao entrar: ' + error.message); return; }
   cloudSession = data.session;
   cloudUsername = localStorage.getItem(USERNAME_KEY) || email.split('@')[0];
   await pullCloudSave();
+  enterGame(); // mandatory login: this IS the entry point into the game now
   toast('Login feito — progresso sincronizado.');
-  showAccountModal();
 }
 
 async function cloudSignOut() {
@@ -3729,12 +3837,24 @@ async function cloudSignOut() {
   await sb.auth.signOut();
   cloudSession = null;
   cloudUsername = null;
-  toast('Você saiu da conta. O jogo continua salvo neste dispositivo (local).');
-  showAccountModal();
+  // MANDATORY LOGIN (2026-07-23): signing out returns to the login screen —
+  // there is no more "keep playing signed out" path, matching the hard gate
+  // (a player can never be IN the game without an authenticated session).
+  showLoginScreen();
+  toast('Você saiu da conta.');
 }
 
 // Cloud is treated as source of truth when its save is newer than the local
 // one (e.g. player progressed on another device) — otherwise we push local up.
+// FIX (2026-07-23, urgent, master spec #1/#5): this used to (a) compare ONLY
+// data.updated_at vs state.lastSeen, which fails hard whenever local storage
+// is empty/wiped (a fresh local game's own save() stamps lastSeen to "right
+// now", always beating any real cloud timestamp — see localFreshOnBoot's
+// comment), and (b) always regenerated a brand-new map with a bare
+// genLayout() call on every cloud-wins pull instead of reusing load()'s
+// restore-or-regenerate logic, silently discarding the player's in-progress
+// map (and anything earned since the last cloud push) every time this
+// branch fired. Both fixed here.
 async function pullCloudSave() {
   if (!sb || !cloudSession) return;
   const { data, error } = await sb
@@ -3742,13 +3862,26 @@ async function pullCloudSave() {
     .select('state, updated_at')
     .eq('user_id', cloudSession.user.id)
     .maybeSingle();
-  if (error || !data) { await pushCloudSave(); return; }
-  if (new Date(data.updated_at).getTime() > (state.lastSeen || 0)) {
+  if (error || !data) { localFreshOnBoot = false; await pushCloudSave(); return; }
+  const cloudWins = localFreshOnBoot || new Date(data.updated_at).getTime() > (state.lastSeen || 0);
+  // consumed here regardless of outcome — only the FIRST pullCloudSave()
+  // call after a genuinely fresh boot should ever be affected by this; a
+  // LATER manual cloudSignIn() in the same session (after real local play
+  // has happened) must fall back to the normal timestamp comparison
+  localFreshOnBoot = false;
+  if (cloudWins) {
     state = Object.assign(defaultState(), data.state);
     state.houses = Object.assign({ tent: 0, cabin: 0, villa: 0, fortress: 0 }, data.state.houses);
     state.upgrades = Object.assign({ mining: 0, blast: 0, haste: 0 }, data.state.upgrades);
+    // gridTiles/tileHp/cratesLeft/cratesTotal travel inside data.state the
+    // same way they travel inside the local save blob (see saveSnapshot()) —
+    // strip them back off state itself, mirroring load()'s own handling
+    delete state.gridTiles; delete state.tileHp; delete state.cratesLeft; delete state.cratesTotal;
+    const waveAtSave = state.wave;
+    // SAME restore-or-regenerate logic load() uses — was a bare genLayout()
+    // call before (see this function's own comment above)
+    restoreOrGenerateGrid(data.state, waveAtSave);
     save();
-    genLayout();
     buildArena();
     syncActors();
     renderAll();
@@ -3761,14 +3894,25 @@ async function pushCloudSave() {
   if (!sb || !cloudSession) return;
   await sb.from('saves').upsert({
     user_id: cloudSession.user.id,
-    state,
+    // FIX (2026-07-23, master spec #1/#5): used to push the bare `state`
+    // object, which never carried gridTiles/tileHp/cratesLeft/cratesTotal/
+    // mapSeed at all — meaning a cloud pull could NEVER restore a mid-wave
+    // map even with pullCloudSave()'s restore logic fixed, since the row
+    // simply never had a valid grid to restore in the first place. Same
+    // snapshot shape save() writes locally now (saveSnapshot()).
+    state: saveSnapshot(),
     updated_at: new Date().toISOString(),
   });
   await sb.from('leaderboard').upsert({
     user_id: cloudSession.user.id,
     username: cloudUsername || 'Miner',
     wave: state.wave,
-    total_mined: Math.floor(state.totalMined),
+    // FIX (2026-07-23, master spec #2): Math.floor() truncated fractional
+    // lifetime totals to integers — with the whole economy now in fractions
+    // of a Food Coin (chest rewards are 0.01-3.00), this could show "0" on
+    // the shared leaderboard for a long time even though totalMined was
+    // genuinely accumulating. Round to 2 decimals instead of flooring.
+    total_mined: Math.round(state.totalMined * 100) / 100,
   });
 }
 
@@ -3784,6 +3928,50 @@ async function refreshLeaderboard() {
   if (active && active.id === 'tab-ranking') renderRanking();
 }
 
+// REAL-TIME RANKING (2026-07-23, master spec #4): a Supabase Realtime
+// subscription on the `leaderboard` table's Postgres changes (over
+// websocket, via `sb.channel().on('postgres_changes', ...)`) — ANY row
+// changing (any player, not just this one) pushes here instantly instead of
+// waiting for the next 30s poll. Re-fetches through the existing
+// refreshLeaderboard() (rather than hand-patching leaderboardCache from the
+// raw payload) so the cache stays correctly sorted/deduped/limited-to-20 by
+// the same single source of truth the rest of the game already uses, and
+// re-renders live if the Ranking tab happens to be open; if it's not open,
+// there's nothing to re-render, but leaderboardCache is already fresh so
+// opening it later shows current data immediately, with no wait for the
+// next poll. Idempotent (safe to call more than once — never double-
+// subscribes) and a safe no-op with no `sb` (offline/local-only build).
+let leaderboardChannel = null;
+function subscribeLeaderboardRealtime() {
+  if (!sb || leaderboardChannel) return;
+  leaderboardChannel = sb
+    .channel('leaderboard-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'leaderboard' }, () => {
+      refreshLeaderboard();
+    })
+    .subscribe();
+}
+
+// Throttled push triggered right after a chest/Jaula reward event (master
+// spec #4: "keep pushing... don't throttle to 15 minutes... or trigger a
+// push right after a reward event, throttled sensibly to avoid hammering
+// the DB on every single tiny reward") — a wood-tier chest can pay out
+// every couple seconds at a strong squad's mining rate, so this is a real
+// per-event throttle (not just relying on the 30s interval), independent of
+// it. REWARD_PUSH_THROTTLE_MS is deliberately much shorter than the 30s
+// background interval (this is the "as it happens" fast path; the interval
+// remains the steady baseline/fallback for players not actively cracking
+// chests).
+let lastRewardPush = 0;
+const REWARD_PUSH_THROTTLE_MS = 5000;
+function pushCloudSaveThrottled() {
+  if (!cloudSignedIn()) return;
+  const now = Date.now();
+  if (now - lastRewardPush < REWARD_PUSH_THROTTLE_MS) return;
+  lastRewardPush = now;
+  pushCloudSave();
+}
+
 function showAccountModal() {
   document.getElementById('modal-body').innerHTML = sb
     ? (cloudSignedIn()
@@ -3791,9 +3979,15 @@ function showAccountModal() {
         <h3>☁️ Conta na nuvem</h3>
         <p>Logado como <b>${cloudUsername}</b>. Progresso sincronizado entre dispositivos e visível no ranking.</p>
         <button id="cloud-signout-btn" class="btn">Sair da conta</button>`
+      // MANDATORY LOGIN (2026-07-23): this "logged out but inside the
+      // game" branch is now unreachable in practice — signing out
+      // (cloudSignOut()) goes straight to the login screen instead of
+      // leaving the game visible, and there is no way to reach account-btn
+      // (hidden pre-auth) without a session either. Left in place as
+      // harmless defensive dead code rather than deleted.
       : `
         <h3>☁️ Conta na nuvem</h3>
-        <p class="muted">Crie uma conta pra sincronizar seu progresso entre PC/celular e entrar no ranking compartilhado. Sem conta, o jogo continua salvo só neste navegador.</p>
+        <p class="muted">Crie uma conta pra sincronizar seu progresso entre PC/celular e entrar no ranking compartilhado.</p>
         <input id="cloud-username" type="text" placeholder="Nome de jogador (aparece no ranking)" style="width:100%;margin-bottom:6px;">
         <input id="cloud-email" type="email" placeholder="Email" style="width:100%;margin-bottom:6px;">
         <input id="cloud-pw" type="password" placeholder="Senha (mín. 6 caracteres)" style="width:100%;margin-bottom:10px;">
@@ -3801,6 +3995,54 @@ function showAccountModal() {
         <button id="cloud-signin-btn" class="btn btn-ghost">Já tenho conta — Entrar</button>`)
     : `<h3>☁️ Conta na nuvem</h3><p class="muted">Sincronização não configurada neste build.</p>`;
   document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+
+// "Cadastro" on the login screen opens this — the SAME cloudSignUp() field
+// ids (cloud-username/cloud-email/cloud-pw) and the SAME #cloud-signup-btn
+// click delegation already wired in bindEvents() (see #modal-body's click
+// listener), so no new event binding was needed for the button itself.
+function showSignupModal() {
+  document.getElementById('modal-body').innerHTML = `
+    <h3>☁️ Criar conta</h3>
+    <p class="muted">Crie uma conta pra sincronizar seu progresso entre PC/celular e entrar no ranking compartilhado.</p>
+    <input id="cloud-username" type="text" placeholder="Nome de jogador (aparece no ranking)" style="width:100%;margin-bottom:6px;">
+    <input id="cloud-email" type="email" placeholder="Email" style="width:100%;margin-bottom:6px;">
+    <input id="cloud-pw" type="password" placeholder="Senha (mín. 6 caracteres)" style="width:100%;margin-bottom:10px;">
+    <button id="cloud-signup-btn" class="btn">Criar conta</button>`;
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+
+// MANDATORY LOGIN (2026-07-23): these two are the ONLY places that ever
+// toggle body.ff-authed (see style.css's gating rules) — enterGame() is the
+// sole path that reveals the game shell AND starts its recurring background
+// work (ticks/Realtime/periodic push), called either right after
+// restoreCloudSession() finds a valid session at boot, or after a
+// successful login/signup. showLoginScreen() is the default/logged-out
+// state — nothing else in this file ever adds/removes that class.
+let gameStarted = false;
+function enterGame() {
+  document.body.classList.add('ff-authed');
+  const backdrop = document.getElementById('modal-backdrop');
+  if (backdrop) backdrop.classList.add('hidden'); // close the login screen's signup modal if it was open
+  if (gameStarted) return; // a later login (e.g. after a mid-session sign-out+back-in) shouldn't re-run boot-only setup
+  gameStarted = true;
+  document.getElementById('ref-code').textContent = `https://foodfighters.example/ref/${state.refCode}`;
+  loadUiPrefs();
+  applyTheme(state.activeThemeId);
+  buildArena();
+  syncActors();
+  renderAll();
+  setInterval(economyTick, 1000);
+  setInterval(aiTick, AI_MS);
+  subscribeLeaderboardRealtime();
+  setInterval(() => { if (cloudSignedIn()) pushCloudSave(); }, 30000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && cloudSignedIn()) pushCloudSave();
+  });
+  window.addEventListener('beforeunload', () => { if (cloudSignedIn()) pushCloudSave(); });
+}
+function showLoginScreen() {
+  document.body.classList.remove('ff-authed');
 }
 
 /* ============ Init ============ */
@@ -3846,24 +4088,30 @@ function migrateOldBrandKey(oldKey, newKey) {
 migrateOldBrandKey('bombheroes-username', USERNAME_KEY);
 migrateOldBrandKey('bombheroes-ui', UI_PREF_KEY);
 
-load();
-document.getElementById('ref-code').textContent = `https://foodfighters.example/ref/${state.refCode}`;
-loadUiPrefs();
-bindEvents();
-applyTheme(state.activeThemeId); // whichever theme rotation last landed on, persisted
 // load() itself now guarantees gridTiles/tileHp are populated — either
 // restored from the save (mid-wave resume) or freshly generated internally
 // (new game / old save / offline-wave-advance) — so no separate genLayout()
-// call is needed here anymore; buildArena() just renders whatever load() left.
-buildArena();
-syncActors();
-renderAll();
-setInterval(economyTick, 1000);
-setInterval(aiTick, AI_MS);
+// call is needed anywhere here; buildArena() (inside enterGame()) just
+// renders whatever load() left. load() itself is still unconditional and
+// synchronous (cheap, local-only, sets up `state` so pullCloudSave() below
+// has something to compare against) — it does NOT reveal anything by
+// itself; only enterGame() ever does that.
+load();
+bindEvents(); // safe to bind immediately — login-screen/modal buttons are inert until clicked regardless of auth state
 
-restoreCloudSession();
-setInterval(() => { if (cloudSignedIn()) pushCloudSave(); refreshLeaderboard(); }, 30000);
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden' && cloudSignedIn()) pushCloudSave();
-});
-window.addEventListener('beforeunload', () => { if (cloudSignedIn()) pushCloudSave(); });
+// MANDATORY LOGIN (2026-07-23): the game shell/ticks/Realtime subscription
+// only ever start via enterGame() (see its own comment) — reached either
+// automatically here if restoreCloudSession() finds a valid session
+// (possibly pulling a fresher cloud state first via pullCloudSave(), same
+// as before this gate existed), or later via cloudSignIn()/cloudSignUp()
+// when the player logs in from the login screen. No path renders the game
+// without a confirmed session (showLoginScreen() — the default state, since
+// body never gets .ff-authed otherwise — is what's visible until then).
+(async function boot() {
+  await restoreCloudSession();
+  if (cloudSignedIn()) enterGame();
+  else showLoginScreen();
+})();
+
+document.getElementById('login-btn').addEventListener('click', cloudSignIn);
+document.getElementById('show-signup-btn').addEventListener('click', showSignupModal);
