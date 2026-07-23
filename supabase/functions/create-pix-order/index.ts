@@ -65,7 +65,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const { data: callerData, error: callerError } = await callerClient.auth.getUser(jwt);
   if (callerError || !callerData?.user) return json({ error: 'Invalid or expired session' }, 401);
   const userId = callerData.user.id;
-  const userEmail = callerData.user.email || 'jogador@foodfighters.example';
+  // Mercado Pago's SANDBOX rejects any payer.email that doesn't end in
+  // "@testuser.com" (invalid_email_for_sandbox) — a real player's real email
+  // fails there but is exactly what production needs. Controlled by the
+  // MERCADOPAGO_TEST_MODE secret rather than guessing from the access
+  // token's format, since that format isn't reliable/documented to sniff.
+  // Flip that secret to "false" (or remove it) once switching to
+  // production credentials.
+  const isTestMode = Deno.env.get('MERCADOPAGO_TEST_MODE') === 'true';
+  const userEmail = isTestMode
+    ? `test_${userId.replace(/-/g, '')}@testuser.com`
+    : (callerData.user.email || 'jogador@foodfighters.example');
 
   let body: { quantity?: unknown };
   try {
@@ -115,7 +125,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
             payment_method: { id: 'pix', type: 'bank_transfer' },
           }],
         },
-        payer: { email: userEmail },
+        // "APRO" in first_name is Mercado Pago's documented sandbox trick to
+        // auto-approve a test PIX order a few seconds after creation (no
+        // real bank/QR scan needed) — ONLY meaningful with test credentials,
+        // gated the same way as the test email above so it can never affect
+        // a real production order. REMOVE (or flip MERCADOPAGO_TEST_MODE to
+        // "false") before accepting real payments.
+        payer: isTestMode ? { email: userEmail, first_name: 'APRO' } : { email: userEmail },
       }),
     });
   } catch (e) {
@@ -125,8 +141,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const mpData = await mpRes.json();
   if (!mpRes.ok) {
+    console.error('Mercado Pago rejected the order:', JSON.stringify(mpData));
     await adminClient.from('michelin_orders').update({ status: 'failed' }).eq('id', orderRow.id);
-    return json({ error: 'Mercado Pago error: ' + (mpData?.message || mpData?.error || mpRes.status) }, 502);
+    // TEMPORARY (2026-07-23, debugging the first live test): surfacing the
+    // full raw response instead of a short summary, so the real cause shows
+    // up in the browser's Network tab without needing to dig through
+    // Supabase's own function logs. Fine to shorten back once the
+    // integration is confirmed working end to end.
+    return json({ error: 'Mercado Pago error: ' + JSON.stringify(mpData) }, 502);
   }
 
   const payment = mpData?.transactions?.payments?.[0];

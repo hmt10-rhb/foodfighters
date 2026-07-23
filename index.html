@@ -49,12 +49,11 @@
     <div class="ff-currency-pill" title="Chef Gems — simulated in-game currency">
       <img class="cur-icon" src="assets/coins/chef_coin.png" alt="Chef Gems">
       <b id="bcoin-display">0</b>
-      <button id="exchange-btn" class="ff-plus-btn" title="Convert Food Coins into Chef Gems">+</button>
+      <button id="exchange-btn" class="ff-plus-btn" title="Open Central de Câmbio (exchange currencies)">+</button>
     </div>
     <!-- Estrela Michelin (2026-07-23, 3-currency restructure): premium
-         currency, real-money-only — see michelinDebugGrant()/vipDebugGrant()
-         comments in game.js for why the exchange button here is a temporary
-         manual test hook, not a real PIX purchase flow yet. -->
+         currency, real-money-only — acquired via real PIX, see
+         generatePixOrder() in game.js. -->
     <div class="ff-currency-pill" title="Estrela Michelin — premium currency, PIX only">
       <img class="cur-icon" src="assets/coins/estrela_michelin.png" alt="Estrela Michelin">
       <b id="michelin-display">0</b>
@@ -324,22 +323,16 @@
         </div>
       </div>
 
-      <!-- Estrela Michelin (2026-07-23, 3-currency restructure): the only
-           currency VIP/"Mais Apimentado" can be bought with — real PIX
-           payment collection isn't wired up yet, so this debug box is a
-           TEMPORARY manual stand-in for "a purchase just succeeded"
-           (michelinDebugGrant() in game.js). VIP/lure themselves now really
-           SPEND this balance (buyVip()/buyPicanteBoost()), not just grant
-           free days/hours like the old debug buttons used to. -->
+      <!-- Estrela Michelin (2026-07-23) — real PIX purchase is live (see the
+           "+" on the header pill). The old debug-grant buttons that used to
+           live here were removed (2026-07-23, security cleanup): they gave
+           free premium currency with zero server-side check, callable by
+           any player directly from devtools regardless of whether the
+           button was visible — see michelinDebugGrant()'s own removal
+           comment in game.js. -->
       <div class="extra-box" id="michelin-debug-box">
         <h3>🌟 Estrela Michelin</h3>
         <p class="muted">Saldo: <b class="michelin-balance">0</b> 🌟</p>
-        <p class="muted vip-debug-label">Teste (sem PIX real ainda):</p>
-        <div class="vip-debug-row">
-          <button class="btn btn-small" data-michelin-debug="5">+5 🌟</button>
-          <button class="btn btn-small" data-michelin-debug="20">+20 🌟</button>
-          <button class="btn btn-small" data-michelin-debug="50">+50 🌟</button>
-        </div>
       </div>
 
       <div class="extra-box" id="vip-box">

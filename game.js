@@ -25,9 +25,8 @@ const BASE_RECOVERY = 1 / 60;      // energy/s while resting (1 per minute), bef
 const OFFLINE_CAP_S = 8 * 3600;    // away-progress cap so a week offline doesn't print money
 const MAX_WORKERS = 15;            // roster-wide cap on simultaneous fielded heroes
 // VIP (2026-07-23): expiresAt is a plain future timestamp; 0 or past means
-// inactive. Bought with Estrela Michelin only (see buyVip()) — real PIX
-// payment collection to acquire Michelin itself isn't wired up yet (see
-// michelinDebugGrant() for the temporary manual stand-in).
+// inactive. Bought with Estrela Michelin only (see buyVip()), acquired via
+// real PIX (see generatePixOrder()/create-pix-order Edge Function).
 function isVipActive() { return state.vip && state.vip.expiresAt > Date.now(); }
 // Perk #2: VIP fields 1 extra simultaneous worker (16 instead of 15).
 // Replaces every direct MAX_WORKERS reference in live gameplay logic —
@@ -494,8 +493,8 @@ function defaultState() {
     // enough for one x10 pack at the current PACKS pricing (20/100/200/300).
     bcoin: 200,
     // Estrela Michelin (2026-07-23, 3-currency restructure): the premium
-    // currency, real-money-only (PIX — not implemented yet, see
-    // michelinDebugGrant()'s own comment). Named after
+    // currency, real-money-only — acquired via real PIX (see
+    // generatePixOrder()/create-pix-order Edge Function). Named after
     // the SAME words as the old top-but-one rarity tier on purpose — that's
     // exactly why that tier got renamed to Comida de Buteco (ESPECIALIDADE_
     // DA_CASA/COMIDA_DE_BUTECO's own migration comment in
@@ -2711,20 +2710,20 @@ function buyPicanteBoost(hours) {
   toast(`🌶️ Mais Apimentado +${hours}h (−${cost} 🌟) — expira em ${new Date(state.picanteBoost.expiresAt).toLocaleString()}`);
 }
 
-// TEMPORARY manual test hook (2026-07-23) — no real PIX payment collection
-// exists yet (would need a payment gateway + a Supabase Edge Function to
-// confirm/grant, similar to the existing admin-grant-currency function).
-// Stands in for "a successful Estrela Michelin purchase just happened" so
-// buyVip()/buyPicanteBoost() above (the REAL spend logic) are actually
-// testable end to end. Wired to a debug-only button in Extras — replace the
-// CALL SITE with a real payment-confirmation webhook later.
-function michelinDebugGrant(amount) {
-  state.michelinCoin = (state.michelinCoin || 0) + amount;
-  save();
-  renderHeader();
-  renderExtras();
-  toast(`🌟 +${amount} Estrela Michelin (debug — sem PIX real ainda)`);
-}
+// REMOVED (2026-07-23, security cleanup): michelinDebugGrant() used to
+// live here — a client-side function that added Michelin to state.michelinCoin
+// with zero server-side check, wired to buttons in Extras. Real PIX
+// purchase (generatePixOrder() -> create-pix-order Edge Function ->
+// mercadopago-webhook) now exists and is the only legitimate way to
+// acquire Michelin, so this stand-in served its purpose testing that path
+// end to end. Removed rather than left dormant: with real money now backing
+// this currency, ANY player could call this function directly from devtools
+// (regardless of whether its button was visible) for free VIP/lure — worth
+// noting this doesn't fully close client-side trust as a category (nothing
+// stops directly editing state.michelinCoin itself in devtools either; a
+// real fix needs server-side write validation on the saves table, a bigger
+// separate project), but removing the one-line free-currency function is a
+// concrete improvement over leaving it in.
 
 // Estrela Michelin buy calculator (2026-07-23) — the "+" on the header pill
 // is the ONLY purchase entry point (per explicit instruction: "não tem
@@ -4096,9 +4095,8 @@ function fmtCountdown(ms) {
 }
 
 // VIP + "Mais Apimentado" status/shop panel (2026-07-23) — both exclusive
-// to the Estrela Michelin shop now (see buyVip()/buyPicanteBoost()); the
-// only remaining "no real payment yet" stand-in is michelinDebugGrant()
-// itself (acquiring Michelin, not spending it).
+// to the Estrela Michelin shop (see buyVip()/buyPicanteBoost()), acquired
+// via real PIX (generatePixOrder()).
 function renderExtras() {
   const balanceEls = document.querySelectorAll('.michelin-balance');
   balanceEls.forEach(el => { el.textContent = fmtCurrency(state.michelinCoin || 0); });
@@ -5398,14 +5396,11 @@ function bindEvents() {
     }
   });
 
-  // Estrela Michelin + VIP + "Mais Apimentado" (2026-07-23) — see
-  // michelinDebugGrant()'s own comment for why that one button is a
-  // temporary manual test hook instead of a real PIX purchase flow;
-  // buyVip()/buyPicanteBoost() are the REAL spend logic, not temporary.
-  document.getElementById('michelin-debug-box').addEventListener('click', e => {
-    const b = e.target.closest('[data-michelin-debug]');
-    if (b) michelinDebugGrant(Number(b.dataset.michelinDebug));
-  });
+  // VIP + "Mais Apimentado" (2026-07-23) — buyVip()/buyPicanteBoost() are
+  // the real spend logic, checking/deducting the player's actual Michelin
+  // balance (see those functions' own comments). The michelin-debug-box
+  // element still exists (shows the live balance) but has no buttons/click
+  // handler left — see michelinDebugGrant()'s removal comment.
   document.getElementById('vip-box').addEventListener('click', e => {
     const b = e.target.closest('[data-vip-buy]');
     if (b) buyVip(Number(b.dataset.vipBuy));
