@@ -276,7 +276,12 @@ function defaultState() {
     tasksClaimed: [],
     wave: 1,
     activeThemeId: ACTIVE_THEME,
-    mapsInTheme: 0,
+    // mapsInTheme (the old every-50-maps counter) is REMOVED (2026-07-22) —
+    // theme rotation now rolls a random pick on every single wave-clear
+    // instead of counting toward a threshold, so there's nothing left to
+    // count. An old save may still carry a leftover mapsInTheme field after
+    // Object.assign(defaultState(), raw) in load(); it's simply never read
+    // by anything anymore (inert legacy baggage, not deleted from old saves).
     automine: 'none',
     refCode: 'FF-' + Math.random().toString(36).slice(2, 8).toUpperCase(),
     nextHeroId: 1,
@@ -337,7 +342,6 @@ function load() {
   // defensive: an old save (or a theme later removed from the rotation)
   // could reference an id that no longer exists — fall back to the default
   if (!THEME_ROTATION.includes(state.activeThemeId)) state.activeThemeId = ACTIVE_THEME;
-  if (typeof state.mapsInTheme !== 'number' || state.mapsInTheme < 0) state.mapsInTheme = 0;
   syncActiveSpawnConfig(); // keep ACTIVE_SPAWN_CONFIG in step with whatever theme just got validated/defaulted above
   // saves from before the sprite/skill/meta/portrait systems get defaults assigned once
   for (const h of state.heroes) {
@@ -1684,19 +1688,20 @@ function waveClear() {
   toast(`💥 Map ${state.wave} cleared! Rolling a fresh map...`);
   setTimeout(() => {
     state.wave++;
-    // Theme rotation: every 50 cleared maps, advance ACTIVE theme to the
-    // next id in THEME_ROTATION (wrapping back to the first after the
-    // last), reset the counter, and re-apply. With only one theme
-    // registered today this just loops back to itself every 50 maps —
-    // expected, not a bug (see THEME_ROTATION's comment).
-    state.mapsInTheme = (state.mapsInTheme || 0) + 1;
-    if (state.mapsInTheme >= 50) {
-      state.mapsInTheme = 0;
-      const idx = THEME_ROTATION.indexOf(state.activeThemeId);
-      state.activeThemeId = THEME_ROTATION[(idx + 1) % THEME_ROTATION.length];
-      applyTheme(state.activeThemeId);
-      syncActiveSpawnConfig(); // Mercado Noturno's jaula/density config wiring — see master spec #9
-    }
+    // Theme rotation (2026-07-22 user change): a random theme is now rolled
+    // on EVERY single wave-clear — replaces the old mapsInTheme counter /
+    // every-50-maps threshold entirely. Uniform random pick from
+    // THEME_ROTATION via the same generic pick() helper used everywhere
+    // else in this file; back-to-back repeats of the same theme are
+    // allowed (no "never immediately repeat" constraint was requested).
+    // With 2 real themes registered (jardim_fresquinho,
+    // jardim_fresquinho_sliced), each new map is a 50/50 coin flip between
+    // them. state.activeThemeId itself is unchanged as the persistence
+    // mechanism (still saved/restored exactly as before) — only the
+    // ADVANCEMENT trigger changed, from "every 50th clear" to "every clear".
+    state.activeThemeId = pick(THEME_ROTATION);
+    applyTheme(state.activeThemeId);
+    syncActiveSpawnConfig(); // Mercado Noturno's jaula/density config wiring — see master spec #9
     genLayout();
     applyTileClasses();
     repositionActors();
