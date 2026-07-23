@@ -108,12 +108,14 @@ const LEGACY_RARITY_MIGRATION = {
    vice versa. NO visual treatment yet (explicitly deferred by the spec) —
    see PICANTE_VISUAL_PLACEHOLDER and applySpicyStatModifier() below. Uses
    `isSpicy: boolean` on the hero object (not `variant`, which is already
-   the existing sprite-art-variant 0/1/2 field). */
-const PICANTE_CHANCE_SHOP = 0.03;
-const PICANTE_CHANCE_JAULA_NORMAL = 0.03;
-const PICANTE_CHANCE_JAULA_MERCADO_NOTURNO = 0.30;
+   the existing sprite-art-variant 0/1/2 field).
+
+   JAULA-ONLY (2026-07-23): Picante no longer comes from Supermercado packs
+   at all — every Jaula reward is now guaranteed Picante instead (100%, no
+   roll needed). PICANTE_CHANCE_SHOP/JAULA_NORMAL/JAULA_MERCADO_NOTURNO and
+   rollPicante() are gone — there's no probability left to roll on either
+   path (shop: never; Jaula: always). */
 const PICANTE_VISUAL_PLACEHOLDER = 'PICANTE VISUAL — EM BREVE';
-function rollPicante(chance) { return Math.random() < chance; }
 // Picante stat bonus (2026-07-23, real bonus implemented — was a no-op
 // placeholder until now): additive, per-rarity, ONLY on Poder/Speed/Stamina
 // — Tamanho/Bombas are untouched by Picante. Same {min,max} shape and
@@ -130,9 +132,7 @@ const PICANTE_STAT_BONUS = {
   RECEITA_DE_VO:    { power: [5, 7], speed: [3, 5], stamina: [3, 5] },
 };
 // Applies the bonus in place and returns the same object (matches the old
-// no-op's return-the-input contract, so every existing call site's
-// `x.isSpicy = rollPicante(...); ...` usage pattern still works if it later
-// chains this call). Only ever meaningful for a hero whose isSpicy is
+// no-op's return-the-input contract). Only ever meaningful for a hero whose isSpicy is
 // already true by the time this runs — a non-Picante hero is returned
 // completely untouched (early return, not just a zero-bonus roll).
 //
@@ -727,11 +727,11 @@ function makeHero(rarity) {
     rarity,
     variant: randInt(0, 2),
     character,
-    // Picante (master spec #3) is rolled INDEPENDENTLY by the CALLER, not
-    // here — shop and jaula each have their own different chance (3% vs
-    // 3%/30%), and other creation paths (fusion, breeding) don't roll it at
-    // all per the spec, so this always starts false and gets set after the
-    // fact by whichever call site actually rolls for it (see rollPicante()).
+    // Picante (master spec #3) is set INDEPENDENTLY by the CALLER, not here.
+    // JAULA-ONLY (2026-07-23): a shop pull never sets this (always stays
+    // false); a Jaula reward always overwrites it to true (100%, no roll —
+    // see destroyTile()'s Jaula branch). Fusion/breeding don't touch it
+    // either, so this always starts false here regardless of path.
     isSpicy: false,
     ghost: Math.random() < SKILL_CHANCE,  // legacy Lab-compatibility flag — see SKILL_CHANCE comment
     swift: Math.random() < SKILL_CHANCE,  // legacy Lab-compatibility flag — see SKILL_CHANCE comment
@@ -774,11 +774,13 @@ function globalMineMult() {
   return 1 + (state.upgrades.mining || 0) * 0.01;
 }
 
-// Generic weighted-random rarity roll — reused for BOTH the shop
-// (SHOP_RARITY_WEIGHTS) and the jaula (JAULA_RARITY_WEIGHTS) tables, per
-// master spec #12 ("one generic weighted-random roll helper... no
-// duplicated if/else chains"). Not referenced by any Lab (re-roll/
-// sacrifice/breeding/implant/ascension) code, so safe to touch freely.
+// Generic weighted-random rarity roll — used by BOTH the shop and the Jaula
+// reward, both now sharing the exact same SHOP_RARITY_WEIGHTS table
+// (2026-07-23: Jaula used to have its own separate, richer JAULA_RARITY_
+// WEIGHTS table — removed per explicit instruction to use the shop's table
+// as the reference for Jaula rarity too). Not referenced by any Lab
+// (re-roll/sacrifice/breeding/implant/ascension) code, so safe to touch
+// freely.
 function rollRarity(odds) {
   let r = Math.random();
   for (const rarity of RARITIES) {
@@ -1178,16 +1180,18 @@ const MESA_VARIAVEL_HP = 1;
 /* ===== Jaula — replaces the old "Baú Especial" chest tier entirely (master
    spec #7). Grants exactly 1 Rango (not Food Coins) on destruction — this
    IS the old jail/hero-granting mechanic, fully renamed and re-tuned. =====
-   RESOLVED CALL, FLAGGED FOR USER CONFIRMATION: the old wave-based "soft
-   pity"/drought system (JAIL_PITY_BASE/MAX/TAU, jailPityChance()) is REMOVED
-   in favor of these flat per-map percentages. The spec doesn't mention a
-   pity/drought mechanic at all — it gives explicit flat chances (1% normal,
-   50% Mercado Noturno) that read as the actual intended mechanic, and
-   keeping both systems at once would mean inventing an unspecified
-   interaction between them. Implemented as primary per the literal spec;
-   please confirm this call is correct. */
+
+   REBALANCED (2026-07-23, explicit user spec): a Jaula is now the ONLY
+   source of Picante Rangos (packs no longer roll it at all — see the
+   Picante block above), and every Jaula reward is Picante guaranteed
+   (100%). To compensate for that guarantee, the Jaula's own spawn chance
+   dropped to a flat 1-in-200 per map/wave (was 1%) — rare enough that a
+   guaranteed-Picante reward doesn't flood the game with them. Rarity odds
+   for the Rango inside now reuse SHOP_RARITY_WEIGHTS directly (the
+   separate, richer JAULA_RARITY_WEIGHTS table is gone) per explicit
+   instruction to use the shop's table as the reference. */
 const JAULA_HP = 1500;
-const JAULA_SPAWN_CHANCE_NORMAL = 0.01;
+const JAULA_SPAWN_CHANCE_NORMAL = 1 / 200;
 const JAULA_SPAWN_CHANCE_MERCADO_NOTURNO = 0.50;
 // Not yet a real registered theme (see THEMES/THEME_ROTATION further up —
 // deliberately not fabricating placeholder theme assets/entries that don't
@@ -1199,13 +1203,6 @@ const JAULA_SPAWN_CHANCE_MERCADO_NOTURNO = 0.50;
 const MERCADO_NOTURNO_THEME_ID = 'mercado_noturno';
 function isMercadoNoturnoActive() { return state.activeThemeId === MERCADO_NOTURNO_THEME_ID; }
 function jaulaSpawnChance() { return isMercadoNoturnoActive() ? JAULA_SPAWN_CHANCE_MERCADO_NOTURNO : JAULA_SPAWN_CHANCE_NORMAL; }
-function jaulaPicanteChance() { return isMercadoNoturnoActive() ? PICANTE_CHANCE_JAULA_MERCADO_NOTURNO : PICANTE_CHANCE_JAULA_NORMAL; }
-// Separate, much richer rarity table than the shop (master spec #7) — rolled
-// via the same generic rollRarity() helper used for the shop table.
-const JAULA_RARITY_WEIGHTS = {
-  CASEIRO: 0.2500, TEMPERADO: 0.2526, GOURMET: 0.3518,
-  CHEF_RENOMADO: 0.1300, ESTRELA_MICHELIN: 0.0146, RECEITA_DE_VO: 0.0010,
-};
 
 // FUSE_TICKS=7 (2026-07-23): bombs now take exactly 7 * AI_MS(500ms) = 3.5s
 // to explode after being planted (was 3 ticks = 1.5s) — a clean integer
@@ -2329,10 +2326,10 @@ function destroyTile(r, c, box, folhadoDeOuroBomb) {
   // Jaula is a rescue, not a payout: it grants exactly one new Rango instead
   // of Food Coins (no skill-shard roll either — the Rango IS the whole reward)
   if (box.jaula) {
-    const rarity = rollRarity(JAULA_RARITY_WEIGHTS);
+    const rarity = rollRarity(SHOP_RARITY_WEIGHTS); // same table as the shop (2026-07-23)
     const freed = makeHero(rarity);
-    freed.isSpicy = rollPicante(jaulaPicanteChance());
-    applySpicyStatModifier(freed); // real stat bonus now (2026-07-23) — no-op if not spicy
+    freed.isSpicy = true; // every Jaula reward is Picante now, guaranteed (2026-07-23) — no roll needed
+    applySpicyStatModifier(freed); // real stat bonus — always applies now, isSpicy is always true here
     state.heroes.push(freed);
     floatLabel(r, c, '🔓 ' + rLabel(rarity) + '!', true);
     cratesLeft = Math.max(0, cratesLeft - 1);
@@ -2560,8 +2557,8 @@ function buyPack(idx) {
     // ONE flat rarity table now regardless of pack size (master spec #6) —
     // pack size only changes how many rolls you get, not the per-roll odds
     const hero = makeHero(rollRarity(SHOP_RARITY_WEIGHTS));
-    hero.isSpicy = rollPicante(PICANTE_CHANCE_SHOP); // independent of the rarity roll above
-    applySpicyStatModifier(hero); // real stat bonus now (2026-07-23) — no-op if not spicy
+    // No Picante here anymore (2026-07-23): isSpicy stays false (makeHero()'s
+    // default) — Jaula is now the only source of Picante Rangos.
     state.heroes.push(hero);
     pulled.push(hero);
   }
@@ -3701,7 +3698,7 @@ function showLegendModal() {
     <h3 style="margin-top:16px">🌶️ Picante</h3>
     <div class="legend-row">
       <span class="legend-sprite">🌶️</span>
-      <div><b>Picante</b><div class="muted">An independent variant ANY rarity can roll, separately from the rarity itself: ${fmtPct(PICANTE_CHANCE_SHOP)} from the Supermercado, ${fmtPct(PICANTE_CHANCE_JAULA_NORMAL)} from a Jaula (${fmtPct(PICANTE_CHANCE_JAULA_MERCADO_NOTURNO)} at Mercado Noturno). ${PICANTE_VISUAL_PLACEHOLDER} — renders identically to its base rarity for now.</div></div>
+      <div><b>Picante</b><div class="muted">An independent variant ANY rarity can roll, separately from the rarity itself. Jaula-only now: every Jaula reward is guaranteed Picante (100%) — Supermercado packs never roll it. ${PICANTE_VISUAL_PLACEHOLDER} — renders identically to its base rarity for now.</div></div>
     </div>
     <h3 style="margin-top:16px">📦 Baús</h3>
     <div class="legend-row">
@@ -3715,7 +3712,7 @@ function showLegendModal() {
     </div>
     <div class="legend-row">
       <span class="legend-sprite">🔒</span>
-      <div><b>Jaula</b><div class="muted">${JAULA_HP} HP. Grants exactly 1 Rango instead of Food Coins — no Skill Shard roll, the Rango IS the reward. ${fmtPct(JAULA_SPAWN_CHANCE_NORMAL)} chance per map (${fmtPct(JAULA_SPAWN_CHANCE_MERCADO_NOTURNO)} at Mercado Noturno).</div></div>
+      <div><b>Jaula</b><div class="muted">${JAULA_HP} HP. Grants exactly 1 Rango instead of Food Coins — no Skill Shard roll, the Rango IS the reward, and it's always 🌶️ Picante. Rarity uses the same odds as the Supermercado. 1 in 200 chance per map (${fmtPct(JAULA_SPAWN_CHANCE_MERCADO_NOTURNO)} at Mercado Noturno).</div></div>
     </div>
     <div class="legend-row">
       <span class="legend-sprite legend-tileart"><img src="assets/blocos_unicos/mesa_variavel.png" alt="Mesa Variável"></span>
