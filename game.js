@@ -381,15 +381,50 @@ const HOUSES = [
 // totalChestsBroken is a new lifetime counter (destroyTile()'s chest
 // branch); `wave` is state.wave itself — safe as a monotonic "highest fase
 // reached" proxy now that Prestige (which used to reset it to 1) is gone.
+// PROGRESS-SINCE-UNLOCK (2026-07-23, user-flagged): check() used to read the
+// raw lifetime counters directly, which meant a player who ground out (say)
+// 1000 chests BEFORE ever owning 15 Rangos would find "Quebre 1.000 Baús"
+// instantly claimable the moment Tasks unlocked, crediting play that
+// happened before the feature was even visible. Fixed by snapshotting each
+// relevant counter into state.tasksBaseline the ONE time Tasks first
+// unlocks (see ensureTasksBaseline(), called every tick) and having check()
+// compare the DELTA since that snapshot instead of the raw total — the
+// lifetime counters themselves (totalChestsBroken/totalMined/wave) are left
+// completely untouched, still meaningful as real lifetime stats on their
+// own; only how Tasks interprets them changed.
+function tasksProgress(s, kind) {
+  const b = (s.tasksBaseline) || { chests: 0, mined: 0, wave: 1 };
+  if (kind === 'chests') return Math.max(0, (s.totalChestsBroken || 0) - b.chests);
+  if (kind === 'mined') return Math.max(0, (s.totalMined || 0) - b.mined);
+  if (kind === 'wave') return Math.max(0, (s.wave || 1) - b.wave);
+  return 0;
+}
 const TASKS = [
-  { id: 'chests250',  name: 'Quebre 250 Baús (total)',         reward: 60,  check: s => (s.totalChestsBroken || 0) >= 250 },
-  { id: 'chests1000', name: 'Quebre 1.000 Baús (total)',       reward: 120, check: s => (s.totalChestsBroken || 0) >= 1000 },
-  { id: 'wave10',     name: 'Alcance a Fase 10',                reward: 50,  check: s => s.wave >= 10 },
-  { id: 'wave30',     name: 'Alcance a Fase 30',                reward: 130, check: s => s.wave >= 30 },
-  { id: 'mine2000',   name: 'Minere 2.000 Food Coins (total)', reward: 70,  check: s => s.totalMined >= 2000 },
-  { id: 'mine8000',   name: 'Minere 8.000 Food Coins (total)', reward: 145, check: s => s.totalMined >= 8000 },
+  { id: 'chests250',  name: 'Quebre 250 Baús (após desbloquear)',         reward: 60,  check: s => tasksProgress(s, 'chests') >= 250 },
+  { id: 'chests1000', name: 'Quebre 1.000 Baús (após desbloquear)',       reward: 120, check: s => tasksProgress(s, 'chests') >= 1000 },
+  { id: 'wave10',     name: 'Avance 10 Fases (após desbloquear)',          reward: 50,  check: s => tasksProgress(s, 'wave') >= 10 },
+  { id: 'wave30',     name: 'Avance 30 Fases (após desbloquear)',          reward: 130, check: s => tasksProgress(s, 'wave') >= 30 },
+  { id: 'mine2000',   name: 'Minere 2.000 Food Coins (após desbloquear)', reward: 70,  check: s => tasksProgress(s, 'mined') >= 2000 },
+  { id: 'mine8000',   name: 'Minere 8.000 Food Coins (após desbloquear)', reward: 145, check: s => tasksProgress(s, 'mined') >= 8000 },
 ];
 const TASKS_UNLOCK_HEROES = 15;
+
+// Snapshots the baseline exactly once, the FIRST time the player ever
+// crosses the unlock threshold (never re-snapshots on a later dip-below/
+// cross-again, e.g. from Sacrifice — that would let progress be reset
+// on demand, which isn't the point). Also gives the Missão Diária a fresh
+// start at the same moment for the same reason (see its own daily-reset
+// pattern this reuses) — a player who'd already banked chests toward that
+// day's goal before ever unlocking Tasks shouldn't find it instantly
+// claimable either.
+function ensureTasksBaseline() {
+  if (state.tasksBaselineSet) return;
+  if (state.heroes.length < TASKS_UNLOCK_HEROES) return;
+  state.tasksBaseline = { chests: state.totalChestsBroken || 0, mined: state.totalMined || 0, wave: state.wave || 1 };
+  state.tasksBaselineSet = true;
+  state.dailyChestsBroken = 0;
+  state.dailyResetAt = Date.now();
+}
 
 // Missão Diária (2026-07-23, new system): resets every 18h from the last
 // reset, independent of real-world midnight — a player who claims at 3am
@@ -528,6 +563,12 @@ function defaultState() {
     dailyChestsBroken: 0,
     dailyResetAt: Date.now(),
     dailyClaimed: false,
+    // Tasks progress-since-unlock (2026-07-23) — see ensureTasksBaseline()/
+    // tasksProgress(). tasksBaseline stays null until the one-time snapshot
+    // happens; tasksProgress() treats a null baseline as all-zeros, which is
+    // moot in practice since Tasks are hidden entirely pre-unlock anyway.
+    tasksBaselineSet: false,
+    tasksBaseline: null,
     wave: 1,
     activeThemeId: ACTIVE_THEME,
     // mapsInTheme (the old every-50-maps counter) is REMOVED (2026-07-22) —
@@ -5881,9 +5922,38 @@ function enterGame() {
   });
   window.addEventListener('beforeunload', () => { if (cloudSignedIn()) pushCloudSave(); });
 }
+// MANDATORY LOGIN (2026-07-23, HARDENED — no auto-entry, no exceptions):
+// this is now the ONLY place that decides which of the two login-card
+// states shows, so every caller (boot(), cloudSignOut()) automatically gets
+// the right one without having to remember a second call. A real click is
+// ALWAYS required before enterGame() runs, even when restoreCloudSession()
+// already found a fully valid session at boot — cloudSignedIn() being true
+// here only changes WHICH form is shown (skip re-typing credentials), never
+// whether a click is needed. See #login-form-restored/continueRestoredSession()
+// in index.html/below for the "already have a valid session" half.
 function showLoginScreen() {
   document.body.classList.remove('ff-authed');
   updateAdminVisibility(); // cloudSession is null again post-sign-out — hide the admin box along with everything else
+  const freshForm = document.getElementById('login-form-fresh');
+  const restoredForm = document.getElementById('login-form-restored');
+  const alreadySignedIn = cloudSignedIn();
+  if (freshForm) freshForm.classList.toggle('hidden', alreadySignedIn);
+  if (restoredForm) restoredForm.classList.toggle('hidden', !alreadySignedIn);
+}
+
+// Reached ONLY via #continue-btn, itself shown ONLY when showLoginScreen()
+// found cloudSignedIn() already true (a session restoreCloudSession()
+// already confirmed valid at boot) — the ONE explicit click a returning
+// player with a live session needs, per the standing "never auto-enter"
+// rule. Deliberately does NOT re-run any Supabase network call: the session
+// was already validated once at boot; forcing a second round-trip here
+// would add latency for zero real benefit. The defensive cloudSignedIn()
+// guard below should be unreachable in practice (the button showing at all
+// already implies a session), kept anyway so this function can never enter
+// the game with a null session no matter how it gets invoked.
+function continueRestoredSession() {
+  if (!cloudSignedIn()) return;
+  enterGame();
 }
 
 /* ============ Init ============ */
@@ -5919,19 +5989,24 @@ migrateOldBrandKey('bombheroes-ui', UI_PREF_KEY);
 load();
 bindEvents(); // safe to bind immediately — login-screen/modal buttons are inert until clicked regardless of auth state
 
-// MANDATORY LOGIN (2026-07-23): the game shell/ticks/Realtime subscription
-// only ever start via enterGame() (see its own comment) — reached either
-// automatically here if restoreCloudSession() finds a valid session
-// (possibly pulling a fresher cloud state first via pullCloudSave(), same
-// as before this gate existed), or later via cloudSignIn()/cloudSignUp()
-// when the player logs in from the login screen. No path renders the game
-// without a confirmed session (showLoginScreen() — the default state, since
-// body never gets .ff-authed otherwise — is what's visible until then).
+// MANDATORY LOGIN (2026-07-23, HARDENED — explicit instruction: "PROIBIDO
+// entrar direto, não deve ter nenhuma maneira", no exceptions even with a
+// valid saved session/autofilled credentials): the game shell/ticks/
+// Realtime subscription only ever start via enterGame() (see its own
+// comment), and enterGame() is now reached ONLY through a real button
+// click — cloudSignIn()/cloudSignUp() (typing credentials) or
+// continueRestoredSession() (a session restoreCloudSession() already found
+// valid). boot() itself NEVER calls enterGame() anymore, even when a valid
+// session comes back — restoreCloudSession() still runs first (so
+// showLoginScreen() knows which of its two states to show, and so a
+// genuinely fresh cloud save is already pulled by the time the player DOES
+// click Continuar, same as before this hardening), but the actual entry is
+// unconditionally gated behind showLoginScreen() either way.
 (async function boot() {
   await restoreCloudSession();
-  if (cloudSignedIn()) enterGame();
-  else showLoginScreen();
+  showLoginScreen();
 })();
 
 document.getElementById('login-btn').addEventListener('click', cloudSignIn);
 document.getElementById('show-signup-btn').addEventListener('click', showSignupModal);
+document.getElementById('continue-btn').addEventListener('click', continueRestoredSession);

@@ -8,35 +8,55 @@
 </head>
 <body>
 
-<!-- MANDATORY LOGIN GATE (2026-07-23): the game shell (header/#shell/
-     #bottom-nav) stays hidden via the body.ff-authed CSS toggle (see
-     style.css) until a session is confirmed — either restored automatically
-     at boot (restoreCloudSession()) or established here by the player. No
-     markup below this ever initializes/renders the actual game; game.js's
-     enterGame() is the ONLY thing that reveals it. Reuses cloudSignIn()'s
-     dedicated login-email/login-pw ids (2026-07-23 fix — see login-btn's
-     handler in game.js): these used to be id="cloud-email"/"cloud-pw", the
-     SAME ids the dynamically-injected signup/account modal uses for its own
-     fields. With both on the page at once (this screen never unmounts;
-     the modal is just overlaid on top of it), getElementById always
-     resolved to THIS screen's (untouched) fields instead of whatever the
-     player actually typed in the visible modal — so "Criar conta" read an
-     empty email/password and silently failed. -->
+<!-- MANDATORY LOGIN GATE (2026-07-23, HARDENED — no auto-entry, no exceptions):
+     the game shell (header/#shell/#bottom-nav) stays hidden via the
+     body.ff-authed CSS toggle (see style.css) until a session is confirmed.
+     No markup below this ever initializes/renders the actual game; game.js's
+     enterGame() is the ONLY thing that reveals it, and it is now reached
+     ONLY through a real button click — never automatically, even when
+     restoreCloudSession() finds an already-valid persisted session at boot
+     (explicit instruction: "PROIBIDO entrar direto, não deve ter nenhuma
+     maneira" — forbidden to skip the click, no exceptions, regardless of
+     any saved session/autofilled credentials). Two mutually-exclusive
+     states, toggled by showLoginScreen() in game.js based on whether a
+     session was already restored:
+       #login-form-fresh: the normal email/password form (session not
+         restored, or the player just signed out) — unchanged from before.
+       #login-form-restored: shown INSTEAD when restoreCloudSession() found
+         a valid session — skips re-typing credentials (continueRestoredSession()
+         reuses the session directly, no redundant network round-trip) but
+         still requires clicking #continue-btn; the click is the whole point,
+         not a formality to route around.
+     Reuses cloudSignIn()'s dedicated login-email/login-pw ids (2026-07-23
+     fix — see login-btn's handler in game.js): these used to be
+     id="cloud-email"/"cloud-pw", the SAME ids the dynamically-injected
+     signup/account modal uses for its own fields. With both on the page at
+     once (this screen never unmounts; the modal is just overlaid on top of
+     it), getElementById always resolved to THIS screen's (untouched) fields
+     instead of whatever the player actually typed in the visible modal — so
+     "Criar conta" read an empty email/password and silently failed. -->
 <div id="login-screen">
   <div class="login-card">
     <div class="ff-logo-plaque">
       <span class="ff-logo-icon" aria-hidden="true">🧁</span>
       <span class="ff-logo-text">FOOD FIGHTERS</span>
     </div>
-    <h2>Entrar</h2>
-    <input id="login-email" type="email" placeholder="Email" autocomplete="username">
-    <input id="login-pw" type="password" placeholder="Senha" autocomplete="current-password">
-    <label class="login-remember">
-      <input type="checkbox" id="remember-me" checked>
-      Lembrar de mim
-    </label>
-    <button id="login-btn" class="btn">Entrar</button>
-    <button id="show-signup-btn" class="btn btn-ghost">Cadastro</button>
+    <div id="login-form-fresh">
+      <h2>Entrar</h2>
+      <input id="login-email" type="email" placeholder="Email" autocomplete="username">
+      <input id="login-pw" type="password" placeholder="Senha" autocomplete="current-password">
+      <label class="login-remember">
+        <input type="checkbox" id="remember-me" checked>
+        Lembrar de mim
+      </label>
+      <button id="login-btn" class="btn">Entrar</button>
+      <button id="show-signup-btn" class="btn btn-ghost">Cadastro</button>
+    </div>
+    <div id="login-form-restored" class="hidden">
+      <h2>Bem-vindo de volta!</h2>
+      <p class="muted">Sua sessão já está pronta — só falta confirmar.</p>
+      <button id="continue-btn" class="btn">Continuar</button>
+    </div>
   </div>
 </div>
 
