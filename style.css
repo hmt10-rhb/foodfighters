@@ -1320,7 +1320,15 @@ select {
 .reveal-flash {
   position: fixed;
   inset: 0;
-  z-index: 70;
+  /* BUG FIX (2026-07-23, found while testing the new Picante particles
+     below): this used to be z-index:70, which rendered BEHIND
+     #modal-backdrop's z-index:150 (bumped from 50 on an earlier fix today)
+     — the flash/mega-overlay/particles were all silently invisible under
+     the 70%-opaque black backdrop for every single celebrated/mega pull
+     since that change, not just Picante. Bumped this whole cluster above
+     150; relative ordering between them (flash < particles < mega-overlay)
+     is unchanged, just shifted up as a block. */
+  z-index: 160;
   pointer-events: none;
   background: radial-gradient(circle, rgba(255, 213, 79, 0.5), transparent 65%);
   animation: flashFade 0.85s forwards;
@@ -1330,10 +1338,51 @@ select {
 }
 @keyframes flashFade { from { opacity: 1; } to { opacity: 0; } }
 
+/* ===== Picante pull (2026-07-23) — independent of rarity, always fires
+   alongside (never replaces) the rarity's own .celebrate treatment above.
+   Fire/red theme throughout: animated pulsing border+glow on the card
+   itself, its own screen flash, and ember/pepper particles that burst
+   outward from the card's real on-screen position (positioned via JS-set
+   --dx/--dy/--rot custom properties, one per particle). ===== */
+.reveal-card.picante {
+  border-color: #ff5722;
+  border-width: 3px;
+  animation: cardIn 0.3s ease, picanteBorderPulse 1.5s ease-in-out infinite;
+}
+.reveal-card.picante.celebrate {
+  animation: cardIn 0.3s ease, celebrateGlow 1.4s ease 0.15s, picanteBorderPulse 1.5s ease-in-out infinite;
+}
+@keyframes picanteBorderPulse {
+  0%, 100% { box-shadow: 0 0 16px 2px rgba(255, 61, 0, 0.5), inset 0 0 12px rgba(255, 61, 0, 0.15); }
+  50% { box-shadow: 0 0 36px 9px rgba(255, 87, 34, 0.9), inset 0 0 18px rgba(255, 152, 0, 0.35); }
+}
+
+.reveal-flash.picante-flash {
+  background: radial-gradient(circle, rgba(255, 87, 34, 0.65), rgba(255, 23, 68, 0.3) 55%, transparent 78%);
+}
+
+.picante-particle {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 161;
+  pointer-events: none;
+  font-size: 22px;
+  line-height: 1;
+  transform: translate(-50%, -50%);
+  animation: picanteParticleFly 1.15s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+  filter: drop-shadow(0 0 5px rgba(255, 87, 34, 0.85));
+}
+@keyframes picanteParticleFly {
+  0% { transform: translate(-50%, -50%) translate(0, 0) rotate(0deg) scale(0.5); opacity: 1; }
+  15% { opacity: 1; }
+  100% { transform: translate(-50%, -50%) translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(1.15); opacity: 0; }
+}
+
 .mega-overlay {
   position: fixed;
   inset: 0;
-  z-index: 72;
+  z-index: 162;
   pointer-events: none;
   display: flex;
   align-items: center;
@@ -1732,25 +1781,37 @@ body:not(.ff-authed) #bottom-nav { display: none; }
   color: #fff;
 }
 
-.ff-star {
+/* Grid-card simplification (2026-07-23, confirmed wireframe): the "has any
+   skill" star badge is gone — .ff-star is dead, replaced by .ff-card-picante
+   below, which now occupies this exact same top-right corner slot. */
+.ff-card-picante {
   position: absolute;
   top: 4px;
   right: 4px;
-  color: var(--ff-yellow);
   font-size: 12px;
-  text-shadow: 1px 1px 0 var(--ff-ink);
   z-index: 2;
+  /* subtle red glow, not garish — same idea as the rarity-badge treatment
+     but restrained since this is just a small emoji, not a bordered chip */
+  filter: drop-shadow(0 0 4px rgba(255, 0, 0, 0.7));
 }
 
-.ff-attr-bar {
-  display: flex;
+/* Replaces the removed 4-segment .ff-attr-bar: a single energy fill,
+   standard left-anchored progress-bar physics (width:X% grows/shrinks
+   toward the right as energy is gained/spent, no extra animation logic
+   needed — the width itself already transitions smoothly below). */
+.ff-energy-bar {
   height: 6px;
   border: 1px solid var(--ff-ink);
   border-radius: 3px;
   overflow: hidden;
   background: var(--ff-petrol-900);
 }
-.ff-attr-bar span { height: 100%; display: block; }
+.ff-energy-bar span {
+  display: block;
+  height: 100%;
+  background: var(--ff-green);
+  transition: width 0.3s ease;
+}
 
 .ff-card-name {
   font-family: var(--ff-font-display);
@@ -1764,6 +1825,24 @@ body:not(.ff-authed) #bottom-nav { display: none; }
 
 /* ---- Details panel ---- */
 
+/* Fixed-size panel (2026-07-23, confirmed): outer dimensions come from
+   .ff-inventory-main's grid row (height: calc(100% - 8px), and this element
+   stretches to fill it by default) — NOT from content, so a hero with more
+   skills or a longer name can never change the panel's outer size. The
+   overflow-y:auto here is a safety-net fallback only; the skills grid (the
+   one section whose content genuinely varies most, 0 vs up to 7 skill
+   cards) gets its OWN bounded max-height + scroll below, so in practice it
+   handles its own overflow internally rather than the whole panel scrolling. */
+/* No-scroll fit REVERTED (2026-07-23): the user found the tightened
+   spacing/shrunk scene/reduced fonts made the whole panel feel cramped, and
+   explicitly walked back the "must fit without scrolling" requirement —
+   scrolling is fine again. Back to the original padding here (and the
+   original .ff-scene/.ff-info-block sizes below).
+   Gap nudged down slightly again (2026-07-23, separate follow-up): with the
+   SKILLS section moved out of the middle entirely, there was leftover empty
+   space right above the footer — a small, deliberate gap reduction (not a
+   restructure) to close that up a bit, distinct from the earlier no-scroll
+   pass's much bigger cuts everywhere (which were reverted). */
 .ff-details {
   min-width: 0;
   min-height: 0;
@@ -1774,9 +1853,19 @@ body:not(.ff-authed) #bottom-nav { display: none; }
   padding: clamp(10px, 1.4vh, 18px);
   display: flex;
   flex-direction: column;
-  gap: clamp(8px, 1.2vh, 14px);
+  gap: clamp(6px, 0.9vh, 10px);
   overflow-y: auto;
 }
+/* Rarity-colored border around the whole panel (2026-07-23), same --c-*
+   color tokens and r-${rarity} class pattern the grid card's box-shadow
+   ring already uses (see .ff-card.r-* above) — set via panel.className in
+   renderInventoryDetails(), kept in sync with the selected hero. */
+.ff-details.r-CASEIRO { box-shadow: 0 0 0 3px var(--c-common) inset, var(--ff-shadow-hard); }
+.ff-details.r-TEMPERADO { box-shadow: 0 0 0 3px var(--c-rare) inset, var(--ff-shadow-hard); }
+.ff-details.r-GOURMET { box-shadow: 0 0 0 3px var(--c-epic) inset, var(--ff-shadow-hard); }
+.ff-details.r-CHEF_RENOMADO { box-shadow: 0 0 0 3px var(--c-legendary) inset, var(--ff-shadow-hard); }
+.ff-details.r-ESTRELA_MICHELIN { box-shadow: 0 0 0 3px var(--c-im) inset, var(--ff-shadow-hard); }
+.ff-details.r-RECEITA_DE_VO { box-shadow: 0 0 0 3px #ff1744 inset, var(--ff-shadow-hard); }
 
 .ff-empty-state {
   flex: 1 1 auto;
@@ -1813,14 +1902,10 @@ body:not(.ff-authed) #bottom-nav { display: none; }
   height: 68%;
   background: linear-gradient(180deg, #7fd8ff 0%, #bdeeff 100%);
 }
-.ff-cloud {
-  position: absolute;
-  width: 46px;
-  height: 18px;
-  background: #ffffff;
-  border: 2px solid var(--ff-ink);
-  border-radius: 10px;
-}
+/* .ff-cloud REMOVED (2026-07-23, user-flagged): the two decorative cloud
+   spans rendered as plain empty white ovals with no real cloud shape/
+   texture — a broken/unfinished look, not a real bug from the Inventory
+   rework itself, just more visible now. Sky is plain gradient, no clouds. */
 .ff-ground {
   position: absolute;
   left: 0;
@@ -1840,28 +1925,41 @@ body:not(.ff-authed) #bottom-nav { display: none; }
   filter: drop-shadow(4px 6px 0 rgba(0, 0, 0, 0.35));
 }
 .ff-char-wrap .sprite { width: 1em; height: 1em; }
-.ff-close-btn {
+/* Detail-panel Picante badge (2026-07-23, moved per user feedback): now in
+   the scene's top-left corner (roughly where a removed .ff-cloud used to
+   sit) instead of the meta-row below — same "pepper in a corner" spirit as
+   the grid card's .ff-card-picante, just scaled up for the bigger scene. */
+.ff-scene-picante {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 3;
+  font-size: 22px;
+  filter: drop-shadow(0 0 6px rgba(255, 0, 0, 0.7));
+}
+/* Skills moved into the scene's top-right corner (2026-07-23, user-flagged):
+   mirrors .ff-scene-picante's top-left corner treatment. No heading anymore
+   (SKILLS text removed entirely) and no forced empty-state placeholder —
+   ffSkillCards() returns '' for 0 skills, so this div is simply empty (no
+   visible box/border of its own) rather than reserving dead space. Wraps to
+   a loose little cluster (not a rigid 2x2 grid) so it holds up cleanly
+   whether a hero has 1, 2, or several skills. */
+.ff-scene-skills {
   position: absolute;
   top: 10px;
   right: 10px;
   z-index: 3;
-  width: 30px;
-  height: 30px;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--ff-coral);
-  color: var(--ff-paper);
-  border: 2px solid var(--ff-ink);
-  border-radius: 6px;
-  box-shadow: var(--ff-shadow-hard-sm);
-  font-size: 14px;
-  font-weight: bold;
-  transition: transform 0.05s ease;
-  font-family: inherit;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  max-width: 45%;
 }
-.ff-close-btn:hover { background: var(--ff-coral-dark); }
-.ff-close-btn:active { transform: translate(3px, 3px); box-shadow: none; }
+/* .ff-close-btn REMOVED (2026-07-23, user-flagged): the close/deselect
+   affordance doesn't make sense anymore now that default-select-first-hero
+   means there's no clean "empty" state to close back to (with heroes owned,
+   something is always selected). Its data-close-details click handler in
+   bindEvents() is removed too, not just this CSS/markup. */
 
 .ff-info-block {
   position: absolute;
@@ -1911,69 +2009,69 @@ body:not(.ff-authed) #bottom-nav { display: none; }
 }
 .ff-chip-level { color: var(--ff-paper); background: var(--ff-petrol-800); }
 .ff-chip-energy { color: var(--ff-ink); background: var(--ff-green-light); }
+/* Detail-panel Picante icon (2026-07-23) — icon only, no chip/box treatment,
+   same subtle-glow language as the grid card's .ff-card-picante. */
+/* .ff-detail-picante REMOVED (2026-07-23): the Picante icon moved from the
+   meta-row into the scene's top-left corner — see .ff-scene-picante above. */
 
-.ff-reward-panel {
-  flex: 0 0 auto;
-  background: var(--ff-petrol-700);
-  padding: 10px 14px;
-  border: var(--ff-border-w) solid var(--ff-ink);
-  box-shadow: 0 0 0 3px var(--ff-petrol-500) inset, var(--ff-shadow-hard);
-  border-radius: var(--ff-radius-md);
-}
-.ff-panel-title {
-  margin: 0 0 8px;
-  font-family: var(--ff-font-mono);
-  font-size: 10px;
-  color: var(--ff-yellow);
-  letter-spacing: 1px;
-  text-align: center;
-}
-.ff-reward-row { display: flex; align-items: center; justify-content: space-around; }
-.ff-reward-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.ff-reward-divider { width: 2px; align-self: stretch; background: var(--ff-ink); margin: 0 10px; }
-.ff-reward-icon { font-size: 20px; filter: drop-shadow(1px 1px 0 var(--ff-ink)); }
-.ff-reward-icon img { width: 20px; height: 20px; object-fit: contain; vertical-align: middle; filter: drop-shadow(1px 1px 0 var(--ff-ink)); }
-.ff-reward-value { font-family: var(--ff-font-mono); font-size: 13px; color: var(--ff-green-light); }
-.ff-reward-unit { font-family: var(--ff-font-display); font-size: 10px; color: var(--ff-cream-dark); }
+/* .ff-reward-panel and its sub-rules REMOVED (2026-07-23 UI rework): the
+   "PROJECTED EARN RATE" box is gone from renderInventoryDetails() entirely,
+   and none of .ff-panel-title/.ff-reward-row/.ff-reward-item/
+   .ff-reward-divider/.ff-reward-icon/.ff-reward-value/.ff-reward-unit were
+   used anywhere else, so they're all dead code, removed together. */
 
+/* Expanded to be the panel's visual centerpiece (2026-07-23, user-flagged):
+   the dedicated SKILLS section (heading + grid) that used to sit below this
+   is gone entirely now (skills moved into the scene's corner instead), so
+   this reclaims that space — flex:1 1 auto lets it grow into whatever room
+   is left between the scene and the footer, bigger padding/gap/fonts, and
+   the 5 rows are vertically centered within the extra height rather than
+   pinned to the top with dead space below. */
 .ff-stats-panel {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-height: 0;
   background: var(--ff-petrol-700);
-  padding: 10px 14px;
+  padding: 18px 20px;
   border: var(--ff-border-w) solid var(--ff-ink);
   box-shadow: 0 0 0 3px var(--ff-petrol-500) inset, var(--ff-shadow-hard);
   border-radius: var(--ff-radius-md);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  justify-content: center;
+  gap: 14px;
 }
-.ff-stat-row { display: flex; align-items: baseline; gap: 8px; }
-.ff-stat-icon { font-size: 14px; flex: 0 0 auto; }
-.ff-stat-label { font-family: var(--ff-font-display); font-size: 13px; color: var(--ff-cream); white-space: nowrap; flex: 0 0 auto; }
+.ff-stat-row { display: flex; align-items: baseline; gap: 10px; }
+.ff-stat-icon { font-size: 20px; flex: 0 0 auto; }
+.ff-stat-label { font-family: var(--ff-font-display); font-size: 16px; color: var(--ff-cream); white-space: nowrap; flex: 0 0 auto; }
 .ff-stat-dots { flex: 1 1 auto; min-width: 12px; border-bottom: 2px dotted var(--ff-petrol-400); height: 0; transform: translateY(-4px); }
-.ff-stat-value { font-family: var(--ff-font-mono); font-size: 13px; flex: 0 0 auto; text-align: right; min-width: 32px; }
+.ff-stat-value { font-family: var(--ff-font-mono); font-size: 18px; flex: 0 0 auto; text-align: right; min-width: 40px; }
 
-.ff-skills-wrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.ff-skills-title { margin: 0 0 8px; font-family: var(--ff-font-mono); font-size: 10px; color: var(--ff-petrol-800); letter-spacing: 1px; }
-.ff-skills-grid { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+/* .ff-skills-wrap/.ff-skills-title/.ff-skills-grid REMOVED (2026-07-23,
+   user-flagged): the dedicated middle "SKILLS" section (heading + grid) is
+   gone entirely — skills moved into the scene's top-right corner instead
+   (see .ff-scene-skills above). .ff-skill-card/.ff-skill-icon are still used
+   (just repositioned, and shrunk to fit a small corner badge — see below);
+   .ff-skill-empty/.ff-skill-name are fully dead now (ffSkillCards() no
+   longer emits either — 0 skills renders nothing, and cards show icon-only,
+   no name label). */
+/* Shrunk for the corner-badge context (2026-07-23) — this used to be a much
+   bigger (64px) card in the dedicated middle section; now it's a small
+   square badge living in the scene's top-right corner alongside the
+   character art, same scale spirit as the Picante pepper badge opposite it.
+   Deliberately simple/plain (just the bare icon character) since the user
+   plans to swap these emoji for real icon images later. */
 .ff-skill-card {
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  width: 26px;
+  height: 26px;
   background: var(--ff-petrol-700);
-  padding: 6px 4px;
-  aspect-ratio: 1 / 1;
-  border: var(--ff-border-w) solid var(--ff-ink);
-  box-shadow: 0 0 0 3px var(--ff-petrol-500) inset, var(--ff-shadow-hard);
-  border-radius: var(--ff-radius-md);
-  transition: transform 0.05s ease;
+  border: 2px solid var(--ff-ink);
+  border-radius: 6px;
+  box-shadow: 1px 1px 0 var(--ff-ink);
 }
-.ff-skill-card:hover { background: var(--ff-petrol-600); }
-.ff-skill-empty { opacity: 0.55; grid-column: span 4; aspect-ratio: auto; flex-direction: row; padding: 10px; }
-.ff-skill-icon { font-size: clamp(18px, 2vw, 26px); line-height: 1; }
-.ff-skill-name { font-family: var(--ff-font-display); font-size: 9px; color: var(--ff-cream); text-align: center; line-height: 1.15; }
+.ff-skill-icon { font-size: 14px; line-height: 1; }
 
 .ff-footer { flex: 0 0 auto; display: flex; flex-direction: column; gap: 10px; }
 .ff-xp-wrap { display: flex; align-items: center; gap: 10px; }
@@ -2053,22 +2151,9 @@ body:not(.ff-authed) #bottom-nav { display: none; }
 .ff-toggle-btn.ff-toggle-rest { background: var(--ff-petrol-500); color: var(--ff-paper); }
 .ff-toggle-btn.ff-toggle-rest:hover { background: var(--ff-petrol-400); }
 
-.ff-lab-btn {
-  flex: 0 0 auto;
-  width: 96px;
-  height: 42px;
-  background: var(--ff-blue);
-  border: var(--ff-border-w) solid var(--ff-ink);
-  border-radius: 10px;
-  box-shadow: var(--ff-shadow-hard-sm);
-  font-family: var(--ff-font-mono);
-  font-size: 11px;
-  color: var(--ff-ink);
-  letter-spacing: 1px;
-  transition: transform 0.05s ease;
-}
-.ff-lab-btn:hover { background: #8ecbff; }
-.ff-lab-btn:active { transform: translate(3px, 3px); box-shadow: none; background: var(--ff-blue-dark); }
+/* .ff-lab-btn REMOVED (2026-07-23 UI rework): the LAB button is gone from
+   the footer entirely (jumpToLabForReroll() itself is untouched and still
+   reachable from the Lab tab's own re-roll flow, just not from here). */
 
 @media (max-width: 860px) {
   .ff-inventory-main { grid-template-columns: 1fr; grid-template-rows: auto auto; }

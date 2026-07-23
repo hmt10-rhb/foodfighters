@@ -68,12 +68,12 @@ const RARITIES = ['CASEIRO', 'TEMPERADO', 'GOURMET', 'CHEF_RENOMADO', 'ESTRELA_M
 // name — it simply never touches bombas/stamina, which is fine (not a
 // crash, just an untouched-per-instruction side effect).
 const RARITY_CONF = {
-  CASEIRO:          { label: 'Caseiro',          power: [1, 3],   speed: [1, 3],   range: [1, 1], bombas: [1, 1], stamina: [1, 3] },
-  TEMPERADO:        { label: 'Temperado',        power: [3, 5],   speed: [1, 5],   range: [1, 2], bombas: [1, 2], stamina: [3, 5] },
-  GOURMET:          { label: 'Gourmet',          power: [4, 9],   speed: [5, 9],   range: [1, 2], bombas: [1, 2], stamina: [5, 9] },
-  CHEF_RENOMADO:    { label: 'Chef Renomado',    power: [6, 11],  speed: [6, 11],  range: [2, 3], bombas: [2, 3], stamina: [6, 11] },
-  ESTRELA_MICHELIN: { label: 'Estrela Michelin', power: [9, 15],  speed: [10, 15], range: [4, 4], bombas: [4, 5], stamina: [10, 15] },
-  RECEITA_DE_VO:    { label: 'Receita de Vó',    power: [14, 20], speed: [14, 20], range: [5, 6], bombas: [5, 6], stamina: [14, 20] },
+  CASEIRO:          { label: 'Caseiro',          power: [1, 3],   speed: [1, 3],   range: [1, 1], bombas: [1, 1], stamina: [1, 3],   sigla: 'C' },
+  TEMPERADO:        { label: 'Temperado',        power: [3, 5],   speed: [1, 5],   range: [1, 2], bombas: [1, 2], stamina: [3, 5],   sigla: 'T' },
+  GOURMET:          { label: 'Gourmet',          power: [4, 9],   speed: [5, 9],   range: [1, 2], bombas: [1, 2], stamina: [5, 9],   sigla: 'G' },
+  CHEF_RENOMADO:    { label: 'Chef Renomado',    power: [6, 11],  speed: [6, 11],  range: [2, 3], bombas: [2, 3], stamina: [6, 11],  sigla: 'CR' },
+  ESTRELA_MICHELIN: { label: 'Estrela Michelin', power: [9, 15],  speed: [10, 15], range: [4, 4], bombas: [4, 5], stamina: [10, 15], sigla: 'ME' },
+  RECEITA_DE_VO:    { label: 'Receita de Vó',    power: [14, 20], speed: [14, 20], range: [5, 6], bombas: [5, 6], stamina: [14, 20], sigla: 'VÓ' },
 };
 // maxEnergy is no longer a fixed RARITY_CONF number — it's derived from
 // each hero's own ROLLED stamina (Stamina x 50). Every former
@@ -84,6 +84,14 @@ function maxEnergyFor(h) {
 
 function rLabel(r) { return (RARITY_CONF[r] && RARITY_CONF[r].label) || r; }
 function rTag(r) { return (RARITY_CONF[r] && RARITY_CONF[r].tag) || r; }
+// Inventory grid-card rarity badge (2026-07-23 UI rework): a SEPARATE lookup
+// from rTag() on purpose — rTag() falls back to the raw enum key (a known,
+// separate bug, fixed only at its one specific display site in
+// renderInventoryDetails(), NOT here) and is still used as-is by other UI
+// (e.g. the shop's rarity-badge odds list) that this rework must not touch.
+// Sigla mapping is deliberate/confirmed, not simple initials (e.g. Estrela
+// Michelin -> "ME", Receita de Vó -> "VÓ").
+function rSigla(r) { return (RARITY_CONF[r] && RARITY_CONF[r].sigla) || r; }
 
 // Save-migration only (see load()): maps a pre-migration hero's old rarity
 // string onto its new-tier equivalent, using the exact same interpolation
@@ -251,10 +259,10 @@ const SHOP_RARITY_WEIGHTS = {
   CHEF_RENOMADO: 0.0104, ESTRELA_MICHELIN: 0.0052, RECEITA_DE_VO: 0.0004,
 };
 const PACKS = [
-  { size: 1,  cost: 100 },
-  { size: 5,  cost: 450 },
-  { size: 10, cost: 850 },
-  { size: 15, cost: 1200 },
+  { size: 1,  cost: 20 },
+  { size: 5,  cost: 100 },
+  { size: 10, cost: 200 },
+  { size: 15, cost: 300 },
 ];
 
 const HOUSES = [
@@ -2792,9 +2800,15 @@ function fmtPct(p) {
 // panel, Lab pickers). Reads the NEW skill fields (hasMassaLeve()/
 // hasCafeinado()/hasFolhadoDeOuro()/hasTemperamental() — each ALSO honors
 // the legacy h.ghost/h.swift Lab-implant/breeding fields for backward
-// compatibility, see their definitions above). No Picante visual here on
-// purpose (master spec #3 — "no visual yet"); see heroCardHtml()/
-// ffHeroCardHtml() for the plain-text Picante tag instead.
+// compatibility, see their definitions above).
+// Picante art (2026-07-23): master spec #3 originally shipped with "no
+// visual yet" (PICANTE_VISUAL_PLACEHOLDER) since no art existed for ANY
+// character. Now that real art is arriving per-character, this tries
+// assets/heroes/<char>_picante.png first for an isSpicy hero and silently
+// falls back to the normal <char>.png via onerror if that file 404s — so
+// each character's Picante art can be dropped in independently, with no
+// code change needed per character and no broken-image icon for the ones
+// that don't have it yet.
 function spriteHtml(h) {
   const skills =
     (hasMassaLeve(h) ? `<span class="sp-skill sk-ml" title="${SKILL_DEFS.MASSA_LEVE.label}: ${SKILL_DEFS.MASSA_LEVE.text}">${SKILL_DEFS.MASSA_LEVE.icon}</span>` : '') +
@@ -2805,7 +2819,10 @@ function spriteHtml(h) {
     (hasFolhadoDeOuro(h) ? `<span class="sp-skill sk-fo" title="${SKILL_DEFS.FOLHADO_DE_OURO.label}: ${SKILL_DEFS.FOLHADO_DE_OURO.text}">${SKILL_DEFS.FOLHADO_DE_OURO.icon}</span>` : '') +
     (hasTemperamental(h) ? `<span class="sp-skill sk-tp" title="${SKILL_DEFS.TEMPERAMENTAL.label}: ${SKILL_DEFS.TEMPERAMENTAL.text}">${SKILL_DEFS.TEMPERAMENTAL.icon}</span>` : '');
   const char = HERO_CHARACTERS.includes(h.character) ? h.character : HERO_CHARACTERS[0];
-  return `<span class="sprite sr-${h.rarity}"><img src="assets/heroes/${char}.png" alt="${char}" loading="lazy">${skills}</span>`;
+  const baseSrc = `assets/heroes/${char}.png`;
+  const src = h.isSpicy ? `assets/heroes/${char}_picante.png` : baseSrc;
+  const fallback = h.isSpicy ? ` onerror="this.onerror=null;this.src='${baseSrc}';"` : '';
+  return `<span class="sprite sr-${h.rarity}"><img src="${src}" alt="${char}" loading="lazy"${fallback}>${skills}</span>`;
 }
 
 function skillText(h) {
@@ -2952,33 +2969,15 @@ function sortedHeroes() {
 }
 
 /* ============ Inventory tab (Food Fighters visual re-skin) ============ */
-// Real-data mapping notes: the 4-segment attribute bar and stat rows use the
-// SAME proportional-share technique as the prototype (each raw stat divided
-// by a flat ceiling, then each's share of the summed total) — it's a
-// decorative "which of my 4 stats leads" indicator, not a balance number.
-const FF_STAT_COLORS = { power: '#ff6f6f', speed: '#5ab0ff', bombs: '#ff9a3c', blast: '#4fd675' };
-// power/speed/blast ceilings rescaled 2026-07-23 for the new flat 5-stat
-// system (old scale assumed power up to ~5000; new RARITY_CONF tops out at
-// 20 for Poder/Speed/Stamina, 6 base Tamanho/+1 leveling bonus, 6 Bombas).
-// Still purely decorative proportional-share numbers, not balance values.
-const FF_STAT_MAX = { power: 40, speed: 20, bombs: 24, blast: 8 };
-
-function ffBombsPerMin(h) {
-  const cycleSeconds = (cooldownTicks(h) + FUSE_TICKS) * AI_MS / 1000;
-  return 60 / cycleSeconds;
-}
-
-function ffAttributeSegments(h) {
-  const raw = [
-    effectivePower(h) / FF_STAT_MAX.power,
-    h.speed / FF_STAT_MAX.speed,
-    ffBombsPerMin(h) / FF_STAT_MAX.bombs,
-    blastRadius(h) / FF_STAT_MAX.blast,
-  ];
-  const total = raw.reduce((s, v) => s + v, 0) || 1;
-  const colors = [FF_STAT_COLORS.power, FF_STAT_COLORS.speed, FF_STAT_COLORS.bombs, FF_STAT_COLORS.blast];
-  return raw.map((v, i) => ({ color: colors[i], pct: (v / total) * 100 }));
-}
+// Stat color mapping shared by the grid card's energy bar (well, just the
+// single energy fill now) and the detail panel's 5 raw-stat rows (2026-07-23
+// simplification pass). Renamed `blast` -> `range` (Tamanho is the RAW
+// h.range stat now shown in the details panel, not a derived blastRadius()
+// rate) and added `stamina` (a genuinely new 5th stat row, no prior color).
+// `bombs` is reused for Bombas (h.bombCapacity, a raw count) even though it
+// used to color a derived bombs/min rate — same icon/concept, just a
+// different formula behind it now.
+const FF_STAT_COLORS = { power: '#ff6f6f', speed: '#5ab0ff', range: '#4fd675', bombs: '#ff9a3c', stamina: '#ffd54f' };
 
 function ffStatusDotClass(h) {
   if (h.mode !== 'work') return 'ff-dot-rest';
@@ -2986,11 +2985,18 @@ function ffStatusDotClass(h) {
   return (h.energy / maxE) < 0.25 ? 'ff-dot-low' : 'ff-dot-work';
 }
 
-// the decorative "favorite" star from the prototype is repurposed here to
-// flag "this hero has at least one real skill" instead of being random
+// Grid card simplification (2026-07-23, confirmed wireframe): dropped the
+// "has any skill" star badge and the 4-segment attribute bar entirely (both
+// removed below, no replacement concept for the star). The star's old
+// top-right corner slot is now occupied by the Picante pepper (icon only, no
+// "Picante" text label anymore — see .ff-card-picante in style.css, a NEW
+// class, deliberately not reusing the shared .picante-tag/.ff-picante-tag
+// text-label rule that other UI still uses as-is). The attr-bar's old slot
+// is now a plain energy fill bar. The existing rarity badge's text switches
+// from rTag(h.rarity) (buggy — always the raw enum key, see rTag()'s own
+// comment) to the new, correct rSigla(h.rarity).
 function ffHeroCardHtml(h) {
-  const segments = ffAttributeSegments(h);
-  const hasAnySkill = hasMassaLeve(h) || hasCafeinado(h) || hasSustancia(h) || hasEspetinho(h) || hasAlDente(h) || hasFolhadoDeOuro(h) || hasTemperamental(h);
+  const energyPct = Math.max(0, Math.min(100, (h.energy / maxEnergyFor(h)) * 100));
   return `
   <button type="button" class="ff-card r-${h.rarity}${selectedInventoryHeroId === h.id ? ' ff-card-selected' : ''}" data-select-hero="${h.id}" aria-pressed="${selectedInventoryHeroId === h.id}">
     <div class="ff-card-top">
@@ -2999,15 +3005,22 @@ function ffHeroCardHtml(h) {
     </div>
     <div class="ff-card-image-wrap">
       ${spriteHtml(h)}
-      <span class="ff-rarity-badge rarity-${h.rarity}">${rTag(h.rarity)}</span>
-      ${hasAnySkill ? '<span class="ff-star" title="Has a skill">★</span>' : ''}
-      ${h.isSpicy ? `<span class="ff-picante-tag" title="${PICANTE_VISUAL_PLACEHOLDER}">🌶️ Picante</span>` : ''}
+      <span class="ff-rarity-badge rarity-${h.rarity}">${rSigla(h.rarity)}</span>
+      ${h.isSpicy ? `<span class="ff-card-picante" title="${PICANTE_VISUAL_PLACEHOLDER}">🌶️</span>` : ''}
     </div>
-    <div class="ff-attr-bar">${segments.map(s => `<span style="width:${s.pct}%;background:${s.color}"></span>`).join('')}</div>
+    <div class="ff-energy-bar" title="Energy: ${Math.floor(h.energy)}/${maxEnergyFor(h)}"><span style="width:${energyPct}%"></span></div>
     <span class="ff-card-name">${h.name}</span>
   </button>`;
 }
 
+// Moved into the scene's top-right corner (2026-07-23, user-flagged) —
+// mirrors .ff-scene-picante's top-left corner badge treatment. Bare-icon-only
+// now: no name label under the icon (kept as the hover title only) and no
+// "No skills yet" placeholder card — a hero with 0 skills simply shows
+// nothing in that corner, same as the Picante badge shows nothing when a
+// hero isn't spicy. Markup stays deliberately simple/swappable (a plain
+// small square with just the icon character) since the user plans to swap
+// these emoji for real icon images later.
 function ffSkillCards(h) {
   const skills = [];
   if (hasMassaLeve(h)) skills.push({ icon: SKILL_DEFS.MASSA_LEVE.icon, name: SKILL_DEFS.MASSA_LEVE.label, text: SKILL_DEFS.MASSA_LEVE.text });
@@ -3017,13 +3030,11 @@ function ffSkillCards(h) {
   if (hasAlDente(h)) skills.push({ icon: SKILL_DEFS.AL_DENTE.icon, name: SKILL_DEFS.AL_DENTE.label, text: SKILL_DEFS.AL_DENTE.text });
   if (hasFolhadoDeOuro(h)) skills.push({ icon: SKILL_DEFS.FOLHADO_DE_OURO.icon, name: SKILL_DEFS.FOLHADO_DE_OURO.label, text: SKILL_DEFS.FOLHADO_DE_OURO.text });
   if (hasTemperamental(h)) skills.push({ icon: SKILL_DEFS.TEMPERAMENTAL.icon, name: SKILL_DEFS.TEMPERAMENTAL.label, text: SKILL_DEFS.TEMPERAMENTAL.text });
-  if (!skills.length) {
-    return '<div class="ff-skill-card ff-skill-empty"><span class="ff-skill-icon">🔒</span><span class="ff-skill-name">No skills yet</span></div>';
-  }
-  // BUG FIX (2026-07-23): these cards had NO title/hover description at all
-  // before — only the short name. Added, same "Label: text" format as
-  // skillBadgesHtml()'s own fix.
-  return skills.map(s => `<div class="ff-skill-card" title="${s.name}: ${s.text}"><span class="ff-skill-icon">${s.icon}</span><span class="ff-skill-name">${s.name}</span></div>`).join('');
+  if (!skills.length) return '';
+  // title keeps the full "Label: text" hover description — still useful
+  // info, just not shown inline anymore (BUG FIX 2026-07-23 that added this
+  // title in the first place is unaffected, only the inline name span is gone).
+  return skills.map(s => `<div class="ff-skill-card" title="${s.name}: ${s.text}"><span class="ff-skill-icon">${s.icon}</span></div>`).join('');
 }
 
 function selectInventoryHero(id) {
@@ -3053,9 +3064,29 @@ function jumpToLabForReroll(id) {
 function renderInventoryDetails() {
   const panel = document.getElementById('inventory-details');
   if (!panel) return;
+  // Default-select-first-hero (2026-07-23, confirmed): "nothing selected yet
+  // AND heroes exist" now auto-picks the first hero (sortedHeroes() order,
+  // same as the grid) instead of falling into the empty state below. The
+  // empty state is reserved for the genuine "zero heroes owned" case (the
+  // `if (!h)` branch right after this still handles that, unchanged).
+  // renderInventory() already resolves this same rule BEFORE building the
+  // grid (so the grid's selection ring matches this panel from the very
+  // first render) — this is a self-healing repeat of that same rule, for the
+  // rarer direct-call path from updateInventoryLive() (e.g. a
+  // previously-selected hero removed mid-session via Sacrifice), so the
+  // panel recovers immediately instead of waiting for the next full
+  // renderInventory(). (The close/deselect button this comment used to
+  // reference is gone entirely now, 2026-07-23, user-flagged — with
+  // default-select-first-hero, there was never a clean "empty" state left
+  // to close back to while heroes are owned, so the affordance made no
+  // sense; see bindEvents() for the removed data-close-details handler.)
+  if (selectedInventoryHeroId == null && state.heroes.length) {
+    selectedInventoryHeroId = sortedHeroes()[0].id;
+  }
   const h = state.heroes.find(x => x.id === selectedInventoryHeroId);
   if (!h) {
     selectedInventoryHeroId = null;
+    panel.className = 'ff-details';
     panel.innerHTML = `
     <div class="ff-empty-state">
       <span class="ff-empty-icon">🍔</span>
@@ -3064,56 +3095,39 @@ function renderInventoryDetails() {
     return;
   }
   const maxE = maxEnergyFor(h);
-  const starPerHour = mineRate(h) * 3600;
-  const bcoinPerHour = starPerHour / EXCHANGE_RATE;
   const atMax = h.level >= MAX_LEVEL;
   const cost = atMax ? 0 : levelCost(h);
   const xpPct = atMax ? 100 : Math.min(100, Math.round((state.starCore / cost) * 100));
   const working = h.mode === 'work';
 
+  // Rarity-colored border around the whole panel, same r-${rarity} pattern
+  // and --c-* color tokens the grid card's box-shadow ring already uses
+  // (see .ff-details.r-* in style.css) — kept in sync with the selected
+  // hero's rarity on every render.
+  panel.className = 'ff-details r-' + h.rarity;
   panel.innerHTML = `
     <div class="ff-scene">
-      <button type="button" class="ff-close-btn" data-close-details title="Close">✕</button>
-      <div class="ff-sky"><span class="ff-cloud" style="left:10%;top:20%"></span><span class="ff-cloud" style="left:62%;top:38%"></span></div>
+      <div class="ff-sky"></div>
+      ${h.isSpicy ? `<span class="ff-scene-picante" title="${PICANTE_VISUAL_PLACEHOLDER}">🌶️</span>` : ''}
+      <div class="ff-scene-skills">${ffSkillCards(h)}</div>
       <div class="ff-char-wrap">${spriteHtml(h)}</div>
       <div class="ff-ground"></div>
       <div class="ff-info-block">
         <h2 class="ff-hero-name">${h.name}</h2>
         <div class="ff-meta-row">
-          <span class="ff-chip ff-chip-rarity rarity-${h.rarity}">${rTag(h.rarity)} · ${rLabel(h.rarity)}</span>
+          <span class="ff-chip ff-chip-rarity rarity-${h.rarity}">${rLabel(h.rarity).toUpperCase()}</span>
           <span class="ff-chip ff-chip-level">Level ${h.level}</span>
           <span class="ff-chip ff-chip-energy" id="ff-energy-chip">⚡ ${Math.floor(h.energy)}/${maxE}</span>
         </div>
       </div>
     </div>
 
-    <div class="ff-reward-panel">
-      <h3 class="ff-panel-title">PROJECTED EARN RATE</h3>
-      <div class="ff-reward-row">
-        <div class="ff-reward-item">
-          <span class="ff-reward-icon"><img src="assets/coins/food_coin.png" alt="Food Coins" loading="lazy"></span>
-          <span class="ff-reward-value">${fmtCurrency(starPerHour)}</span>
-          <span class="ff-reward-unit">Food Coins/hr</span>
-        </div>
-        <div class="ff-reward-divider"></div>
-        <div class="ff-reward-item">
-          <span class="ff-reward-icon"><img src="assets/coins/chef_coin.png" alt="Chef Gems" loading="lazy"></span>
-          <span class="ff-reward-value">${fmtCurrency(bcoinPerHour)}</span>
-          <span class="ff-reward-unit">Chef Gems/hr</span>
-        </div>
-      </div>
-    </div>
-
     <div class="ff-stats-panel">
-      <div class="ff-stat-row"><span class="ff-stat-icon">⚔️</span><span class="ff-stat-label">Attack</span><span class="ff-stat-dots"></span><span class="ff-stat-value" style="color:${FF_STAT_COLORS.power}">${Math.round(effectivePower(h))}</span></div>
-      <div class="ff-stat-row"><span class="ff-stat-icon">💨</span><span class="ff-stat-label">Speed</span><span class="ff-stat-dots"></span><span class="ff-stat-value" style="color:${FF_STAT_COLORS.speed}">${h.speed}</span></div>
-      <div class="ff-stat-row"><span class="ff-stat-icon">💣</span><span class="ff-stat-label">Bombs/min</span><span class="ff-stat-dots"></span><span class="ff-stat-value" style="color:${FF_STAT_COLORS.bombs}">${ffBombsPerMin(h).toFixed(1)}</span></div>
-      <div class="ff-stat-row"><span class="ff-stat-icon">💥</span><span class="ff-stat-label">Blast Radius</span><span class="ff-stat-dots"></span><span class="ff-stat-value" style="color:${FF_STAT_COLORS.blast}">${blastRadius(h)}</span></div>
-    </div>
-
-    <div class="ff-skills-wrap">
-      <h3 class="ff-skills-title">SKILLS</h3>
-      <div class="ff-skills-grid">${ffSkillCards(h)}</div>
+      <div class="ff-stat-row"><span class="ff-stat-icon">💪</span><span class="ff-stat-label">Poder</span><span class="ff-stat-dots"></span><span class="ff-stat-value" style="color:${FF_STAT_COLORS.power}">${h.power}</span></div>
+      <div class="ff-stat-row"><span class="ff-stat-icon">👟</span><span class="ff-stat-label">Speed</span><span class="ff-stat-dots"></span><span class="ff-stat-value" style="color:${FF_STAT_COLORS.speed}">${h.speed}</span></div>
+      <div class="ff-stat-row"><span class="ff-stat-icon">📏</span><span class="ff-stat-label">Tamanho</span><span class="ff-stat-dots"></span><span class="ff-stat-value" style="color:${FF_STAT_COLORS.range}">${h.range}</span></div>
+      <div class="ff-stat-row"><span class="ff-stat-icon">💣</span><span class="ff-stat-label">Bombas</span><span class="ff-stat-dots"></span><span class="ff-stat-value" style="color:${FF_STAT_COLORS.bombs}">${h.bombCapacity}</span></div>
+      <div class="ff-stat-row"><span class="ff-stat-icon">⚡</span><span class="ff-stat-label">Stamina</span><span class="ff-stat-dots"></span><span class="ff-stat-value" style="color:${FF_STAT_COLORS.stamina}">${h.stamina}</span></div>
     </div>
 
     <footer class="ff-footer">
@@ -3127,7 +3141,6 @@ function renderInventoryDetails() {
       </div>
       <div class="ff-actions-wrap">
         <button type="button" class="ff-toggle-btn${working ? ' ff-toggle-rest' : ''}" id="ff-work-btn" data-toggle-id="${h.id}">${working ? 'REST' : 'WORK'}</button>
-        <button type="button" class="ff-lab-btn" data-lab-id="${h.id}" title="Open in the Lab">LAB</button>
       </div>
     </footer>
   `;
@@ -3135,6 +3148,13 @@ function renderInventoryDetails() {
 
 function renderInventory() {
   const heroes = sortedHeroes();
+  // Default-select-first-hero (2026-07-23, confirmed): resolved HERE, before
+  // building the grid, so the grid's selection ring (ff-card-selected) and
+  // the details panel agree from the very first render — see the matching
+  // comment/safety-net in renderInventoryDetails() for the direct-call path.
+  if (selectedInventoryHeroId == null && heroes.length) {
+    selectedInventoryHeroId = heroes[0].id;
+  }
   document.getElementById('inventory-grid').innerHTML = heroes.length
     ? heroes.map(h => ffHeroCardHtml(h)).join('')
     : '<div class="locked-box">No Rangos yet — visit the Supermercado!</div>';
@@ -3555,10 +3575,13 @@ function isCelebrated(h) {
 }
 
 // speed mode never lets a celebrated card fly by: celebrated pulls always
-// hold the screen for the full (or mega) duration, then speed resumes
+// hold the screen for the full (or mega) duration, then speed resumes.
+// Picante (2026-07-23) joins that exemption — independent of rarity, it's
+// the single most-wanted pull in the game per explicit design intent, so
+// Speed mode must never blur past one either.
 function revealDelay(h, speed) {
   if (h.rarity === 'RECEITA_DE_VO') return REVEAL_MEGA_MS;
-  if (isCelebrated(h)) return REVEAL_MS;
+  if (isCelebrated(h) || h.isSpicy) return REVEAL_MS;
   return speed ? REVEAL_FAST_MS : REVEAL_MS;
 }
 
@@ -3586,6 +3609,7 @@ function advanceReveal() {
   const h = reveal.heroes[reveal.idx];
   renderRevealCard(h);
   if (isCelebrated(h)) playCelebration(h);
+  if (h.isSpicy) playPicanteCelebration(h);
   reveal.timer = setTimeout(advanceReveal, revealDelay(h, reveal.speed));
 }
 
@@ -3595,7 +3619,7 @@ function renderRevealCard(h) {
   const slot = document.getElementById('reveal-card-slot');
   if (!slot) return;
   slot.innerHTML = `
-    <div class="reveal-card r-${h.rarity}${isCelebrated(h) ? ' celebrate' : ''}" id="reveal-card" title="Click to continue">
+    <div class="reveal-card r-${h.rarity}${isCelebrated(h) ? ' celebrate' : ''}${h.isSpicy ? ' picante' : ''}" id="reveal-card" title="Click to continue">
       <span class="reveal-sprite">${spriteHtml(h)}</span>
       <div class="reveal-name">${h.name}</div>
       <span class="rarity-badge rarity-${h.rarity}">${rLabel(h.rarity)}</span>
@@ -3653,6 +3677,88 @@ function playCelebration(h) {
     setTimeout(() => { mega.remove(); document.body.classList.remove('shaking'); }, 2800);
     playMegaSound();
   }
+}
+
+// Picante celebration (2026-07-23): independent of rarity — a Caseiro
+// Picante gets the exact same fire treatment as a Receita de Vó Picante,
+// on purpose, per explicit design intent ("o boneco mais legal de se ter",
+// stacks alongside — never replaces — the rarity's own playCelebration()).
+// Bursts SKILL_ICON-style ember/pepper glyphs outward from the reveal
+// card's actual on-screen position (not a fixed point), same
+// create-element/setTimeout-cleanup pattern playCelebration() already uses
+// for its flash div, just repeated per particle.
+const PICANTE_PARTICLE_GLYPHS = ['🌶️', '🔥', '✨'];
+const PICANTE_PARTICLE_COUNT = 20;
+function playPicanteCelebration(h) {
+  const flash = document.createElement('div');
+  flash.className = 'reveal-flash picante-flash';
+  document.body.appendChild(flash);
+  setTimeout(() => flash.remove(), 900);
+
+  const card = document.getElementById('reveal-card');
+  const rect = card ? card.getBoundingClientRect() : null;
+  const originX = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
+  const originY = rect ? rect.top + rect.height / 2 : window.innerHeight / 2;
+  for (let i = 0; i < PICANTE_PARTICLE_COUNT; i++) {
+    const p = document.createElement('div');
+    p.className = 'picante-particle';
+    p.textContent = PICANTE_PARTICLE_GLYPHS[i % PICANTE_PARTICLE_GLYPHS.length];
+    const angle = (Math.PI * 2 * i) / PICANTE_PARTICLE_COUNT + (Math.random() - 0.5) * 0.5;
+    const dist = 110 + Math.random() * 120;
+    p.style.left = originX + 'px';
+    p.style.top = originY + 'px';
+    p.style.setProperty('--dx', (Math.cos(angle) * dist).toFixed(0) + 'px');
+    p.style.setProperty('--dy', (Math.sin(angle) * dist).toFixed(0) + 'px');
+    p.style.setProperty('--rot', (Math.random() * 720 - 360).toFixed(0) + 'deg');
+    p.style.animationDelay = (Math.random() * 0.18).toFixed(2) + 's';
+    document.body.appendChild(p);
+    setTimeout(() => p.remove(), 1400);
+  }
+  playPicanteSound();
+}
+
+// synthesized sizzle — a short filtered-noise burst (the "hiss") plus a
+// rising sawtooth swoop underneath (the "whoosh"), same synthesized/no-
+// external-assets approach as playMegaSound() but built from a noise
+// buffer instead of pure tones, since a sizzle reads as noise, not pitch
+function playPicanteSound() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    const ctx = new AC();
+    const dur = 0.5;
+    const buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * dur), ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 3200;
+    filter.Q.value = 0.7;
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.35, ctx.currentTime);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+    noise.connect(filter);
+    filter.connect(noiseGain);
+    noiseGain.connect(ctx.destination);
+    noise.start();
+
+    const o = ctx.createOscillator();
+    const og = ctx.createGain();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(180, ctx.currentTime);
+    o.frequency.exponentialRampToValueAtTime(900, ctx.currentTime + 0.35);
+    og.gain.setValueAtTime(0.001, ctx.currentTime);
+    og.gain.linearRampToValueAtTime(0.08, ctx.currentTime + 0.08);
+    og.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+    o.connect(og);
+    og.connect(ctx.destination);
+    o.start();
+    o.stop(ctx.currentTime + 0.45);
+
+    setTimeout(() => ctx.close(), 900);
+  } catch (e) {}
 }
 
 // synthesized fanfare — Web Audio oscillators, no external assets
@@ -3747,13 +3853,19 @@ function bindEvents() {
   });
 
   document.getElementById('inventory-details').addEventListener('click', e => {
-    if (e.target.closest('[data-close-details]')) { selectedInventoryHeroId = null; renderInventory(); return; }
+    // data-close-details handler REMOVED (2026-07-23, user-flagged): the
+    // close/deselect button itself is gone (see renderInventoryDetails()) —
+    // default-select-first-hero means there's no clean "empty" state to
+    // close back to while heroes are owned, so the whole affordance is gone,
+    // not just hidden.
     const t = e.target.closest('[data-toggle-id]');
     if (t) { toggleMode(Number(t.dataset.toggleId)); return; }
     const l = e.target.closest('[data-levelup-id]');
     if (l) { levelUp(Number(l.dataset.levelupId)); return; }
-    const lab = e.target.closest('[data-lab-id]');
-    if (lab) jumpToLabForReroll(Number(lab.dataset.labId));
+    // LAB button removed from this footer (2026-07-23 UI rework) — the
+    // data-lab-id wiring that used to live here is gone, but
+    // jumpToLabForReroll() itself is untouched and still fully reachable
+    // from the Lab tab's own re-roll flow, per instruction.
   });
 
   document.getElementById('pack-grid').addEventListener('click', e => {
