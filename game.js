@@ -12,8 +12,15 @@ const SAVE_KEY = 'foodfighters-save-v1';
 // afterward (harmless leftover), never deleted.
 const OLD_SAVE_KEY = 'bombheroes-save-v1';
 const EXCHANGE_RATE = 10;          // 10 Food Coins -> 1 Chef Gems
-const BASE_RECOVERY = 0.25;        // energy/s while resting, before house bonuses
-const BASE_DRAIN = 0.35;           // energy/s while working; ~5 min of work per full bar
+// ENERGY MODEL REWORK (2026-07-23): base rest recovery is now a fixed 1
+// energy per MINUTE (was 0.25/s under the old continuous-drain model — a
+// ~15x reduction) — houses and Cafeinado (see recoveryRateFor()) are the
+// real recovery levers now, not the base rate itself. BASE_DRAIN (the old
+// continuous per-tick energy cost while working) is RETIRED entirely:
+// planting a bomb now costs a flat 1 energy instead (0 with Sustância's 20%
+// chance) — see bombEnergyCost()/plantBomb(). Movement itself costs no
+// energy at all.
+const BASE_RECOVERY = 1 / 60;      // energy/s while resting (1 per minute), before house/Cafeinado bonuses
 const OFFLINE_CAP_S = 8 * 3600;    // away-progress cap so a week offline doesn't print money
 const MAX_WORKERS = 15;            // roster-wide cap on simultaneous fielded heroes
 // LEGACY, Lab-compatibility only: this constant (and the h.ghost/h.swift
@@ -44,20 +51,36 @@ const SKILL_CHANCE = 0.07;
    rather than remapped to a new-tier equivalent. */
 const RARITIES = ['CASEIRO', 'TEMPERADO', 'GOURMET', 'CHEF_RENOMADO', 'ESTRELA_MICHELIN', 'RECEITA_DE_VO'];
 
-// Stat curve: "preserve what works" interpolation of the OLD 8-tier shape
-// (gentle climb, then a real spike, then an even bigger spike at the very
-// top) onto these 6 tiers — see the session report for the full table and
-// hit-count sanity-check reasoning. RECEITA_DE_VO is now the absolute
-// ceiling (no tier above it), so it inherits the old Shiny+Robadasso
-// "holy grail" spike blended into ONE step instead of two.
+// ===== 5-STAT REWORK (2026-07-23): Poder/Speed/Tamanho/Bombas/Stamina =====
+// Replaces the old power/range/speed/maxEnergy curve entirely. FIELD NAMES
+// are deliberately KEPT where Lab (re-roll/sacrifice/ascension — untouched
+// per standing instruction) reads them directly: `power` = Poder (now a
+// literal flat damage value, no formula — see plantBomb()/effectivePower()),
+// `speed` = Speed (now tiles/sec movement velocity — see the movement-budget
+// accumulator in aiTick()/moveActor()), `range` = Tamanho (blast radius in
+// tiles, uniform damage, no falloff — see explode()). Two GENUINELY NEW
+// fields with no old equivalent: `bombas` (max simultaneous bombs a Rango
+// can have live on the map — see h.bombCapacity in makeHero()/plantBomb())
+// and `stamina` (drives maxEnergy = stamina*50 — see maxEnergyFor() below;
+// maxEnergy is no longer a fixed per-rarity number, it's now itself a
+// rolled-per-hero value derived from rolled stamina). rerollHero() (Lab,
+// untouched) still re-rolls power/range/speed within these same bounds by
+// name — it simply never touches bombas/stamina, which is fine (not a
+// crash, just an untouched-per-instruction side effect).
 const RARITY_CONF = {
-  CASEIRO:          { label: 'Caseiro',          power: [5, 15],       range: [1, 2],  speed: [1, 2], maxEnergy: 100 },
-  TEMPERADO:        { label: 'Temperado',        power: [18, 32],      range: [2, 3],  speed: [1, 3], maxEnergy: 130 },
-  GOURMET:          { label: 'Gourmet',          power: [40, 70],      range: [3, 4],  speed: [2, 4], maxEnergy: 170 },
-  CHEF_RENOMADO:    { label: 'Chef Renomado',    power: [80, 130],     range: [4, 6],  speed: [3, 5], maxEnergy: 220 },
-  ESTRELA_MICHELIN: { label: 'Estrela Michelin', power: [200, 350],    range: [5, 8],  speed: [4, 7], maxEnergy: 360 },
-  RECEITA_DE_VO:    { label: 'Receita de Vó',    power: [3000, 5000],  range: [7, 10], speed: [6, 9], maxEnergy: 800 },
+  CASEIRO:          { label: 'Caseiro',          power: [1, 3],   speed: [1, 3],   range: [1, 1], bombas: [1, 1], stamina: [1, 3] },
+  TEMPERADO:        { label: 'Temperado',        power: [3, 5],   speed: [1, 5],   range: [1, 2], bombas: [1, 2], stamina: [3, 5] },
+  GOURMET:          { label: 'Gourmet',          power: [4, 9],   speed: [5, 9],   range: [1, 2], bombas: [1, 2], stamina: [5, 9] },
+  CHEF_RENOMADO:    { label: 'Chef Renomado',    power: [6, 11],  speed: [6, 11],  range: [2, 3], bombas: [2, 3], stamina: [6, 11] },
+  ESTRELA_MICHELIN: { label: 'Estrela Michelin', power: [9, 15],  speed: [10, 15], range: [4, 4], bombas: [4, 5], stamina: [10, 15] },
+  RECEITA_DE_VO:    { label: 'Receita de Vó',    power: [14, 20], speed: [14, 20], range: [5, 6], bombas: [5, 6], stamina: [14, 20] },
 };
+// maxEnergy is no longer a fixed RARITY_CONF number — it's derived from
+// each hero's own ROLLED stamina (Stamina x 50). Every former
+// `RARITY_CONF[h.rarity].maxEnergy` call site now calls this instead.
+function maxEnergyFor(h) {
+  return (h.stamina || 1) * 50;
+}
 
 function rLabel(r) { return (RARITY_CONF[r] && RARITY_CONF[r].label) || r; }
 function rTag(r) { return (RARITY_CONF[r] && RARITY_CONF[r].tag) || r; }
@@ -90,31 +113,58 @@ function rollPicante(chance) { return Math.random() < chance; }
 function applySpicyStatModifier(rango) { return rango; }
 
 /* ===== Skills — complete replacement of the old Phantom/Swift/Midas/
-   Cataclysm system (master spec #4/#5) =====
-   Two categories, two skills each, max 4 total, never duplicated:
-   Basic: Massa Leve (phase through destructibles, same effect as the old
-   Phantom) and Cafeinado (2x energy recovery — REPLACES the old Swift
-   double-movement-step mechanic entirely, which is removed).
-   Power: Folhado de Ouro (+50% Food Coins, same effect as the old Midas)
-   and Temperamental (chains to 5 random valid targets per explosion,
-   UP from the old Cataclysm's 3).
-   Unlike the old Midas/Cataclysm (pure rarity-derived, never rolled/stored),
-   these are independently ROLLED per rarity at creation — see
-   SKILL_ROLL_TABLE and rollSkillsForRarity() below. */
-const BASIC_SKILLS = ['MASSA_LEVE', 'CAFEINADO'];
+   Cataclysm system (master spec #4/#5), EXPANDED 2026-07-23 with 3 new
+   Basic skills (Sustância/Espetinho/Al Dente) =====
+   Power category is unchanged: Folhado de Ouro (+50% Food Coins) and
+   Temperamental (chains to 5 random targets per explosion) — still exactly
+   2, still "roll 1-of-2, then conditionally the other".
+   Basic category is now 5 skills, not 2 — a genuine model change:
+     - Massa Leve: phase through destructibles (walls/border still block).
+     - Cafeinado: redefined 2026-07-23 — +1 energy/SECOND while resting
+       (was a x2 multiplier; see recoveryRateFor()).
+     - Sustância (NEW): 20% independent chance per bomb planted that it
+       costs 0 energy instead of 1 (see bombEnergyCost()).
+     - Espetinho (NEW): the blast pierces through Baús (T_CHEST only —
+       Mesa Variável/Jaula still stop it normally) instead of stopping at
+       the first one, up to the Tamanho/blast-radius limit or an
+       indestructible obstacle (see explode()).
+     - Al Dente (NEW): can walk onto/through bomb-occupied tiles (every
+       other Rango is blocked by bombs by default — see canWalk()).
+   FLAGGED ADAPTATION (2026-07-23, my own call — the user only said "5
+   Basic skills now" without specifying how the old 1-of-2 roll should
+   generalize): the SAME basic1/basic2 probability-by-rarity table below is
+   kept exactly as-is (still "roll >=1 Basic" then "roll a 2nd, different,
+   Basic"), but the skill CHOSEN is now picked uniformly from all 5 Basic
+   options instead of a fixed pair, and the 2nd roll (if it hits) picks a
+   DIFFERENT skill from the remaining 4 rather than "the other one of a
+   pair" (there's no fixed pair anymore). Max simultaneous skills is still
+   4 total (<=2 Basic + <=2 Power), never duplicated — the pool grew, the
+   ceiling didn't. */
+const BASIC_SKILLS = ['MASSA_LEVE', 'CAFEINADO', 'SUSTANCIA', 'ESPETINHO', 'AL_DENTE'];
 const POWER_SKILLS = ['FOLHADO_DE_OURO', 'TEMPERAMENTAL'];
+// maps a BASIC_SKILLS/POWER_SKILLS slug onto the boolean field name it sets
+// on a hero object — used by rollSkillsForRarity() below so picking from a
+// list of N skills doesn't need an N-way if/else chain
+const SKILL_FIELD = {
+  MASSA_LEVE: 'massaLeve', CAFEINADO: 'cafeinado', SUSTANCIA: 'sustancia',
+  ESPETINHO: 'espetinho', AL_DENTE: 'alDente',
+  FOLHADO_DE_OURO: 'folhadoDeOuro', TEMPERAMENTAL: 'temperamental',
+};
 const SKILL_DEFS = {
   MASSA_LEVE:      { category: 'BASIC', icon: '🥟', label: 'Massa Leve', text: 'O Rango fica leve como massa folhada e atravessa obstáculos quebráveis.' },
-  CAFEINADO:       { category: 'BASIC', icon: '☕', label: 'Cafeinado', text: 'Cafeína pura. O Rango recupera energia 2x mais rápido.', energyRecoveryMultiplier: 2 },
+  CAFEINADO:       { category: 'BASIC', icon: '☕', label: 'Cafeinado', text: 'Cafeína pura. Esse Rango recupera 1 energia extra por segundo enquanto descansa.', energyPerSecondBonus: 1 },
+  SUSTANCIA:       { category: 'BASIC', icon: '🍖', label: 'Sustância', text: 'Esse Rango está bem servido. Cada bomba tem 20% de chance de não consumir energia.', freeBombChance: 0.20 },
+  ESPETINHO:       { category: 'BASIC', icon: '🍢', label: 'Espetinho', text: 'A explosão atravessa baús e continua avançando até atingir o limite do seu alcance ou um obstáculo indestrutível.' },
+  AL_DENTE:        { category: 'BASIC', icon: '🍝', label: 'Al Dente', text: 'Esse Rango escorrega pelas próprias bombas e pode atravessá-las livremente.' },
   FOLHADO_DE_OURO: { category: 'POWER', icon: '🌟', label: 'Folhado de Ouro', text: 'Um tempero lendário transforma cada recompensa em algo ainda mais gostoso.', foodCoinMultiplier: 1.5 },
   TEMPERAMENTAL:   { category: 'POWER', icon: '🌶️', label: 'Temperamental', text: 'Cada explosão atinge também 5 alvos aleatórios em qualquer ponto da arena.', randomTargetsPerExplosion: 5 },
 };
 // Rarity-dependent two-step conditional roll, PER CATEGORY, independently.
 // Process: roll "≥1 of this category" at basic1/power1; if it hits, grant
-// ONE random skill from that category's 2 options (50/50); THEN, only if
-// that first roll succeeded, roll basic2/power2 — if it ALSO hits, grant
-// the OTHER skill in that category too. If the first roll fails, skip
-// straight to 0 skills in that category (never roll the 2nd).
+// ONE random skill from that category's options; THEN, only if that first
+// roll succeeded, roll basic2/power2 — if it ALSO hits, grant a DIFFERENT
+// skill from that category too (never the same one twice). If the first
+// roll fails, skip straight to 0 skills in that category (never roll the 2nd).
 const SKILL_ROLL_TABLE = {
   CASEIRO:          { basic1: 0.10, basic2: 0.02, power1: 0.00, power2: 0.00 },
   TEMPERADO:        { basic1: 0.30, basic2: 0.07, power1: 0.00, power2: 0.00 },
@@ -125,22 +175,50 @@ const SKILL_ROLL_TABLE = {
 };
 function rollSkillsForRarity(rarity) {
   const t = SKILL_ROLL_TABLE[rarity];
-  const skills = { massaLeve: false, cafeinado: false, folhadoDeOuro: false, temperamental: false };
+  const skills = { massaLeve: false, cafeinado: false, sustancia: false, espetinho: false, alDente: false, folhadoDeOuro: false, temperamental: false };
   if (!t) return skills;
   if (Math.random() < t.basic1) {
-    if (pick(BASIC_SKILLS) === 'MASSA_LEVE') skills.massaLeve = true; else skills.cafeinado = true;
-    if (Math.random() < t.basic2) { skills.massaLeve = true; skills.cafeinado = true; }
+    const first = pick(BASIC_SKILLS);
+    skills[SKILL_FIELD[first]] = true;
+    if (Math.random() < t.basic2) {
+      const second = pick(BASIC_SKILLS.filter(s => s !== first));
+      skills[SKILL_FIELD[second]] = true;
+    }
   }
   if (Math.random() < t.power1) {
-    if (pick(POWER_SKILLS) === 'FOLHADO_DE_OURO') skills.folhadoDeOuro = true; else skills.temperamental = true;
-    if (Math.random() < t.power2) { skills.folhadoDeOuro = true; skills.temperamental = true; }
+    const first = pick(POWER_SKILLS);
+    skills[SKILL_FIELD[first]] = true;
+    if (Math.random() < t.power2) {
+      const second = pick(POWER_SKILLS.filter(s => s !== first));
+      skills[SKILL_FIELD[second]] = true;
+    }
   }
   return skills;
 }
 function hasMassaLeve(h) { return !!(h.massaLeve || h.ghost); } // h.ghost: legacy Lab-implant/breeding compatibility, see SKILL_CHANCE comment above
 function hasCafeinado(h) { return !!(h.cafeinado || h.swift); } // h.swift: same legacy compatibility
+function hasSustancia(h) { return !!h.sustancia; }
+function hasEspetinho(h) { return !!h.espetinho; }
+function hasAlDente(h) { return !!h.alDente; }
 function hasFolhadoDeOuro(h) { return !!h.folhadoDeOuro; }
 function hasTemperamental(h) { return !!h.temperamental; }
+
+// ENERGY MODEL REWORK (2026-07-23): planting a bomb costs a flat 1 energy,
+// or 0 if Sustância's independent 20% roll hits. Rolled fresh per bomb
+// planted (not a fixed discount) — see plantBomb().
+function bombEnergyCost(h) {
+  if (hasSustancia(h) && Math.random() < SKILL_DEFS.SUSTANCIA.freeBombChance) return 0;
+  return 1;
+}
+// Expected/average cost per bomb — used only by the offline economy
+// estimate (simulate()), which can't roll a real per-bomb Sustância check
+// for every individual planted bomb across an 8h window; this is the
+// closed-form expected value instead (matches bombEnergyCost()'s long-run
+// average exactly, same "closed-form estimate" spirit used elsewhere in
+// this file's offline simulation).
+function avgEnergyCostPerBomb(h) {
+  return hasSustancia(h) ? (1 - SKILL_DEFS.SUSTANCIA.freeBombChance) : 1;
+}
 
 // every tier below the RECEITA_DE_VO ceiling can attempt fusion now — the
 // risk table below is what keeps the top tier rare, not a hard block
@@ -364,10 +442,43 @@ function load() {
     h.isSpicy = !!h.isSpicy;
     h.massaLeve = !!h.massaLeve;
     h.cafeinado = !!h.cafeinado;
+    // 3 genuinely NEW Basic skills (2026-07-23 stat-system rework) — same
+    // "default to off, never retroactively rolled" migration philosophy as
+    // massaLeve/cafeinado above (rolling them now would be a free stealth
+    // buff to every existing save on load).
+    h.sustancia = !!h.sustancia;
+    h.espetinho = !!h.espetinho;
+    h.alDente = !!h.alDente;
     h.folhadoDeOuro = !!h.folhadoDeOuro;
     h.temperamental = !!h.temperamental;
     h.bonusPower = h.bonusPower || 0;
     h.ascendCount = h.ascendCount || 0;
+    // STAT-SYSTEM REWORK migration (2026-07-23): power/range/speed used
+    // completely different, incompatible ranges before this rework (e.g.
+    // the old RECEITA_DE_VO power was 3000-5000; Poder for the same rarity
+    // is now 14-20) — unlike the skill flags above, leaving an old hero's
+    // stats as-is would NOT be a safe/conservative migration, it would be an
+    // actively broken value under the new flat-damage model (a returning
+    // player's old hero could have Poder in the THOUSANDS while every fresh
+    // hero of the same rarity rolls under 20). Any hero missing the two
+    // genuinely-new fields (bombCapacity/stamina) predates this rework
+    // entirely, so power/range/speed are re-rolled fresh under the NEW
+    // ranges alongside them — a real, necessary unit conversion, not a
+    // stealth buff (the skill flags above are the ones that stay
+    // conservative; stats are a different case because the OLD numbers are
+    // simply incompatible, not just "missing a new bonus").
+    if (typeof h.bombCapacity !== 'number' || typeof h.stamina !== 'number') {
+      const rc = RARITY_CONF[h.rarity];
+      h.power = randInt(rc.power[0], rc.power[1]);
+      h.range = randInt(rc.range[0], rc.range[1]);
+      h.speed = randInt(rc.speed[0], rc.speed[1]);
+      h.bombCapacity = randInt(rc.bombas[0], rc.bombas[1]);
+      h.stamina = randInt(rc.stamina[0], rc.stamina[1]);
+    }
+    // clamp in case an old save's stored energy exceeds the new
+    // stamina-derived max (e.g. an old high-maxEnergy rarity's leftover
+    // energy value, now under a much smaller stamina*50 ceiling)
+    h.energy = Math.min(typeof h.energy === 'number' ? h.energy : 0, maxEnergyFor(h));
     // one-time rename: legacy heroes carry an old random fantasy name
     // (e.g. "Blaze Fuse") unrelated to their character — every hero already
     // has a valid character by this point (assigned just above if missing),
@@ -437,6 +548,7 @@ function makeHero(rarity) {
   // at every hero creation site (shop, jaula, fusion, breeding), independent
   // of the legacy ghost/swift roll below (which exists only for Lab compat)
   const skills = rollSkillsForRarity(rarity);
+  const stamina = randInt(c.stamina[0], c.stamina[1]); // rolled once, reused for both the stored stat and the starting/max energy
   return {
     id: state.nextHeroId++,
     name: nameForCharacter(character),
@@ -454,13 +566,18 @@ function makeHero(rarity) {
     swift: Math.random() < SKILL_CHANCE,  // legacy Lab-compatibility flag — see SKILL_CHANCE comment
     massaLeve: skills.massaLeve,
     cafeinado: skills.cafeinado,
+    sustancia: skills.sustancia,
+    espetinho: skills.espetinho,
+    alDente: skills.alDente,
     folhadoDeOuro: skills.folhadoDeOuro,
     temperamental: skills.temperamental,
-    power: randInt(c.power[0], c.power[1]),
-    range: randInt(c.range[0], c.range[1]),
-    speed: randInt(c.speed[0], c.speed[1]),
+    power: randInt(c.power[0], c.power[1]),       // Poder — flat direct damage per hit
+    range: randInt(c.range[0], c.range[1]),       // Tamanho — blast radius in tiles
+    speed: randInt(c.speed[0], c.speed[1]),       // Speed — tiles moved per second
+    bombCapacity: randInt(c.bombas[0], c.bombas[1]), // Bombas — max simultaneous bombs (NEW)
+    stamina,                                          // Stamina — drives maxEnergy = stamina*50 (NEW)
     level: 1,
-    energy: c.maxEnergy,
+    energy: stamina * 50, // starts at max (maxEnergyFor(h) === stamina*50)
     mode: 'rest',
     bonusPower: 0,   // permanent additive bonus from Sacrifice; survives re-rolls
     ascendCount: 0,  // number of times Ascended; drives ascendMult()
@@ -504,27 +621,71 @@ function rollRarity(odds) {
   return 'CASEIRO';
 }
 
-// Mining rate balance: power drives it, +25%/level, +5% per bomb range point,
-// then layered with permanent meta-progression multipliers (ascension,
-// global Mining Boost upgrade, prestige) — all default to 1x / neutral for a
-// hero with none of that investment, so the base formula is unchanged
+// LEVELING PROPOSAL (2026-07-23 stat-system rework — this is MY OWN design
+// call, not something the user specified; flag for their review/adjustment).
+// With Poder now a flat direct-damage stat instead of a formula input,
+// leveling needs its own explicit combat bonus to stay meaningful. Chose
+// +10%/level (capping at +90% at MAX_LEVEL=10) as a "preserve what works"
+// echo of the old mineRate() formula's +25%/level term, toned down since
+// it's now a much more directly-felt multiplier on real per-hit damage,
+// not one term among several in an abstract currency-conversion formula.
+// Deliberately kept SEPARATE from effectivePower() (which Sacrifice/Lab
+// code reads directly for dust calculations — untouched per standing
+// instruction) so this bonus never silently leaks into Lab's own formulas.
+const LEVEL_POWER_BONUS_PER_LEVEL = 0.10;
+// BUG FIX (2026-07-23, self-caught during test-suite verification): the
+// Mining Boost tech-tree upgrade (globalMineMult(), state.upgrades.mining)
+// and per-hero Ascension (ascendMult(), h.ascendCount) both used to
+// multiply the OLD mineRate() formula — i.e. they were the real damage/
+// mining-rate multiplier that made buying Mining Boost or Ascending a hero
+// actually DO anything. Retiring mineRate() as a damage source in favor of
+// combatPower()/squadDamagePerSecond() silently dropped both of them —
+// Prestige/Lab/Ascension are explicitly "don't touch/break" systems, and a
+// live Mining Boost upgrade that does nothing counts as broken even though
+// nothing crashes. Folding both back in here (not into effectivePower(),
+// same reasoning as the leveling bonus above — keep Sacrifice's dust-yield
+// formula untouched) restores them as real multipliers on actual per-hit
+// damage, same functional role they always had.
+function combatPower(h) {
+  return effectivePower(h) * (1 + LEVEL_POWER_BONUS_PER_LEVEL * (h.level - 1)) * ascendMult(h) * globalMineMult();
+}
+
+// RETIRED as a damage/reward source (2026-07-23 stat rework): Poder is now
+// literally how much HP a bomb hit removes (see plantBomb(), which uses
+// combatPower(h) directly) — no formula multiplier anymore. Verified this
+// is safe: chest/jaula rewards come from CHEST_TIER_REWARD_RANGE's own
+// fixed random roll in destroyTile(), completely independent of hero
+// stats, and Folhado de Ouro's +50% applies to THAT roll, never to this
+// function's output — so nothing else depended on the old formula for real
+// damage or reward math. Kept (repurposed, not deleted) purely as a
+// DISPLAY convenience, since many UI panels still reference it by this
+// name — see squadDamagePerSecond() below, which now defines the real
+// "combat damage per second" value this delegates to.
 function mineRate(h) {
-  return effectivePower(h) * 0.04 * (1 + 0.25 * (h.level - 1)) * (1 + 0.05 * h.range) * ascendMult(h) * globalMineMult();
+  return squadDamagePerSecond(h);
 }
 
-// Speed makes a hero more efficient: -3% energy drain per speed point
-function drainRate(h) {
-  return BASE_DRAIN * (1 - 0.03 * h.speed);
-}
-
+// ENERGY MODEL REWORK (2026-07-23): Stamina drives maxEnergy (stamina*50 —
+// see maxEnergyFor()) and planting a bomb now costs a FLAT 1 energy (0 with
+// Sustância's 20% chance — see bombEnergyCost()), not a continuous
+// per-tick drain while working. drainRate()/BASE_DRAIN are RETIRED
+// entirely — verified nothing else references them (the only 2 call sites,
+// simulate()'s offline budget and economyTick()'s per-tick loop, are both
+// reworked alongside this). Resting recovery is now a much smaller FIXED
+// base rate — 1 energy per MINUTE, not per second — with houses and
+// Cafeinado (redefined: +1 energy/SECOND while resting, a large, dominant
+// bonus vs the tiny base by design) as the real levers.
 function recoveryRate() {
   return BASE_RECOVERY + HOUSES.reduce((sum, hs) => sum + hs.recovery * state.houses[hs.id], 0);
 }
 
-// Cafeinado's real effect (master spec #4): 2x energy recovery. Applied on
-// top of the shared house-driven recoveryRate(), per hero.
+// Cafeinado's real effect (redefined 2026-07-23): +1 energy/SECOND while
+// resting — an ADDITIVE flat bonus now, not the old x2 multiplier (that
+// multiplier model doesn't make sense against a base rate this tiny; a flat
+// bonus is what the user's own wording describes: "+1 energia por
+// segundo"). Applied on top of the shared house-driven recoveryRate().
 function recoveryRateFor(h) {
-  return recoveryRate() * (hasCafeinado(h) ? SKILL_DEFS.CAFEINADO.energyRecoveryMultiplier : 1);
+  return recoveryRate() + (hasCafeinado(h) ? 1 : 0);
 }
 
 function levelCost(h) {
@@ -552,15 +713,25 @@ function simulate(seconds, rateMult = 1) {
   let minedTotal = 0;
   let damageBudget = 0;
 
+  // ENERGY MODEL REWORK (2026-07-23): energy is no longer spent via a
+  // continuous per-second drain while working — it's spent in flat
+  // per-bomb amounts (1, or 0 with Sustância's 20% chance — see
+  // avgEnergyCostPerBomb()). "workable" here mirrors that: how many bombs
+  // can this hero's current energy afford, times how long each bomb cycle
+  // takes (hitCycleSeconds) — same overall workable-then-rest structure the
+  // offline model always used, just re-derived for the new cost model
+  // instead of the old continuous drainRate().
   for (const h of state.heroes) {
-    const maxE = RARITY_CONF[h.rarity].maxEnergy;
-    const rec = recoveryRateFor(h); // Cafeinado's 2x energy recovery, per hero
+    const maxE = maxEnergyFor(h);
+    const rec = recoveryRateFor(h); // Cafeinado's +1/s flat recovery bonus, per hero
     if (h.mode === 'work') {
-      const drain = drainRate(h);
-      const workable = h.energy / drain;
+      const costPerBomb = avgEnergyCostPerBomb(h);
+      const bombsAffordable = h.energy / costPerBomb;
+      const workable = bombsAffordable * hitCycleSeconds(h);
       const t = Math.min(seconds, workable);
       damageBudget += squadDamagePerSecond(h) * rateMult * t;
-      h.energy -= drain * t;
+      const bombsSpent = t / hitCycleSeconds(h);
+      h.energy -= bombsSpent * costPerBomb;
       if (h.energy <= 0.01) {
         h.energy = 0;
         h.mode = 'rest';
@@ -653,8 +824,14 @@ function hitCycleSeconds(h) {
   return (cooldownTicks(h) + FUSE_TICKS) * AI_MS / 1000;
 }
 
+// The real "combat damage per second" value — combatPower(h) (Poder +
+// leveling bonus, no other formula) spread across a full bomb cycle
+// (cooldown + fuse time). mineRate() is now just an alias for this (see its
+// own comment) — fixed here to call combatPower() directly instead of the
+// circular mineRate()->squadDamagePerSecond()->mineRate() loop that would
+// otherwise infinite-recurse.
 function squadDamagePerSecond(h) {
-  return mineRate(h) / hitCycleSeconds(h);
+  return combatPower(h) / hitCycleSeconds(h);
 }
 
 // Offline economy sim needs an estimate of "how many rewarding destructibles
@@ -673,12 +850,14 @@ function estimatedTileCount(wave) {
 }
 
 function economyTick() {
+  // ENERGY MODEL REWORK (2026-07-23): working heroes no longer drain energy
+  // continuously here at all — energy is only ever spent in flat per-bomb
+  // amounts (see bombEnergyCost()/plantBomb(), driven from aiTick() on its
+  // own 500ms cycle). This 1-second tick's only remaining energy job is
+  // resting recovery.
   for (const h of state.heroes) {
-    const maxE = RARITY_CONF[h.rarity].maxEnergy;
-    if (h.mode === 'work') {
-      h.energy = Math.max(0, h.energy - drainRate(h));
-      if (h.energy <= 0) h.mode = 'rest';
-    } else {
+    if (h.mode !== 'work') {
+      const maxE = maxEnergyFor(h);
       h.energy = Math.min(maxE, h.energy + recoveryRateFor(h));
     }
   }
@@ -1370,7 +1549,7 @@ function addActor(h) {
   el.innerHTML = spriteHtml(h);
   positionActor(el, c, r);
   document.getElementById('arena').appendChild(el);
-  actors[h.id] = { c, r, cd: 0, el };
+  actors[h.id] = { c, r, cd: 0, moveBudget: 0, el };
 }
 
 function removeActor(id) {
@@ -1388,10 +1567,20 @@ function syncActors() {
   }
 }
 
+// Tamanho (h.range) is now DIRECTLY the blast radius in tiles (1-6 across
+// the rarity table) — no more ceil(range/2) formula conversion, that was
+// only needed when "range" was a much wider 1-10 input to a capped
+// derived radius. The old `Math.min(4, ...)` hard cap is also dropped: it
+// existed specifically to bound the old formula's disproportionate output
+// (ceil(10/2)=5); Tamanho's own table already caps out at a comparable 6,
+// so an artificial second ceiling on top no longer serves a real purpose.
+// A small level bonus (+1 every 5 levels) is preserved from the old
+// formula's cadence — part of the leveling proposal, see combatPower()'s
+// comment for the fuller rationale.
 function blastRadius(h) {
-  const base = Math.min(4, Math.ceil(h.range / 2) + Math.floor((h.level - 1) / 5));
-  // the global Blast Expansion upgrade adds on top, uncapped by the per-hero
-  // cap — but only every OTHER level, so it's half as fast as it looks
+  const base = h.range + Math.floor((h.level - 1) / 5);
+  // the global Blast Expansion upgrade adds on top, uncapped — but only
+  // every OTHER level, so it's half as fast as it looks
   return base + (state.upgrades ? Math.floor(state.upgrades.blast / 2) : 0);
 }
 
@@ -1403,6 +1592,15 @@ function cooldownTicks(h) {
 
 function bombAt(r, c) {
   return bombs.some(b => b.r === r && b.c === c);
+}
+
+// Bombas stat (NEW 2026-07-23): how many bombs THIS Rango currently has
+// live on the map at once. bombs[] is never persisted (ephemeral, same as
+// actors[]/tileEls[]), so this is simply computed on the fly by tagging
+// each bomb with the planting hero's id (see plantBomb()) — no separate
+// per-hero counter to keep in sync.
+function bombCountFor(heroId) {
+  return bombs.reduce((n, b) => n + (b.heroId === heroId ? 1 : 0), 0);
 }
 
 function nearestCrateDist(r, c) {
@@ -1419,11 +1617,23 @@ function nearestCrateDist(r, c) {
 function plantBomb(h, a) {
   const el = document.createElement('div');
   el.className = 'bomb';
-  const b = { r: a.r, c: a.c, t: FUSE_TICKS, radius: blastRadius(h), rate: mineRate(h), folhadoDeOuro: hasFolhadoDeOuro(h), temperamental: hasTemperamental(h), el };
+  // Poder is now a literal flat damage value (no formula) — combatPower(h)
+  // applies the leveling bonus on top of effectivePower(h) (see its own
+  // comment for why that's a separate function from effectivePower()
+  // itself). Espetinho is tagged here too so explode() knows whether this
+  // specific bomb pierces through Baús.
+  const b = {
+    r: a.r, c: a.c, t: FUSE_TICKS, radius: blastRadius(h), rate: combatPower(h),
+    folhadoDeOuro: hasFolhadoDeOuro(h), temperamental: hasTemperamental(h),
+    espetinho: hasEspetinho(h), heroId: h.id, el,
+  };
   positionBomb(b);
   document.getElementById('arena').appendChild(el);
   bombs.push(b);
   a.cd = cooldownTicks(h);
+  // ENERGY MODEL REWORK (2026-07-23): flat per-bomb cost (1, or 0 with
+  // Sustância's 20% chance) replaces the old continuous per-tick drain.
+  h.energy = Math.max(0, h.energy - bombEnergyCost(h));
 }
 
 function canWalk(h, r, c) {
@@ -1438,8 +1648,17 @@ function canWalk(h, r, c) {
   // the user's exact rule: only Mesa Variável/Baú/Jaula (isDestructible()'s
   // tile types) plus ordinary floor — never T_WALL, never out of bounds
   // (already excluded by the `t === undefined` check above).
-  if (h && hasMassaLeve(h)) return t === T_FLOOR || isDestructible(t);
-  return t === T_FLOOR && !bombAt(r, c);
+  //
+  // BUG FIX (2026-07-23, "bombs count as a filled square by default"): the
+  // Massa Leve branch below used to skip the bombAt() check entirely —
+  // Massa Leve is about walls/crates, not bombs, so a Massa Leve Rango
+  // could accidentally walk onto bomb tiles too. Bomb-blocking must apply
+  // to EVERY Rango by default now; Al Dente is the ONLY exception. Computed
+  // ONCE here and applied identically to both branches below so they can
+  // never drift apart again the way Massa Leve's did.
+  const blockedByBomb = bombAt(r, c) && !(h && hasAlDente(h));
+  if (h && hasMassaLeve(h)) return (t === T_FLOOR || isDestructible(t)) && !blockedByBomb;
+  return t === T_FLOOR && !blockedByBomb;
 }
 
 function moveActor(a, h) {
@@ -1463,38 +1682,81 @@ function moveActor(a, h) {
   positionActor(a.el, a.c, a.r);
 }
 
+// SPEED REWORK (2026-07-23): Speed is now tiles-moved-per-SECOND (was an
+// energy-drain-reduction modifier). aiTick() runs every AI_MS=500ms (2
+// ticks/sec), so a per-actor fractional movement-budget accumulator is the
+// natural fit: each tick adds `speed * (AI_MS/1000)` tiles' worth of
+// movement, and whole tiles are consumed one at a time (re-checking
+// canWalk() at every individual step — never skipped/teleported past an
+// obstacle mid multi-tile move). A slow Rango (speed=1) adds 0.5
+// tiles/tick, taking 2 ticks to afford its first step; a fast one
+// (speed=20, the current stat-table ceiling) adds 10 tiles' worth in a
+// SINGLE tick. Two defensive safety caps (flagged per the explicit ask —
+// this is a real technical risk given how wide the speed range is):
+//   - MOVE_BUDGET_CAP bounds the STORED budget itself, so a Rango that's
+//     been completely blocked for a long stretch can't silently bank an
+//     unbounded amount of pent-up movement that would otherwise unleash a
+//     huge burst of steps the instant it becomes unblocked.
+//   - MOVE_STEPS_PER_TICK_CAP bounds the per-tick while-loop directly (independent
+//     of budget size), so this can never become a runaway/infinite loop
+//     even if something upstream is wrong — set comfortably above the
+//     theoretical max of 10 steps/tick at speed=20.
+const MOVE_BUDGET_CAP = 20;
+const MOVE_STEPS_PER_TICK_CAP = 25;
+
+// shared by both plant-check call sites below: true only when the actor's
+// OWN tile is empty floor, a destructible is adjacent, cooldown is ready,
+// nothing already sits on this tile, the wave isn't mid-regen, AND this
+// Rango hasn't already hit its Bombas (max simultaneous bombs) cap — the
+// one genuinely new gating condition Bombas adds to planting.
+function canPlantHere(h, a) {
+  const nearCrate = tileAt(a.r, a.c) === T_FLOOR &&
+    DIRS.some(([dr, dc]) => isDestructible(tileAt(a.r + dr, a.c + dc)));
+  return nearCrate && a.cd === 0 && !bombAt(a.r, a.c) && !waveRegen &&
+    bombCountFor(h.id) < h.bombCapacity;
+}
+
 function aiTick() {
   for (const idStr of Object.keys(actors)) {
     const id = Number(idStr);
     const h = state.heroes.find(x => x.id === id);
     if (!h || h.mode !== 'work') { removeActor(id); continue; }
+    // ENERGY GATE (2026-07-23 fix): plantBomb()'s cost floors at 0 and never
+    // refuses to plant on insufficient energy — the old continuous-drain
+    // economyTick() used to auto-rest a working hero the instant it hit 0
+    // energy, and removing that drain (energy model rework) silently
+    // deleted the only place that ever happened. Without this, a hero at 0
+    // energy would just keep planting bombs for free forever, making
+    // Stamina/energy purely decorative once drained. Auto-rest here instead
+    // — this is where energy is actually spent now, so it's the right place
+    // to enforce the same "can't work at 0 energy" rule the old code had.
+    if (h.energy <= 0) { h.mode = 'rest'; removeActor(id); continue; }
     const a = actors[id];
     if (a.cd > 0) a.cd--;
-    // Cafeinado no longer affects movement/pathing speed AT ALL (master
-    // spec #4 — its old double-movement-step mechanic is removed entirely;
-    // Cafeinado's real effect now is purely the 2x energy recovery
-    // multiplier, applied in economyTick()/simulate() instead). Always a
-    // single step per tick now, for every Rango.
-    const steps = 1;
-    for (let i = 0; i < steps; i++) {
-      // BUG FIX (2026-07-22, user correction — supersedes the previous
-      // "onMesa" partial fix): a Rango can NEVER plant while standing on
-      // top of ANY prop — Mesa Fixa, Mesa Variável, Baú, or Jaula — full
-      // stop, for every Rango regardless of skills. Planting now requires
-      // the Rango's own tile to be plain empty floor; the only way to bomb
-      // a destructible is from an adjacent empty tile via blast radius
-      // (unchanged, below). This removes the old "standing directly on a
-      // Baú/Jaula can plant from there" allowance entirely — Massa Leve can
-      // still walk/phase THROUGH Baú/Mesa Variável/Jaula while pathing
-      // (canWalk() is untouched), it just now has to route itself onto an
-      // empty tile before it's allowed to plant.
-      const nearCrate = tileAt(a.r, a.c) === T_FLOOR &&
-        DIRS.some(([dr, dc]) => isDestructible(tileAt(a.r + dr, a.c + dc)));
-      if (nearCrate && a.cd === 0 && !bombAt(a.r, a.c) && !waveRegen) {
+
+    a.moveBudget = Math.min(MOVE_BUDGET_CAP, (a.moveBudget || 0) + h.speed * (AI_MS / 1000));
+
+    // Planting is NEVER gated by movement budget (it isn't movement) —
+    // checked first, unconditionally, exactly like before this rework.
+    if (canPlantHere(h, a)) {
+      plantBomb(h, a);
+      continue;
+    }
+    // Not plantable from the current tile: spend the movement budget one
+    // tile at a time, re-checking plant-eligibility after EACH step so a
+    // fast Rango naturally stops the instant it reaches a plantable spot
+    // within the same tick, rather than always "overshooting" every tick.
+    let stepsThisTick = 0;
+    while (a.moveBudget >= 1 && stepsThisTick < MOVE_STEPS_PER_TICK_CAP) {
+      const beforeKey = a.r + ',' + a.c;
+      moveActor(a, h);
+      stepsThisTick++;
+      a.moveBudget -= 1;
+      if (beforeKey === a.r + ',' + a.c) break; // genuinely blocked (no open tile) — stop consuming budget this tick
+      if (canPlantHere(h, a)) {
         plantBomb(h, a);
         break;
       }
-      moveActor(a, h);
     }
   }
   for (const b of [...bombs]) {
@@ -1532,7 +1794,21 @@ function explode(b) {
       boomAt(r, c);
       const chained = bombs.find(x => x.r === r && x.c === c);
       if (chained) explode(chained);
-      if (isDestructible(t)) { hitTile(r, c, b); break; }
+      if (isDestructible(t)) {
+        hitTile(r, c, b);
+        // Espetinho (NEW 2026-07-23): pierces through Baús specifically —
+        // ONLY T_CHEST, per the skill's exact wording ("atravessa baús") —
+        // and keeps advancing in this direction instead of stopping, up to
+        // the blast-radius limit (the `s <= b.radius` loop bound) or an
+        // indestructible obstacle (the `isBlockingObstacle` check above,
+        // still evaluated every step). Mesa Variável (T_OBSTACLE) and
+        // Jaula (T_JAULA) are NOT named by the skill's wording, so they
+        // still stop/absorb the blast exactly like the default (unpierced)
+        // behavior — flagged assumption, since the user only ever said
+        // "baús" specifically.
+        if (b.espetinho && t === T_CHEST) continue;
+        break;
+      }
     }
   }
   // Temperamental: each blast also chains to 5 random OTHER valid targets
@@ -2226,6 +2502,9 @@ function spriteHtml(h) {
   const skills =
     (hasMassaLeve(h) ? `<span class="sp-skill sk-ml" title="${SKILL_DEFS.MASSA_LEVE.label}: ${SKILL_DEFS.MASSA_LEVE.text}">${SKILL_DEFS.MASSA_LEVE.icon}</span>` : '') +
     (hasCafeinado(h) ? `<span class="sp-skill sk-cf" title="${SKILL_DEFS.CAFEINADO.label}: ${SKILL_DEFS.CAFEINADO.text}">${SKILL_DEFS.CAFEINADO.icon}</span>` : '') +
+    (hasSustancia(h) ? `<span class="sp-skill sk-su" title="${SKILL_DEFS.SUSTANCIA.label}: ${SKILL_DEFS.SUSTANCIA.text}">${SKILL_DEFS.SUSTANCIA.icon}</span>` : '') +
+    (hasEspetinho(h) ? `<span class="sp-skill sk-es" title="${SKILL_DEFS.ESPETINHO.label}: ${SKILL_DEFS.ESPETINHO.text}">${SKILL_DEFS.ESPETINHO.icon}</span>` : '') +
+    (hasAlDente(h) ? `<span class="sp-skill sk-ad" title="${SKILL_DEFS.AL_DENTE.label}: ${SKILL_DEFS.AL_DENTE.text}">${SKILL_DEFS.AL_DENTE.icon}</span>` : '') +
     (hasFolhadoDeOuro(h) ? `<span class="sp-skill sk-fo" title="${SKILL_DEFS.FOLHADO_DE_OURO.label}: ${SKILL_DEFS.FOLHADO_DE_OURO.text}">${SKILL_DEFS.FOLHADO_DE_OURO.icon}</span>` : '') +
     (hasTemperamental(h) ? `<span class="sp-skill sk-tp" title="${SKILL_DEFS.TEMPERAMENTAL.label}: ${SKILL_DEFS.TEMPERAMENTAL.text}">${SKILL_DEFS.TEMPERAMENTAL.icon}</span>` : '');
   const char = HERO_CHARACTERS.includes(h.character) ? h.character : HERO_CHARACTERS[0];
@@ -2236,6 +2515,9 @@ function skillText(h) {
   const s = [];
   if (hasMassaLeve(h)) s.push(SKILL_DEFS.MASSA_LEVE.icon + ' ' + SKILL_DEFS.MASSA_LEVE.label);
   if (hasCafeinado(h)) s.push(SKILL_DEFS.CAFEINADO.icon + ' ' + SKILL_DEFS.CAFEINADO.label);
+  if (hasSustancia(h)) s.push(SKILL_DEFS.SUSTANCIA.icon + ' ' + SKILL_DEFS.SUSTANCIA.label);
+  if (hasEspetinho(h)) s.push(SKILL_DEFS.ESPETINHO.icon + ' ' + SKILL_DEFS.ESPETINHO.label);
+  if (hasAlDente(h)) s.push(SKILL_DEFS.AL_DENTE.icon + ' ' + SKILL_DEFS.AL_DENTE.label);
   if (hasFolhadoDeOuro(h)) s.push(SKILL_DEFS.FOLHADO_DE_OURO.icon + ' ' + SKILL_DEFS.FOLHADO_DE_OURO.label);
   if (hasTemperamental(h)) s.push(SKILL_DEFS.TEMPERAMENTAL.icon + ' ' + SKILL_DEFS.TEMPERAMENTAL.label);
   return s.join(' · ');
@@ -2245,13 +2527,16 @@ function skillBadgesHtml(h) {
   const badges = [];
   if (hasMassaLeve(h)) badges.push(`<span class="skill-pill sk-massaleve" title="${SKILL_DEFS.MASSA_LEVE.label}">${SKILL_DEFS.MASSA_LEVE.icon}</span>`);
   if (hasCafeinado(h)) badges.push(`<span class="skill-pill sk-cafeinado" title="${SKILL_DEFS.CAFEINADO.label}">${SKILL_DEFS.CAFEINADO.icon}</span>`);
+  if (hasSustancia(h)) badges.push(`<span class="skill-pill sk-sustancia" title="${SKILL_DEFS.SUSTANCIA.label}">${SKILL_DEFS.SUSTANCIA.icon}</span>`);
+  if (hasEspetinho(h)) badges.push(`<span class="skill-pill sk-espetinho" title="${SKILL_DEFS.ESPETINHO.label}">${SKILL_DEFS.ESPETINHO.icon}</span>`);
+  if (hasAlDente(h)) badges.push(`<span class="skill-pill sk-aldente" title="${SKILL_DEFS.AL_DENTE.label}">${SKILL_DEFS.AL_DENTE.icon}</span>`);
   if (hasFolhadoDeOuro(h)) badges.push(`<span class="skill-pill sk-folhadodeouro" title="${SKILL_DEFS.FOLHADO_DE_OURO.label}">${SKILL_DEFS.FOLHADO_DE_OURO.icon}</span>`);
   if (hasTemperamental(h)) badges.push(`<span class="skill-pill sk-temperamental" title="${SKILL_DEFS.TEMPERAMENTAL.label}">${SKILL_DEFS.TEMPERAMENTAL.icon}</span>`);
   return badges.join('');
 }
 
 function energyBarHtml(h) {
-  const maxE = RARITY_CONF[h.rarity].maxEnergy;
+  const maxE = maxEnergyFor(h);
   const pct = Math.round((h.energy / maxE) * 100);
   return `
     <div class="energy-bar"><div class="fill ${pct < 25 ? 'low' : ''}" data-energy-fill="${h.id}" style="width:${pct}%"></div></div>
@@ -2276,8 +2561,8 @@ function heroCardHtml(h, opts) {
       </div>
     </div>
     <div class="hero-stats">
-      💪 Power ${h.power} &nbsp; 💥 Range ${h.range} &nbsp; 👟 Speed ${h.speed}<br>
-      🏅 Level ${h.level} &nbsp; ⛏️ ${mineRate(h).toFixed(2)} Food Coins/s &nbsp; ${working ? '<b style="color:var(--accent2)">WORKING</b>' : 'Resting'}
+      💪 Poder ${h.power} &nbsp; 📏 Tamanho ${blastRadius(h)} &nbsp; 👟 Speed ${h.speed} &nbsp; 💣 Bombas ${h.bombCapacity} &nbsp; ⚡ Stamina ${h.stamina}<br>
+      🏅 Level ${h.level} &nbsp; ⛏️ ${mineRate(h).toFixed(2)} dmg/s &nbsp; ${working ? '<b style="color:var(--accent2)">WORKING</b>' : 'Resting'}
       ${skillText(h) ? `<br>✨ ${skillText(h)}` : ''}
     </div>
     ${energyBarHtml(h)}
@@ -2327,11 +2612,11 @@ function renderHunt() {
   set('hud-mult', '×' + waveMult().toFixed(2));
   set('hud-crates', `${cratesLeft} / ${cratesTotal}`);
   set('hud-workers', `${working.length} / ${MAX_WORKERS}`);
-  set('hud-rate', totalRate.toFixed(2) + ' Food Coins/s');
+  set('hud-rate', totalRate.toFixed(2) + ' dmg/s');
   set('hud-recovery', recoveryRate().toFixed(2) + ' ⚡/s');
   document.getElementById('bombers').innerHTML = working.length
     ? working.map(h => {
-        const maxE = RARITY_CONF[h.rarity].maxEnergy;
+        const maxE = maxEnergyFor(h);
         const pct = Math.round((h.energy / maxE) * 100);
         const cycle = ((cooldownTicks(h) + FUSE_TICKS) * AI_MS / 1000).toFixed(1);
         const badges = skillBadgesHtml(h);
@@ -2346,8 +2631,8 @@ function renderHunt() {
             <div class="bomber-stats">
               <span title="Blast radius">💥 ${blastRadius(h)}</span>
               <span title="Bomb cycle (fuse + cooldown)">⏱️ ${cycle}s</span>
-              <span title="Mining rate">⛏️ ${mineRate(h).toFixed(1)}/s</span>
-              ${h.ascendCount > 0 ? `<span class="bomber-ascend" title="Ascension #${h.ascendCount} — permanent mineRate multiplier">🌌 ×${ascendMult(h).toFixed(2)}</span>` : ''}
+              <span title="Damage rate">⛏️ ${mineRate(h).toFixed(1)} dmg/s</span>
+              ${h.ascendCount > 0 ? `<span class="bomber-ascend" title="Ascension #${h.ascendCount} — permanent damage multiplier">🌌 ×${ascendMult(h).toFixed(2)}</span>` : ''}
             </div>
             ${badges ? `<div class="bomber-skills">${badges}</div>` : ''}
             <div class="energy-bar"><div class="fill ${pct < 25 ? 'low' : ''}" style="width:${pct}%"></div></div>
@@ -2376,7 +2661,11 @@ function sortedHeroes() {
 // by a flat ceiling, then each's share of the summed total) — it's a
 // decorative "which of my 4 stats leads" indicator, not a balance number.
 const FF_STAT_COLORS = { power: '#ff6f6f', speed: '#5ab0ff', bombs: '#ff9a3c', blast: '#4fd675' };
-const FF_STAT_MAX = { power: 6000, speed: 10, bombs: 24, blast: 8 };
+// power/speed/blast ceilings rescaled 2026-07-23 for the new flat 5-stat
+// system (old scale assumed power up to ~5000; new RARITY_CONF tops out at
+// 20 for Poder/Speed/Stamina, 6 base Tamanho/+1 leveling bonus, 6 Bombas).
+// Still purely decorative proportional-share numbers, not balance values.
+const FF_STAT_MAX = { power: 40, speed: 20, bombs: 24, blast: 8 };
 
 function ffBombsPerMin(h) {
   const cycleSeconds = (cooldownTicks(h) + FUSE_TICKS) * AI_MS / 1000;
@@ -2397,7 +2686,7 @@ function ffAttributeSegments(h) {
 
 function ffStatusDotClass(h) {
   if (h.mode !== 'work') return 'ff-dot-rest';
-  const maxE = RARITY_CONF[h.rarity].maxEnergy;
+  const maxE = maxEnergyFor(h);
   return (h.energy / maxE) < 0.25 ? 'ff-dot-low' : 'ff-dot-work';
 }
 
@@ -2405,7 +2694,7 @@ function ffStatusDotClass(h) {
 // flag "this hero has at least one real skill" instead of being random
 function ffHeroCardHtml(h) {
   const segments = ffAttributeSegments(h);
-  const hasAnySkill = hasMassaLeve(h) || hasCafeinado(h) || hasFolhadoDeOuro(h) || hasTemperamental(h);
+  const hasAnySkill = hasMassaLeve(h) || hasCafeinado(h) || hasSustancia(h) || hasEspetinho(h) || hasAlDente(h) || hasFolhadoDeOuro(h) || hasTemperamental(h);
   return `
   <button type="button" class="ff-card r-${h.rarity}${selectedInventoryHeroId === h.id ? ' ff-card-selected' : ''}" data-select-hero="${h.id}" aria-pressed="${selectedInventoryHeroId === h.id}">
     <div class="ff-card-top">
@@ -2427,6 +2716,9 @@ function ffSkillCards(h) {
   const skills = [];
   if (hasMassaLeve(h)) skills.push({ icon: SKILL_DEFS.MASSA_LEVE.icon, name: SKILL_DEFS.MASSA_LEVE.label });
   if (hasCafeinado(h)) skills.push({ icon: SKILL_DEFS.CAFEINADO.icon, name: SKILL_DEFS.CAFEINADO.label });
+  if (hasSustancia(h)) skills.push({ icon: SKILL_DEFS.SUSTANCIA.icon, name: SKILL_DEFS.SUSTANCIA.label });
+  if (hasEspetinho(h)) skills.push({ icon: SKILL_DEFS.ESPETINHO.icon, name: SKILL_DEFS.ESPETINHO.label });
+  if (hasAlDente(h)) skills.push({ icon: SKILL_DEFS.AL_DENTE.icon, name: SKILL_DEFS.AL_DENTE.label });
   if (hasFolhadoDeOuro(h)) skills.push({ icon: SKILL_DEFS.FOLHADO_DE_OURO.icon, name: SKILL_DEFS.FOLHADO_DE_OURO.label });
   if (hasTemperamental(h)) skills.push({ icon: SKILL_DEFS.TEMPERAMENTAL.icon, name: SKILL_DEFS.TEMPERAMENTAL.label });
   if (!skills.length) {
@@ -2472,7 +2764,7 @@ function renderInventoryDetails() {
     </div>`;
     return;
   }
-  const maxE = RARITY_CONF[h.rarity].maxEnergy;
+  const maxE = maxEnergyFor(h);
   const starPerHour = mineRate(h) * 3600;
   const bcoinPerHour = starPerHour / EXCHANGE_RATE;
   const atMax = h.level >= MAX_LEVEL;
@@ -2564,7 +2856,7 @@ function updateInventoryLive() {
   if (selectedInventoryHeroId == null) return;
   const h = state.heroes.find(x => x.id === selectedInventoryHeroId);
   if (!h) { renderInventoryDetails(); return; }
-  const maxE = RARITY_CONF[h.rarity].maxEnergy;
+  const maxE = maxEnergyFor(h);
   const chip = document.getElementById('ff-energy-chip');
   if (chip) chip.textContent = `⚡ ${Math.floor(h.energy)}/${maxE}`;
   const atMax = h.level >= MAX_LEVEL;
@@ -2884,7 +3176,7 @@ function showLegendModal() {
         <span class="legend-sprite">${spriteHtml({ rarity: r, character: HERO_CHARACTERS[i % HERO_CHARACTERS.length] })}</span>
         <div>
           <span class="rarity-badge rarity-${r}">${rLabel(r)}</span>
-          <div class="muted">💪 Power ${c.power[0]}–${c.power[1]} · 💥 Range ${c.range[0]}–${c.range[1]} · ⚡ Max energy ${c.maxEnergy}</div>
+          <div class="muted">💪 Poder ${c.power[0]}–${c.power[1]} · 📏 Tamanho ${c.range[0]}–${c.range[1]} · 👟 Speed ${c.speed[0]}–${c.speed[1]} · 💣 Bombas ${c.bombas[0]}–${c.bombas[1]} · ⚡ Stamina ${c.stamina[0]}–${c.stamina[1]} (Energy ${c.stamina[0] * 50}–${c.stamina[1] * 50})</div>
           <div class="muted">${RARITY_INFO[r]}</div>
         </div>
       </div>`;
@@ -2913,7 +3205,7 @@ function showLegendModal() {
       <div><b>Mesa Variável</b><div class="muted">${MESA_VARIAVEL_HP} HP, destructible obstacle — pays no Food Coins, but clears the path and is a valid Temperamental chain target.</div></div>
     </div>
     <h3 style="margin-top:16px">✨ Skills básicos</h3>
-    <p class="muted" style="margin-bottom:8px">Rolled independently per category (Basic/Power) at Rango creation — the chance to roll at least one, and the chance to roll BOTH, both climb with rarity. See the rarity guide above for the exact odds per tier.</p>
+    <p class="muted" style="margin-bottom:8px">5 possible Basic skills total — each roll picks uniformly among them (the second roll excludes whichever one the first roll already picked, so a Rango never gets the same Basic skill twice). Rolled independently per category (Basic/Power) at Rango creation — the chance to roll at least one, and the chance to roll BOTH, both climb with rarity. See the rarity guide above for the exact odds per tier.</p>
     <div class="legend-row">
       <span class="legend-sprite">${SKILL_DEFS.MASSA_LEVE.icon}</span>
       <div><b>${SKILL_DEFS.MASSA_LEVE.label}</b><div class="muted">${SKILL_DEFS.MASSA_LEVE.text}</div></div>
@@ -2921,6 +3213,18 @@ function showLegendModal() {
     <div class="legend-row">
       <span class="legend-sprite">${SKILL_DEFS.CAFEINADO.icon}</span>
       <div><b>${SKILL_DEFS.CAFEINADO.label}</b><div class="muted">${SKILL_DEFS.CAFEINADO.text}</div></div>
+    </div>
+    <div class="legend-row">
+      <span class="legend-sprite">${SKILL_DEFS.SUSTANCIA.icon}</span>
+      <div><b>${SKILL_DEFS.SUSTANCIA.label}</b><div class="muted">${SKILL_DEFS.SUSTANCIA.text}</div></div>
+    </div>
+    <div class="legend-row">
+      <span class="legend-sprite">${SKILL_DEFS.ESPETINHO.icon}</span>
+      <div><b>${SKILL_DEFS.ESPETINHO.label}</b><div class="muted">${SKILL_DEFS.ESPETINHO.text}</div></div>
+    </div>
+    <div class="legend-row">
+      <span class="legend-sprite">${SKILL_DEFS.AL_DENTE.icon}</span>
+      <div><b>${SKILL_DEFS.AL_DENTE.label}</b><div class="muted">${SKILL_DEFS.AL_DENTE.text}</div></div>
     </div>
     <h3 style="margin-top:16px">👑 Skills de poder</h3>
     <p class="muted" style="margin-bottom:8px">Only ever rolled from Chef Renomado upward — never on Caseiro/Temperado/Gourmet. See the rarity guide above for the exact odds per tier.</p>
@@ -3011,8 +3315,8 @@ function renderRevealCard(h) {
       <div class="reveal-name">${h.name}</div>
       <span class="rarity-badge rarity-${h.rarity}">${rLabel(h.rarity)}</span>
       <div class="reveal-stats">
-        💪 ${h.power} &nbsp; 💥 ${h.range} &nbsp; 👟 ${h.speed} &nbsp; ⚡ ${RARITY_CONF[h.rarity].maxEnergy}<br>
-        ⛏️ ${mineRate(h).toFixed(2)} Food Coins/s
+        💪 ${h.power} &nbsp; 📏 ${h.range} &nbsp; 👟 ${h.speed} &nbsp; 💣 ${h.bombCapacity} &nbsp; ⚡ ${maxEnergyFor(h)}<br>
+        ⛏️ ${mineRate(h).toFixed(2)} dmg/s
       </div>
       ${skillText(h) ? `<div class="reveal-skills">✨ ${skillText(h)}</div>` : ''}
     </div>`;

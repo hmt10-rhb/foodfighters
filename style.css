@@ -1240,9 +1240,19 @@ select {
   text-shadow: 0 1px 2px #000;
   z-index: 2;
 }
-.sp-skill.sk-cf { right: auto; left: -10%; }
-.sp-skill.sk-fo { top: auto; bottom: -10%; right: -12%; }
-.sp-skill.sk-tp { top: auto; bottom: -10%; right: auto; left: -12%; }
+/* Positioned structurally (nth-of-type), not by skill name: spriteHtml()
+   emits up to 2 Basic-category badges (now picked from 5 possible skills —
+   massaLeve/cafeinado/sustancia/espetinho/alDente — instead of the old
+   fixed 2) followed by up to 2 Power-category badges (folhadoDeOuro/
+   temperamental), always in that relative order. Name-based classes
+   (sk-cf/sk-fo/sk-tp) would collide whenever 2 of the 5 Basic skills that
+   aren't massaLeve/cafeinado land together (e.g. Sustância + Espetinho both
+   defaulting to the same top-right corner) — nth-of-type sidesteps that
+   entirely since it just positions "1st badge shown" / "2nd badge shown"
+   regardless of which skill it is. */
+.sp-skill:nth-of-type(2) { right: auto; left: -10%; }
+.sp-skill:nth-of-type(3) { top: auto; bottom: -10%; right: -12%; }
+.sp-skill:nth-of-type(4) { top: auto; bottom: -10%; right: auto; left: -12%; }
 /* Live arena only: hide the skill badges during gameplay (per the user's
    ask), while every OTHER context that reuses the same spriteHtml() output
    (Inventory cards, the details panel, pull-reveal cards, the bombers side
