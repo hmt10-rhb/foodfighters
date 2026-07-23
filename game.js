@@ -3025,6 +3025,55 @@ function levelUp(id) {
   renderInventory();
 }
 
+// Generic yes/no confirmation (2026-07-23, added for the shop's new
+// buy-confirmation step — see confirmBuyPack() below). Checked first for an
+// existing reusable confirm-modal to build on: the hard-reset button
+// (reset-btn) uses the plain native confirm() dialog, and no trace of an
+// "old Prestige confirm modal" remains anywhere in this file — so there
+// wasn't actually a modal-based pattern to copy, only the native-dialog one
+// this is explicitly meant to AVOID (for visual consistency with the rest
+// of the game's own UI chrome). Built on the SAME shared #modal-backdrop/
+// #modal-body system every other modal in this file already uses (legend,
+// pack/Jaula reveal, admin grant, wheel's coin reveal, etc.) instead, so it
+// looks native to this game rather than like a native OS dialog. Generic on
+// purpose (message + a callback), not pack-purchase-specific, so any FUTURE
+// "are you sure?" moment in this game can reuse it the same way.
+let pendingConfirmAction = null;
+function showConfirmModal(message, onConfirm, opts) {
+  pendingConfirmAction = onConfirm;
+  const confirmLabel = (opts && opts.confirmLabel) || 'Confirmar';
+  const cancelLabel = (opts && opts.cancelLabel) || 'Cancelar';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="confirm-modal">
+      <p class="confirm-message">${message}</p>
+      <div class="confirm-actions">
+        <button type="button" class="btn" id="confirm-modal-yes">${confirmLabel}</button>
+        <button type="button" class="btn btn-ghost" id="confirm-modal-no">${cancelLabel}</button>
+      </div>
+    </div>`;
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+
+// Shop buy-confirmation (2026-07-23, user-requested — a single click used
+// to spend Chef Gems and roll the pack immediately, with no confirmation
+// step at all). This is now what #pack-grid's buy button actually calls;
+// buyPack() itself (the real purchase — currency deduction + rolls) is
+// completely UNCHANGED below, only reachable through here (or directly, for
+// tests) — never skips its own currency check either way, so a stale/
+// re-opened confirm modal can never spend currency the player no longer has.
+function confirmBuyPack(idx) {
+  const pack = PACKS[idx];
+  if (!pack) return;
+  if (state.bcoin < pack.cost) {
+    toast(`Not enough Chef Gems — need ${fmtCurrency(pack.cost)}.`);
+    return;
+  }
+  showConfirmModal(
+    `Comprar o Pack x${pack.size} por ${fmtCurrency(pack.cost)} Chef Gems?`,
+    () => buyPack(idx)
+  );
+}
+
 function buyPack(idx) {
   const pack = PACKS[idx];
   if (state.bcoin < pack.cost) {
@@ -4089,15 +4138,47 @@ function updateInventoryLive() {
   }
 }
 
+// Pack-card redesign (2026-07-23, user-requested — real product art now
+// exists per pack):
+// 1) Real art at assets/packs/pack_${size}.png is the new visual
+//    centerpiece — matches PACKS' own `size` field exactly, per the naming
+//    the user was told to use, so this needs zero per-pack special-casing.
+//    The files may not exist yet for any/all packs, so this follows the
+//    SAME onerror-fallback shape spriteHtml() already established for
+//    Picante art: the <img> is what shows by default; if it 404s, onerror
+//    hides it and reveals a sibling fallback element instead (spriteHtml()'s
+//    own fallback swaps to a DIFFERENT image, which doesn't apply here since
+//    there's no second "always exists" pack image to fall back to — falling
+//    back to the ORIGINAL emoji-title look instead, exactly as suggested).
+// 2) The rarity-odds list moved off the card face entirely, behind a small
+//    "❓" corner button — reuses showLegendModal() verbatim (the exact same
+//    modal the header's own #legend-btn already opens, which documents each
+//    rarity's SHOP_RARITY_WEIGHTS odds as part of its fuller rarity guide)
+//    rather than building a new redundant popover. Click-to-open, not a
+//    hover tooltip: #legend-btn is this game's own established convention
+//    for "small ❓ icon reveals more info", already click-based, so this
+//    matches it instead of introducing a second, inconsistent "info"
+//    interaction style.
+// 3) The buy button shows just the Chef Gems cost — the SAME cur-icon/
+//    chef_coin.png image the header currency pill already uses, followed
+//    by the plain number, no other words at all (SIMPLIFIED 2026-07-23,
+//    user feedback — was "Comprar — X Chef Gems" briefly, cut down to just
+//    the icon+number per explicit follow-up request). Still goes through
+//    confirmBuyPack() (a real confirm-modal step) instead of spending
+//    currency on the very first click — see confirmBuyPack()/
+//    showConfirmModal() above; the CONFIRM MODAL's own wording (which pack,
+//    which price) is untouched, only this button label got simplified.
 function renderShop() {
   document.getElementById('pack-grid').innerHTML = PACKS.map((p, i) => `
     <div class="pack-card">
-      <h3>${'💣'.repeat(Math.min(4, Math.ceil(p.size / 4)))} x${p.size} Pack</h3>
-      <div class="odds">
-        ${RARITIES.map(r => `<span class="rarity-badge rarity-${r}">${rTag(r)}</span> ${fmtPct(SHOP_RARITY_WEIGHTS[r])}`).join('<br>')}
+      <button type="button" class="pack-info-btn" data-pack-info title="Ver chances de cada raridade">❓</button>
+      <div class="pack-img-wrap">
+        <img class="pack-img" src="assets/packs/pack_${p.size}.png" alt="Pack x${p.size}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+        <div class="pack-img-fallback" style="display:none;">
+          <h3>${'💣'.repeat(Math.min(4, Math.ceil(p.size / 4)))} x${p.size} Pack</h3>
+        </div>
       </div>
-      <div class="price">${fmtCurrency(p.cost)} Chef Gems</div>
-      <button class="btn" data-pack="${i}" ${state.bcoin < p.cost ? 'disabled' : ''}>Buy pack</button>
+      <button class="btn pack-buy-btn" data-pack="${i}" ${state.bcoin < p.cost ? 'disabled' : ''}><img class="cur-icon pack-buy-icon" src="assets/coins/chef_coin.png" alt="Chef Gems">${fmtCurrency(p.cost)}</button>
     </div>`).join('');
 }
 
@@ -4869,6 +4950,70 @@ function showLegendModal() {
   document.getElementById('modal-backdrop').classList.remove('hidden');
 }
 
+// Patch notes — alpha launch (2026-07-23). Static player-facing explanation
+// of every feature actually live in production right now. Deliberately
+// leaves out anything disabled/in-progress (Fusão Culinária, Lab, Casas'
+// real mechanic) so players don't go looking for something that isn't
+// there yet. Update this text by hand whenever a feature ships or changes —
+// there's no other source of truth for it in the game itself.
+function showPatchNotesModal() {
+  document.getElementById('modal-body').innerHTML = `
+    <h3>📜 Food Fighters — Versão Alpha</h3>
+    <p class="muted">Bem-vindo à primeira versão pública de Food Fighters! O jogo ainda está em construção, então algumas coisas vão mudar, ser ajustadas ou ganhar novidades com o tempo. Este texto explica tudo que já está funcionando hoje.</p>
+
+    <h3 style="margin-top:16px">Como o jogo funciona</h3>
+    <p class="muted">Você monta um time de personagens chamados <b>Rangos</b>. Cada Rango trabalha sozinho, andando pelo mapa e plantando bombas pra quebrar mesas e baús. Quebrar um baú dá moedas. De vez em quando aparece uma Jaula, que solta um Rango novo em vez de moeda.</p>
+    <p class="muted">Todo Rango se cansa: ele trabalha até a energia acabar, descansa até recuperar, e volta a trabalhar sozinho. Você não precisa ficar clicando — o jogo roda mesmo com a aba fechada, e quando você volta o progresso que ele fez enquanto você estava fora é calculado automaticamente.</p>
+    <p class="muted">Quando todos os baús do mapa são quebrados, um mapa novo é sorteado.</p>
+
+    <h3 style="margin-top:16px">Seus Rangos</h3>
+    <p class="muted">Existem 12 personagens diferentes (visual apenas — não muda como eles jogam). Cada Rango tem uma <b>raridade</b>, que define o quão forte ele nasce, da mais fraca pra mais forte: Caseiro → Temperado → Gourmet → Especialidade da Casa → Comida de Buteco → Receita de Vó.</p>
+    <p class="muted">Cada Rango tem 5 características: <b>Poder</b> (dano por bomba), <b>Speed</b> (velocidade de movimento), <b>Tamanho</b> (alcance da explosão), <b>Bombas</b> (quantas ao mesmo tempo) e <b>Stamina</b> (quanta energia aguenta antes de descansar). Rangos também sobem de nível, o que aumenta um pouco o Poder.</p>
+
+    <h3 style="margin-top:16px">🌶️ Picante</h3>
+    <p class="muted">Qualquer Rango pode nascer como a variante especial Picante — vem com bônus extra de Poder, Speed e Stamina, e uma celebração própria ao ser revelado. Hoje só vem de Jaula (nunca da loja), e toda Jaula garante um Picante.</p>
+
+    <h3 style="margin-top:16px">Habilidades</h3>
+    <p class="muted">Um Rango pode nascer com até 4 habilidades: <b>Massa Leve</b> (anda por cima de mesas/baús/Jaula), <b>Cafeinado</b> (recupera energia mais rápido descansando), <b>Sustância</b> (chance de plantar bomba de graça), <b>Espetinho</b> (explosão atravessa vários baús em linha), <b>Al Dente</b> (passa por cima de bombas plantadas), <b>Folhado de Ouro</b> (+50% de moeda no que quebra) e <b>Temperamental</b> (atinge alvos aleatórios extras).</p>
+
+    <h3 style="margin-top:16px">Baús</h3>
+    <p class="muted">5 tipos, do mais fraco ao mais forte: Madeira, Ferro, Ouro, Diamante e Especial (esse último só em fases de Mercado Noturno).</p>
+
+    <h3 style="margin-top:16px">Moedas</h3>
+    <p class="muted"><b>Food Coin</b> — ganha jogando, quebrando baús. <b>Chef Gem</b> — compra pacotes de Rango na loja, dá pra converter Food Coin nela. <b>Estrela Michelin</b> — comprada com Pix (dinheiro real), compra VIP e o boost "Mais Apimentado", ou converte em Chef Gem.</p>
+    <p class="muted">A conversão só anda numa direção (nunca volta pra Food Coin/Chef Gem), tudo numa tela só: a <b>Central de Câmbio</b>.</p>
+
+    <h3 style="margin-top:16px">Loja (Supermercado)</h3>
+    <p class="muted">Compra pacotes de Rango com Chef Gem (1, 5, 10 ou 15 de uma vez). A raridade sorteada é sempre aleatória — comprar em pacote maior só economiza tempo, não muda a sorte.</p>
+
+    <h3 style="margin-top:16px">🌟 VIP</h3>
+    <p class="muted">Assinatura paga com Estrela Michelin (planos diário, semanal, mensal). Dá: Rangos voltando sozinhos a trabalhar num % de energia escolhido, +1 Rango podendo trabalhar ao mesmo tempo, e um botão de trocar de mapa a cada 8h sem perder moeda já ganha.</p>
+
+    <h3 style="margin-top:16px">Mais Apimentado</h3>
+    <p class="muted">Boost temporário (Estrela Michelin, de 1h a 24h) que aumenta a chance da Jaula aparecer no mapa.</p>
+
+    <h3 style="margin-top:16px">🌟 Estrela Michelin — como comprar</h3>
+    <p class="muted">Clique no "+" ao lado dela no topo da tela: abre uma calculadora com preço em reais e QR Code de Pix. Pagamento confirmado credita a moeda sozinho, na hora.</p>
+
+    <h3 style="margin-top:16px">Missões</h3>
+    <p class="muted">Na aba Tasks (libera com 15 Rangos): marcos de longo prazo (pagam uma vez) e a Missão Diária (quebrar baús, reseta 18h após o resgate).</p>
+
+    <h3 style="margin-top:16px">Ranking</h3>
+    <p class="muted">Mostra os jogadores com mais moeda minerada, atualizado em tempo real pra todo mundo conectado.</p>
+
+    <h3 style="margin-top:16px">Armário</h3>
+    <p class="muted">Onde você vê todos os seus Rangos, escolhe quem trabalha/descansa e confere detalhes de cada um.</p>
+
+    <h3 style="margin-top:16px">Despensa</h3>
+    <p class="muted">Vitrine das futuras Casas (Tenda, Cabana, Vila, Fortaleza) — dá pra ver, compra ainda desativada.</p>
+
+    <h3 style="margin-top:16px">Sua conta</h3>
+    <p class="muted">Login obrigatório (email e senha), progresso salvo na nuvem — entra de qualquer aparelho com a mesma conta.</p>
+
+    <p class="muted" style="margin-top:16px">Isso é a Alpha. Toda sugestão, bug ou ideia é bem-vinda — o jogo vai continuar mudando a partir do que vocês reportarem.</p>`;
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+
 function showPullModal(heroes, title) {
   document.getElementById('modal-body').innerHTML = `
     <h3>${title || '🎉 You recruited:'}</h3>
@@ -5209,6 +5354,7 @@ function bindEvents() {
   // the mail icon is a real shortcut now, not a placeholder — see
   // updateMailBadge() for the "how many are ready to claim" badge count.
   document.getElementById('mail-btn').addEventListener('click', () => switchTab('tasks'));
+  document.getElementById('patch-notes-btn').addEventListener('click', showPatchNotesModal);
 
   // Honest placeholder — same tone as the Referral stub in Extras (the
   // Automine Package/Club stubs that used to sit alongside it were fully
