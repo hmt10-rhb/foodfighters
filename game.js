@@ -114,11 +114,53 @@ const PICANTE_CHANCE_JAULA_NORMAL = 0.03;
 const PICANTE_CHANCE_JAULA_MERCADO_NOTURNO = 0.30;
 const PICANTE_VISUAL_PLACEHOLDER = 'PICANTE VISUAL — EM BREVE';
 function rollPicante(chance) { return Math.random() < chance; }
-// Future hook only — per the spec's own rule 40 ("don't invent the
-// multiplier yet"), this deliberately applies ZERO stat effect right now.
-// Structured so a later task can fill in a real bonus without touching any
-// other call site: just change what this function returns.
-function applySpicyStatModifier(rango) { return rango; }
+// Picante stat bonus (2026-07-23, real bonus implemented — was a no-op
+// placeholder until now): additive, per-rarity, ONLY on Poder/Speed/Stamina
+// — Tamanho/Bombas are untouched by Picante. Same {min,max} shape and
+// randInt() rolling pattern RARITY_CONF's own base stats already use; a
+// [N,N] pair (min===max) is how a "fixed, not random" bonus from the spec
+// table is represented — randInt(N,N) always returns exactly N, so no
+// separate fixed-vs-range code path is needed.
+const PICANTE_STAT_BONUS = {
+  CASEIRO:          { power: [1, 2], speed: [0, 0], stamina: [1, 1] },
+  TEMPERADO:        { power: [1, 2], speed: [1, 1], stamina: [1, 2] },
+  GOURMET:          { power: [2, 3], speed: [2, 2], stamina: [1, 3] },
+  CHEF_RENOMADO:    { power: [3, 4], speed: [2, 3], stamina: [2, 3] },
+  ESTRELA_MICHELIN: { power: [4, 6], speed: [3, 3], stamina: [3, 4] },
+  RECEITA_DE_VO:    { power: [5, 7], speed: [3, 5], stamina: [3, 5] },
+};
+// Applies the bonus in place and returns the same object (matches the old
+// no-op's return-the-input contract, so every existing call site's
+// `x.isSpicy = rollPicante(...); ...` usage pattern still works if it later
+// chains this call). Only ever meaningful for a hero whose isSpicy is
+// already true by the time this runs — a non-Picante hero is returned
+// completely untouched (early return, not just a zero-bonus roll).
+//
+// Standing project rule (existing Rangos are never migrated when stat
+// systems change): this is called ONLY at the two hero-CREATION call sites
+// (buyPack()'s shop pull, destroyTile()'s Jaula reward), each right after
+// that call site rolls isSpicy for a BRAND NEW hero — never during load()/
+// migration, so an already-existing Picante hero's stats are never touched
+// retroactively by this change.
+//
+// h.energy starts at stamina*50 (maxEnergyFor(h)) inside makeHero(), rolled
+// BEFORE isSpicy is even known (isSpicy is rolled by the caller after
+// makeHero() returns, per makeHero()'s own comment). Since this function
+// runs immediately after that roll, with nothing in between ever reading or
+// spending the brand-new hero's energy, recomputing energy from the
+// now-boosted stamina here produces the exact same observable result as if
+// the bonus had been applied before the original assignment — the hero's
+// starting energy always correctly reflects its boosted max.
+function applySpicyStatModifier(rango) {
+  if (!rango.isSpicy) return rango;
+  const b = PICANTE_STAT_BONUS[rango.rarity];
+  if (!b) return rango;
+  rango.power += randInt(b.power[0], b.power[1]);
+  rango.speed += randInt(b.speed[0], b.speed[1]);
+  rango.stamina += randInt(b.stamina[0], b.stamina[1]);
+  rango.energy = rango.stamina * 50;
+  return rango;
+}
 
 /* ===== Skills — complete replacement of the old Phantom/Swift/Midas/
    Cataclysm system (master spec #4/#5), EXPANDED 2026-07-23 with 3 new
@@ -272,16 +314,51 @@ const HOUSES = [
   { id: 'fortress', name: 'Blast Fortress', emoji: '🏰', cost: 4000, recovery: 3.0 },
 ];
 
+// Tasks reworked 2026-07-23 (explicit user request): the old list was a mix
+// of one-time onboarding nudges (recruit 15, fuse once, own an Epic+) with
+// rewards (500-1500 Food Coins) way out of scale with the current chest
+// economy (chests pay 0.01-3.00 each, a whole map averages ~5.79) — plus
+// 'house1' ("buy any house") had gone permanently uncompletable the moment
+// Despensa disabled house purchases. Replaced entirely with long-term
+// CUMULATIVE milestones on the 3 metrics the user asked for (chests broken,
+// waves/fases cleared, Food Coins farmed), 2 escalating tiers each, every
+// reward kept under the new Daily's 150 (see DAILY_TASK_REWARD below) so the
+// Daily reads as the fastest-repeating, not the biggest, payout.
+// totalChestsBroken is a new lifetime counter (destroyTile()'s chest
+// branch); `wave` is state.wave itself — safe as a monotonic "highest fase
+// reached" proxy now that Prestige (which used to reset it to 1) is gone.
 const TASKS = [
-  { id: 'own15',    name: 'Recruit 15 Rangos',                   reward: 500,  check: s => s.heroes.length >= 15 },
-  { id: 'mine1000', name: 'Mine 1,000 Food Coins (all-time)',   reward: 750,  check: s => s.totalMined >= 1000 },
-  { id: 'fuse1',    name: 'Fuse a Rango in the Fusão Culinária', reward: 1000, check: s => s.fusions >= 1 },
-  { id: 'house1',   name: 'Buy any house',                      reward: 500,  check: s => HOUSES.some(h => s.houses[h.id] > 0) },
-  // Judgment call: remapped from the old "Epic or better" (index 2 of 8) to
-  // GOURMET or better (index 2 of 6) — same relative ladder position.
-  { id: 'epic1',    name: 'Own a Gourmet or better Rango',       reward: 1500, check: s => s.heroes.some(h => RARITIES.indexOf(h.rarity) >= RARITIES.indexOf('GOURMET')) },
+  { id: 'chests250',  name: 'Quebre 250 Baús (total)',         reward: 60,  check: s => (s.totalChestsBroken || 0) >= 250 },
+  { id: 'chests1000', name: 'Quebre 1.000 Baús (total)',       reward: 120, check: s => (s.totalChestsBroken || 0) >= 1000 },
+  { id: 'wave10',     name: 'Alcance a Fase 10',                reward: 50,  check: s => s.wave >= 10 },
+  { id: 'wave30',     name: 'Alcance a Fase 30',                reward: 130, check: s => s.wave >= 30 },
+  { id: 'mine2000',   name: 'Minere 2.000 Food Coins (total)', reward: 70,  check: s => s.totalMined >= 2000 },
+  { id: 'mine8000',   name: 'Minere 8.000 Food Coins (total)', reward: 145, check: s => s.totalMined >= 8000 },
 ];
 const TASKS_UNLOCK_HEROES = 15;
+
+// Missão Diária (2026-07-23, new system): resets every 18h from the last
+// reset, independent of real-world midnight — a player who claims at 3am
+// gets their next window at 9pm, not at the next calendar day. Tracked
+// entirely via state.dailyChestsBroken/dailyResetAt/dailyClaimed (all
+// default-migrated for existing saves via Object.assign(defaultState(),
+// raw) in load(), same pattern every other new field uses). Progress is
+// counted from the SAME destroyTile() chest branch that feeds
+// totalChestsBroken above — one real event, two counters.
+const DAILY_TASK_GOAL = 1000;
+const DAILY_TASK_REWARD = 150;
+const DAILY_RESET_HOURS = 18;
+
+// Called from economyTick() (every 1s) and once at boot — self-heals even
+// if the player leaves the tab open past the 18h mark without reloading.
+function checkDailyReset() {
+  const elapsed = Date.now() - (state.dailyResetAt || 0);
+  if (elapsed >= DAILY_RESET_HOURS * 3600 * 1000) {
+    state.dailyChestsBroken = 0;
+    state.dailyClaimed = false;
+    state.dailyResetAt = Date.now();
+  }
+}
 
 const HERO_EMOJI = ['💣', '🧨', '🎇', '💥', '🔥', '⚡', '🌋', '☄️', '🎆', '🧯'];
 // 12 fixed character portraits, fully decoupled from rarity — any of these 12
@@ -367,6 +444,13 @@ function defaultState() {
     heroes: [],
     houses: { tent: 0, cabin: 0, villa: 0, fortress: 0 },
     tasksClaimed: [],
+    // Missão Diária (2026-07-23) — see checkDailyReset()/DAILY_TASK_GOAL.
+    // dailyResetAt defaults to "now" so a fresh account's first window is a
+    // full 18h, not zero.
+    totalChestsBroken: 0,
+    dailyChestsBroken: 0,
+    dailyResetAt: Date.now(),
+    dailyClaimed: false,
     wave: 1,
     activeThemeId: ACTIVE_THEME,
     // mapsInTheme (the old every-50-maps counter) is REMOVED (2026-07-22) —
@@ -2210,6 +2294,7 @@ function destroyTile(r, c, box, folhadoDeOuroBomb) {
     const rarity = rollRarity(JAULA_RARITY_WEIGHTS);
     const freed = makeHero(rarity);
     freed.isSpicy = rollPicante(jaulaPicanteChance());
+    applySpicyStatModifier(freed); // real stat bonus now (2026-07-23) — no-op if not spicy
     state.heroes.push(freed);
     floatLabel(r, c, '🔓 ' + rLabel(rarity) + '!', true);
     cratesLeft = Math.max(0, cratesLeft - 1);
@@ -2239,6 +2324,10 @@ function destroyTile(r, c, box, folhadoDeOuroBomb) {
   const amt = randomBetween(rewardMin, rewardMax) * (folhadoDeOuroBomb ? FOLHADO_DE_OURO_BONUS : 1) * payoutVarianceMult();
   state.starCore += amt;
   state.totalMined += amt;
+  // feeds both the lifetime Tasks milestones and the Missão Diária's
+  // recurring counter — one real chest-break event, two counters
+  state.totalChestsBroken = (state.totalChestsBroken || 0) + 1;
+  state.dailyChestsBroken = (state.dailyChestsBroken || 0) + 1;
   // reward scale is now fractions of a Food Coin (0.01-3.00) — always show
   // 2 decimal places (fmt()'s Math.floor() would print "0" for anything
   // under 1, which is most of this range now)
@@ -2425,6 +2514,7 @@ function buyPack(idx) {
     // pack size only changes how many rolls you get, not the per-roll odds
     const hero = makeHero(rollRarity(SHOP_RARITY_WEIGHTS));
     hero.isSpicy = rollPicante(PICANTE_CHANCE_SHOP); // independent of the rarity roll above
+    applySpicyStatModifier(hero); // real stat bonus now (2026-07-23) — no-op if not spicy
     state.heroes.push(hero);
     pulled.push(hero);
   }
@@ -2616,6 +2706,18 @@ function claimTask(id) {
   toast(`Task complete! +${fmtCurrency(task.reward)} Food Coins`);
   renderHeader();
   renderTasks();
+}
+
+function claimDailyTask() {
+  checkDailyReset();
+  if (state.dailyClaimed || state.dailyChestsBroken < DAILY_TASK_GOAL) return;
+  state.dailyClaimed = true;
+  state.starCore += DAILY_TASK_REWARD;
+  state.totalMined += DAILY_TASK_REWARD;
+  save();
+  toast(`Missão Diária completa! +${fmtCurrency(DAILY_TASK_REWARD)} Food Coins`);
+  renderHeader();
+  renderDailyTask();
 }
 
 /* ============ Etapa 2: meta-progression ============ */
@@ -2910,7 +3012,9 @@ function heroCardHtml(h, opts) {
 // i.e. exactly what the Tasks tab would show as "ready to claim" right now
 function readyTaskCount() {
   if (state.heroes.length < TASKS_UNLOCK_HEROES) return 0;
-  return TASKS.filter(t => !state.tasksClaimed.includes(t.id) && t.check(state)).length;
+  checkDailyReset();
+  const dailyReady = !state.dailyClaimed && state.dailyChestsBroken >= DAILY_TASK_GOAL ? 1 : 0;
+  return TASKS.filter(t => !state.tasksClaimed.includes(t.id) && t.check(state)).length + dailyReady;
 }
 
 function renderHeader() {
@@ -3258,6 +3362,11 @@ function updateTaskButtons() {
     const t = TASKS.find(x => x.id === b.dataset.task);
     b.disabled = state.tasksClaimed.includes(t.id) || !t.check(state);
   });
+  // full re-render, not a targeted button toggle like the loop above — the
+  // countdown text and progress bar both need to visibly tick forward every
+  // second even when no chest broke, so there's no cheaper "just flip
+  // .disabled" version of this one
+  renderDailyTask();
 }
 
 function renderFusion() {
@@ -3332,6 +3441,35 @@ function renderTasks() {
   }).join('');
 }
 
+// Missão Diária — separate render target (#daily-task, above #tasks-body in
+// index.html) since its markup has a progress bar and countdown the plain
+// TASKS list doesn't need. Same 15-Rango unlock gate as the rest of Tasks,
+// for consistency (not a special case).
+function renderDailyTask() {
+  const el = document.getElementById('daily-task');
+  if (!el) return;
+  if (state.heroes.length < TASKS_UNLOCK_HEROES) { el.innerHTML = ''; return; }
+  checkDailyReset();
+  const progress = Math.min(state.dailyChestsBroken, DAILY_TASK_GOAL);
+  const pct = Math.floor((progress / DAILY_TASK_GOAL) * 100);
+  const ready = !state.dailyClaimed && progress >= DAILY_TASK_GOAL;
+  const msLeft = Math.max(0, DAILY_RESET_HOURS * 3600 * 1000 - (Date.now() - state.dailyResetAt));
+  const hLeft = Math.floor(msLeft / 3600000);
+  const mLeft = Math.floor((msLeft % 3600000) / 60000);
+  el.innerHTML = `
+    <div class="task-item daily-task-item ${state.dailyClaimed ? 'done' : ''}">
+      <div class="task-info">
+        <div class="task-name">${state.dailyClaimed ? '✅' : ready ? '🟡' : '🔥'} Missão Diária — Quebre ${fmt(DAILY_TASK_GOAL)} Baús</div>
+        <div class="task-reward">Progresso: ${fmt(progress)}/${fmt(DAILY_TASK_GOAL)} · Recompensa: ${fmtCurrency(DAILY_TASK_REWARD)} Food Coins</div>
+        <div class="daily-task-progress"><span class="daily-task-progress-fill" style="width:${pct}%"></span></div>
+        <div class="task-reward muted">${state.dailyClaimed ? `Próxima missão em ${hLeft}h ${mLeft}m` : `Reseta em ${hLeft}h ${mLeft}m`}</div>
+      </div>
+      ${state.dailyClaimed
+        ? '<span class="muted">Claimed</span>'
+        : `<button class="btn btn-small" id="daily-task-claim" ${ready ? '' : 'disabled'}>Claim</button>`}
+    </div>`;
+}
+
 function renderAll() {
   renderHeader();
   renderHunt();
@@ -3342,6 +3480,7 @@ function renderAll() {
   renderDespensa();
   renderRanking();
   renderTasks();
+  renderDailyTask();
 }
 
 /* ============ Lab rendering ============ */
