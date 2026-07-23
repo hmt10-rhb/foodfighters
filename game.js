@@ -2809,8 +2809,18 @@ function fmtPct(p) {
 // each character's Picante art can be dropped in independently, with no
 // code change needed per character and no broken-image icon for the ones
 // that don't have it yet.
-function spriteHtml(h) {
-  const skills =
+// `opts.showSkillIcons` (2026-07-23, user-flagged): defaults to true so
+// EVERY existing call site (arena actors via positionActor(), grid card,
+// Fusion picker, bomber-list, reveal cards, legend) renders identically to
+// before — only renderInventoryDetails()'s ff-char-wrap call passes
+// { showSkillIcons: false } now, since the detail panel scene has its own
+// dedicated corner skill badges (.ff-scene-skills) making the floating
+// .sp-skill icon over the character's head redundant there specifically.
+// The floating icon during real gameplay (arena) is a deliberately separate,
+// still-wanted at-a-glance indicator — untouched.
+function spriteHtml(h, opts) {
+  const showSkillIcons = !opts || opts.showSkillIcons !== false;
+  const skills = !showSkillIcons ? '' :
     (hasMassaLeve(h) ? `<span class="sp-skill sk-ml" title="${SKILL_DEFS.MASSA_LEVE.label}: ${SKILL_DEFS.MASSA_LEVE.text}">${SKILL_DEFS.MASSA_LEVE.icon}</span>` : '') +
     (hasCafeinado(h) ? `<span class="sp-skill sk-cf" title="${SKILL_DEFS.CAFEINADO.label}: ${SKILL_DEFS.CAFEINADO.text}">${SKILL_DEFS.CAFEINADO.icon}</span>` : '') +
     (hasSustancia(h) ? `<span class="sp-skill sk-su" title="${SKILL_DEFS.SUSTANCIA.label}: ${SKILL_DEFS.SUSTANCIA.text}">${SKILL_DEFS.SUSTANCIA.icon}</span>` : '') +
@@ -3110,7 +3120,7 @@ function renderInventoryDetails() {
       <div class="ff-sky"></div>
       ${h.isSpicy ? `<span class="ff-scene-picante" title="${PICANTE_VISUAL_PLACEHOLDER}">🌶️</span>` : ''}
       <div class="ff-scene-skills">${ffSkillCards(h)}</div>
-      <div class="ff-char-wrap">${spriteHtml(h)}</div>
+      <div class="ff-char-wrap">${spriteHtml(h, { showSkillIcons: false })}</div>
       <div class="ff-ground"></div>
       <div class="ff-info-block">
         <h2 class="ff-hero-name">${h.name}</h2>
