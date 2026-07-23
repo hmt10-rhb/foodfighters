@@ -331,6 +331,20 @@
         <p class="muted">Coming soon.</p>
       </div>
 
+      <!-- Admin panel (2026-07-23): visibility here is a pure CLIENT-SIDE
+           convenience for whoever is already an authorized admin — hidden
+           via the "hidden" class by default, only ever shown by game.js
+           checking cloudSession.user.email after login. This is NOT the
+           real security boundary; the admin-grant-currency Edge Function
+           re-verifies the caller's identity itself server-side regardless
+           of whether this button is visible, so hiding it is just tidy UI,
+           not the actual protection. -->
+      <div class="extra-box" id="admin-box" hidden>
+        <h3>🛠️ Admin</h3>
+        <p class="muted">Conceder Food Coins ou Chef Gems a outro jogador.</p>
+        <button id="admin-btn" class="btn btn-small">Abrir painel admin</button>
+      </div>
+
       <div class="extra-box danger">
         <h3>♻️ Reset save</h3>
         <p class="muted">Wipes all progress from this browser.</p>

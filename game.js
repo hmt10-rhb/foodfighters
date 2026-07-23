@@ -2590,13 +2590,17 @@ function skillText(h) {
 
 function skillBadgesHtml(h) {
   const badges = [];
-  if (hasMassaLeve(h)) badges.push(`<span class="skill-pill sk-massaleve" title="${SKILL_DEFS.MASSA_LEVE.label}">${SKILL_DEFS.MASSA_LEVE.icon}</span>`);
-  if (hasCafeinado(h)) badges.push(`<span class="skill-pill sk-cafeinado" title="${SKILL_DEFS.CAFEINADO.label}">${SKILL_DEFS.CAFEINADO.icon}</span>`);
-  if (hasSustancia(h)) badges.push(`<span class="skill-pill sk-sustancia" title="${SKILL_DEFS.SUSTANCIA.label}">${SKILL_DEFS.SUSTANCIA.icon}</span>`);
-  if (hasEspetinho(h)) badges.push(`<span class="skill-pill sk-espetinho" title="${SKILL_DEFS.ESPETINHO.label}">${SKILL_DEFS.ESPETINHO.icon}</span>`);
-  if (hasAlDente(h)) badges.push(`<span class="skill-pill sk-aldente" title="${SKILL_DEFS.AL_DENTE.label}">${SKILL_DEFS.AL_DENTE.icon}</span>`);
-  if (hasFolhadoDeOuro(h)) badges.push(`<span class="skill-pill sk-folhadodeouro" title="${SKILL_DEFS.FOLHADO_DE_OURO.label}">${SKILL_DEFS.FOLHADO_DE_OURO.icon}</span>`);
-  if (hasTemperamental(h)) badges.push(`<span class="skill-pill sk-temperamental" title="${SKILL_DEFS.TEMPERAMENTAL.label}">${SKILL_DEFS.TEMPERAMENTAL.icon}</span>`);
+  // BUG FIX (2026-07-23): title was just the short label (e.g. "Massa
+  // Leve") — the full flavor text describing what the skill actually DOES
+  // already exists on SKILL_DEFS[...].text and was never surfaced anywhere
+  // in the Inventory tab's badge hover. All 7 skills now show "Label: text".
+  if (hasMassaLeve(h)) badges.push(`<span class="skill-pill sk-massaleve" title="${SKILL_DEFS.MASSA_LEVE.label}: ${SKILL_DEFS.MASSA_LEVE.text}">${SKILL_DEFS.MASSA_LEVE.icon}</span>`);
+  if (hasCafeinado(h)) badges.push(`<span class="skill-pill sk-cafeinado" title="${SKILL_DEFS.CAFEINADO.label}: ${SKILL_DEFS.CAFEINADO.text}">${SKILL_DEFS.CAFEINADO.icon}</span>`);
+  if (hasSustancia(h)) badges.push(`<span class="skill-pill sk-sustancia" title="${SKILL_DEFS.SUSTANCIA.label}: ${SKILL_DEFS.SUSTANCIA.text}">${SKILL_DEFS.SUSTANCIA.icon}</span>`);
+  if (hasEspetinho(h)) badges.push(`<span class="skill-pill sk-espetinho" title="${SKILL_DEFS.ESPETINHO.label}: ${SKILL_DEFS.ESPETINHO.text}">${SKILL_DEFS.ESPETINHO.icon}</span>`);
+  if (hasAlDente(h)) badges.push(`<span class="skill-pill sk-aldente" title="${SKILL_DEFS.AL_DENTE.label}: ${SKILL_DEFS.AL_DENTE.text}">${SKILL_DEFS.AL_DENTE.icon}</span>`);
+  if (hasFolhadoDeOuro(h)) badges.push(`<span class="skill-pill sk-folhadodeouro" title="${SKILL_DEFS.FOLHADO_DE_OURO.label}: ${SKILL_DEFS.FOLHADO_DE_OURO.text}">${SKILL_DEFS.FOLHADO_DE_OURO.icon}</span>`);
+  if (hasTemperamental(h)) badges.push(`<span class="skill-pill sk-temperamental" title="${SKILL_DEFS.TEMPERAMENTAL.label}: ${SKILL_DEFS.TEMPERAMENTAL.text}">${SKILL_DEFS.TEMPERAMENTAL.icon}</span>`);
   return badges.join('');
 }
 
@@ -2779,17 +2783,20 @@ function ffHeroCardHtml(h) {
 
 function ffSkillCards(h) {
   const skills = [];
-  if (hasMassaLeve(h)) skills.push({ icon: SKILL_DEFS.MASSA_LEVE.icon, name: SKILL_DEFS.MASSA_LEVE.label });
-  if (hasCafeinado(h)) skills.push({ icon: SKILL_DEFS.CAFEINADO.icon, name: SKILL_DEFS.CAFEINADO.label });
-  if (hasSustancia(h)) skills.push({ icon: SKILL_DEFS.SUSTANCIA.icon, name: SKILL_DEFS.SUSTANCIA.label });
-  if (hasEspetinho(h)) skills.push({ icon: SKILL_DEFS.ESPETINHO.icon, name: SKILL_DEFS.ESPETINHO.label });
-  if (hasAlDente(h)) skills.push({ icon: SKILL_DEFS.AL_DENTE.icon, name: SKILL_DEFS.AL_DENTE.label });
-  if (hasFolhadoDeOuro(h)) skills.push({ icon: SKILL_DEFS.FOLHADO_DE_OURO.icon, name: SKILL_DEFS.FOLHADO_DE_OURO.label });
-  if (hasTemperamental(h)) skills.push({ icon: SKILL_DEFS.TEMPERAMENTAL.icon, name: SKILL_DEFS.TEMPERAMENTAL.label });
+  if (hasMassaLeve(h)) skills.push({ icon: SKILL_DEFS.MASSA_LEVE.icon, name: SKILL_DEFS.MASSA_LEVE.label, text: SKILL_DEFS.MASSA_LEVE.text });
+  if (hasCafeinado(h)) skills.push({ icon: SKILL_DEFS.CAFEINADO.icon, name: SKILL_DEFS.CAFEINADO.label, text: SKILL_DEFS.CAFEINADO.text });
+  if (hasSustancia(h)) skills.push({ icon: SKILL_DEFS.SUSTANCIA.icon, name: SKILL_DEFS.SUSTANCIA.label, text: SKILL_DEFS.SUSTANCIA.text });
+  if (hasEspetinho(h)) skills.push({ icon: SKILL_DEFS.ESPETINHO.icon, name: SKILL_DEFS.ESPETINHO.label, text: SKILL_DEFS.ESPETINHO.text });
+  if (hasAlDente(h)) skills.push({ icon: SKILL_DEFS.AL_DENTE.icon, name: SKILL_DEFS.AL_DENTE.label, text: SKILL_DEFS.AL_DENTE.text });
+  if (hasFolhadoDeOuro(h)) skills.push({ icon: SKILL_DEFS.FOLHADO_DE_OURO.icon, name: SKILL_DEFS.FOLHADO_DE_OURO.label, text: SKILL_DEFS.FOLHADO_DE_OURO.text });
+  if (hasTemperamental(h)) skills.push({ icon: SKILL_DEFS.TEMPERAMENTAL.icon, name: SKILL_DEFS.TEMPERAMENTAL.label, text: SKILL_DEFS.TEMPERAMENTAL.text });
   if (!skills.length) {
     return '<div class="ff-skill-card ff-skill-empty"><span class="ff-skill-icon">🔒</span><span class="ff-skill-name">No skills yet</span></div>';
   }
-  return skills.map(s => `<div class="ff-skill-card"><span class="ff-skill-icon">${s.icon}</span><span class="ff-skill-name">${s.name}</span></div>`).join('');
+  // BUG FIX (2026-07-23): these cards had NO title/hover description at all
+  // before — only the short name. Added, same "Label: text" format as
+  // skillBadgesHtml()'s own fix.
+  return skills.map(s => `<div class="ff-skill-card" title="${s.name}: ${s.text}"><span class="ff-skill-icon">${s.icon}</span><span class="ff-skill-name">${s.name}</span></div>`).join('');
 }
 
 function selectInventoryHero(id) {
@@ -3718,7 +3725,59 @@ function bindEvents() {
     if (e.target.closest('#cloud-signup-btn')) cloudSignUp();
     else if (e.target.closest('#cloud-signin-btn')) cloudSignIn();
     else if (e.target.closest('#cloud-signout-btn')) cloudSignOut();
+    else if (e.target.closest('#admin-grant-btn')) grantCurrency();
   });
+
+  // Admin panel (2026-07-23) — see this button's own comment in index.html:
+  // showing/hiding #admin-box is a pure client-side convenience, never the
+  // real security boundary (the admin-grant-currency Edge Function
+  // re-verifies the caller's identity itself, server-side, regardless).
+  const adminBtn = document.getElementById('admin-btn');
+  if (adminBtn) adminBtn.addEventListener('click', showAdminModal);
+}
+
+// Called from enterGame() once cloudSession is known — shows/hides the
+// Extras-tab admin box based on the CLIENT's own read of the logged-in
+// email. Deliberately named separately from bindEvents() since it needs to
+// re-run every time cloudSession changes (login/logout), not just once at
+// boot.
+function updateAdminVisibility() {
+  const box = document.getElementById('admin-box');
+  if (!box) return;
+  const isAdmin = !!(cloudSession && cloudSession.user && cloudSession.user.email === ADMIN_EMAIL);
+  box.hidden = !isAdmin;
+}
+
+function showAdminModal() {
+  document.getElementById('modal-body').innerHTML = `
+    <h3>🛠️ Admin — conceder moeda</h3>
+    <p class="muted">Isso chama a Edge Function admin-grant-currency, que reverifica sua identidade no servidor — este painel é só conveniência de UI.</p>
+    <input id="admin-target-username" type="text" placeholder="Nome de usuário do jogador" style="width:100%;margin-bottom:6px;">
+    <select id="admin-currency" style="width:100%;margin-bottom:6px;">
+      <option value="starCore">Food Coins</option>
+      <option value="bcoin">Chef Gems</option>
+    </select>
+    <input id="admin-amount" type="number" min="0" step="0.01" placeholder="Quantidade" style="width:100%;margin-bottom:10px;">
+    <button id="admin-grant-btn" class="btn">Conceder</button>`;
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+
+async function grantCurrency() {
+  if (!sb) { toast('Sincronização não configurada neste build.'); return; }
+  const targetUsername = document.getElementById('admin-target-username').value.trim();
+  const currency = document.getElementById('admin-currency').value;
+  const amount = Number(document.getElementById('admin-amount').value);
+  if (!targetUsername) { toast('Informe o nome de usuário do jogador.'); return; }
+  if (!Number.isFinite(amount) || amount <= 0) { toast('Informe uma quantidade positiva.'); return; }
+  // the currently authenticated session's JWT is attached automatically by
+  // sb.functions.invoke() — no manual header wiring needed, and no client
+  // value here is trusted server-side anyway (see the Edge Function itself)
+  const { data, error } = await sb.functions.invoke('admin-grant-currency', {
+    body: { targetUsername, currency, amount },
+  });
+  if (error) { toast('Erro: ' + (error.message || 'falha ao conceder')); return; }
+  if (data && data.error) { toast('Erro: ' + data.error); return; }
+  toast(`✅ ${fmtCurrency(amount)} ${currency === 'starCore' ? 'Food Coins' : 'Chef Gems'} concedido(s) a ${data.targetUsername} — novo saldo: ${fmtCurrency(data.newBalance)}`);
 }
 
 /* ============ Cloud Sync (Supabase) ============ */
@@ -3765,6 +3824,15 @@ let cloudSession = null;
 let cloudUsername = null;
 let leaderboardCache = [];
 const USERNAME_KEY = 'foodfighters-username'; // brand rename (2026-07-22) — migrated from 'bombheroes-username' near the bottom of this file, alongside SAVE_KEY/UI_PREF_KEY
+
+// Admin panel (2026-07-23): CLIENT-SIDE convenience check only — matches
+// this exact email so the Extras-tab admin box shows for the one real
+// admin. This is NOT the security boundary; the admin-grant-currency Edge
+// Function hardcodes and re-verifies the same address itself, server-side,
+// from the caller's own Supabase-verified JWT — never trusting anything
+// the client claims. Even if this constant were changed/removed/spoofed in
+// devtools, the Edge Function would still refuse anyone else.
+const ADMIN_EMAIL = 'joaohermeto@hotmail.com';
 
 function cloudSignedIn() { return !!cloudSession; }
 
@@ -4031,6 +4099,7 @@ function enterGame() {
   document.body.classList.add('ff-authed');
   const backdrop = document.getElementById('modal-backdrop');
   if (backdrop) backdrop.classList.add('hidden'); // close the login screen's signup modal if it was open
+  updateAdminVisibility(); // re-checked on every entry, not just the first — cloudSession may differ after a sign-out+different-account-back-in
   if (gameStarted) return; // a later login (e.g. after a mid-session sign-out+back-in) shouldn't re-run boot-only setup
   gameStarted = true;
   document.getElementById('ref-code').textContent = `https://foodfighters.example/ref/${state.refCode}`;
@@ -4050,6 +4119,7 @@ function enterGame() {
 }
 function showLoginScreen() {
   document.body.classList.remove('ff-authed');
+  updateAdminVisibility(); // cloudSession is null again post-sign-out — hide the admin box along with everything else
 }
 
 /* ============ Init ============ */
