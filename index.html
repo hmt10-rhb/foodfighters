@@ -66,28 +66,29 @@
     <section id="tab-hunt" class="tab-panel active">
       <div id="hud-top">
         <div class="hud-stat big">
-          <span class="hud-label">Wave</span>
-          <span class="hud-value"><b id="hud-wave">1</b> <em id="hud-mult" title="Reward multiplier — fixed at ×1.00 now, waves no longer scale reward/difficulty">×1.00</em></span>
+          <span class="hud-label">Mapas</span>
+          <span class="hud-value"><b id="hud-wave">1</b></span>
         </div>
         <div class="hud-stat">
-          <span class="hud-label">Crates</span>
+          <span class="hud-label">Baús</span>
           <span class="hud-value" id="hud-crates">0 / 0</span>
         </div>
         <div class="hud-stat">
           <span class="hud-label">Workers</span>
           <span class="hud-value" id="hud-workers">0 / 15</span>
         </div>
-        <div class="hud-stat">
-          <span class="hud-label">Dmg rate</span>
-          <span class="hud-value" id="hud-rate">0.00 dmg/s</span>
+        <div class="hud-stat" title="Food Coins earned on this specific map — resets on the next map, unlike your lifetime total">
+          <span class="hud-label">Moedas do Mapa</span>
+          <span class="hud-value" id="hud-map-earned">0.00</span>
         </div>
-        <div class="hud-stat">
-          <span class="hud-label">Recovery</span>
-          <span class="hud-value" id="hud-recovery">0.02 ⚡/s</span>
-        </div>
+        <!-- Dmg rate / Recovery stats REMOVED from the top bar (2026-07-23,
+             user-flagged) — the underlying tracking (mineRate()/
+             recoveryRate()) is untouched, still driving real gameplay
+             (damage-per-hit, resting-energy recovery), only these two HUD
+             displays are gone. -->
         <div class="hud-actions">
-          <button class="btn btn-small bulk-work">⛏️ All to Work</button>
-          <button class="btn btn-small btn-ghost bulk-rest">😴 All to Rest</button>
+          <button class="btn btn-small bulk-work">🍳 Todos pra Cozinha</button>
+          <button class="btn btn-small btn-ghost bulk-rest">🛌 Descansar Todos</button>
         </div>
       </div>
       <div id="hunt-main">
@@ -143,7 +144,7 @@
           </div>
         </div>
         <aside id="bombers-panel">
-          <h3>Active Rangos</h3>
+          <h3>Rangos Ativos</h3>
           <div id="bombers"></div>
         </aside>
       </div>
@@ -153,8 +154,8 @@
       <div class="panel-head">
         <h2>Meus Rangos</h2>
         <div class="bulk-row">
-          <button class="btn btn-small bulk-work">⛏️ All to Work</button>
-          <button class="btn btn-small btn-ghost bulk-rest">😴 All to Rest</button>
+          <button class="btn btn-small bulk-work">🍳 Todos pra Cozinha</button>
+          <button class="btn btn-small btn-ghost bulk-rest">🛌 Descansar Todos</button>
         </div>
         <label class="sort-label">Sort by
           <select id="sort-select">

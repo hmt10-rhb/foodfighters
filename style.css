@@ -414,7 +414,9 @@ main {
 .hud-label { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 .hud-value { font-size: 1.05rem; font-weight: 700; color: var(--text); white-space: nowrap; }
 .hud-stat.big .hud-value { font-size: 1.3rem; color: var(--accent2); }
-.hud-stat.big em { font-style: normal; font-size: 0.85rem; color: var(--accent); vertical-align: middle; }
+/* .hud-stat.big em REMOVED (2026-07-23, user-flagged): the ×N reward-
+   multiplier <em id="hud-mult"> element is gone from index.html entirely
+   (see #hud-top), so this rule had no remaining element to style. */
 .hud-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
 
 #hunt-main { display: flex; flex: 1; gap: 14px; min-height: 0; }
@@ -608,6 +610,9 @@ main {
   flex: none;
   background: var(--panel);
   border: 1px solid var(--border);
+  /* subtle inset depth (2026-07-23, user-flagged "general panel chrome"
+     polish) — a bit more deliberately designed than a flat single border */
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25) inset;
   border-radius: 12px;
   padding: 10px;
   overflow-y: auto;
@@ -619,7 +624,19 @@ main {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
 }
+/* Custom scrollbar (2026-07-23, user-flagged): the bare default browser
+   scrollbar didn't match the rest of the game's deliberately-designed
+   look — styled to match this panel's own palette instead (Chromium/
+   WebKit-only; there is no cross-browser scrollbar-color equivalent with
+   this level of control, and this game already targets Chromium via
+   serve.js). */
+#bombers-panel::-webkit-scrollbar { width: 10px; }
+#bombers-panel::-webkit-scrollbar-track { background: var(--bg); border-radius: 6px; margin: 4px 0; }
+#bombers-panel::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 6px; border: 2px solid var(--panel); }
+#bombers-panel::-webkit-scrollbar-thumb:hover { background: var(--accent2); }
 .bomber-item {
   display: flex;
   gap: 9px;
@@ -663,7 +680,9 @@ main {
   background: rgba(255, 255, 255, 0.06);
   border-radius: 50%;
 }
-.bomber-energy-label { font-size: 0.68rem; color: var(--muted); margin-top: 3px; }
+/* bigger + higher-contrast (2026-07-23, user-flagged) — was 0.68rem/muted,
+   the smallest text in the whole row; now legible at a glance */
+.bomber-energy-label { font-size: 0.8rem; font-weight: 700; color: var(--text); margin-top: 4px; }
 .bombers-empty { text-align: center; padding: 18px 6px; line-height: 1.6; }
 
 @media (max-width: 760px) {
@@ -992,7 +1011,12 @@ main {
   overflow: hidden;
   margin-top: 8px;
 }
-.bomber-item .energy-bar { margin-top: 0; height: 6px; }
+/* Bigger + more legible (2026-07-23, user-flagged): now that the sidebar
+   row's other stats are gone, the energy bar is the ONLY thing left in the
+   row besides name/rarity — was the smallest version (6px, no border) of
+   an already-small bar; now bigger and given a visible border for contrast
+   against the dark fill/track. */
+.bomber-item .energy-bar { margin-top: 6px; height: 14px; border: 1px solid var(--border); }
 .energy-bar .fill { height: 100%; background: var(--green); border-radius: 4px; transition: width 0.4s linear; }
 .energy-bar .fill.low { background: var(--red); }
 .energy-label { font-size: 0.75rem; color: var(--muted); margin-top: 3px; }
@@ -1710,10 +1734,34 @@ body:not(.ff-authed) #bottom-nav { display: none; }
   display: flex;
   flex-direction: column;
   align-items: stretch;
+  /* gap/padding: tried cqw here first (2026-07-23) and reverted — an
+     element's OWN box-model properties (padding/gap/margin/border) can't
+     reference a container-type IT ITSELF establishes; they fall back to
+     resolving against the nearest ANCESTOR container instead (here, none
+     was established, so they fell all the way back to the viewport — a
+     "2cqw" padding silently became ~2% of the full 1400px viewport, ~28px,
+     which combined with a similarly-inflated gap ate almost the ENTIRE
+     card height and collapsed every child to a sliver). Reverted to their
+     original small fixed px — their contribution to the zoom-proportion
+     bug was minor (confirmed empirically: the skill-badge fix below,
+     alone, already brought things to a tight range), unlike the
+     descendant-level cqw fixes below (.ff-card-id/.ff-status-dot/
+     .ff-energy-bar/.ff-card-skills/.ff-card-name), which are genuine
+     descendants and correctly reference THIS element's own container
+     context without the self-reference problem. */
   gap: 4px;
   background: var(--ff-petrol-700);
   padding: 6px;
   aspect-ratio: 3 / 4;
+  /* BUG FIX (2026-07-23, "size depends on zoom" + sprite squeeze/overlap,
+     part 2 — see .ff-card-skills below for the actual root cause this
+     establishes the scope for): a CSS containment context so descendants
+     can size themselves in cqw (1cqw = 1% of THIS element's own rendered
+     width) instead of viewport units or fixed px — the same "tie sizing to
+     the real parent box" principle the sprite fix below already uses via
+     percentages, extended to elements where a plain % doesn't work (fixed
+     aspect-ratio squares, font-size). */
+  container-type: inline-size;
   /* Belt-and-suspenders (2026-07-23, explicit "never expand downward, under
      no circumstance" request): aspect-ratio already keeps every card the
      same fixed size regardless of content — .ff-card-image-wrap's flex:1 1
@@ -1777,9 +1825,12 @@ body:not(.ff-authed) #bottom-nav { display: none; }
 }
 
 .ff-card-top { display: flex; align-items: center; justify-content: space-between; }
-.ff-card-id { font-family: var(--ff-font-mono); font-size: 8px; color: var(--ff-cream-dark); letter-spacing: 0.5px; }
+/* font-size in cqw (2026-07-23, zoom-proportion fix) — was a fixed 8px.
+   Calibrated against a ~150px representative card width (8/150≈5.3%). */
+.ff-card-id { font-family: var(--ff-font-mono); font-size: 5.5cqw; color: var(--ff-cream-dark); letter-spacing: 0.5px; }
 
-.ff-status-dot { width: 9px; height: 9px; border: 2px solid var(--ff-ink); border-radius: 50%; }
+/* size in cqw (2026-07-23, zoom-proportion fix) — was a fixed 9px (9/150=6%) */
+.ff-status-dot { width: 6cqw; height: 6cqw; border: 2px solid var(--ff-ink); border-radius: 50%; }
 .ff-dot-work { background: var(--ff-green); }
 .ff-dot-low { background: var(--ff-orange); }
 .ff-dot-rest { background: var(--ff-petrol-500); }
@@ -1868,27 +1919,56 @@ body:not(.ff-authed) #bottom-nav { display: none; }
    already produces for the detail panel's corner badges) — just a scoped
    override here to shrink them further for this much smaller card context,
    not a new visual language. Renders nothing (this wrapper div is simply
-   absent from the DOM, see game.js) for a hero with no skills. */
+   absent from the DOM, see game.js) for a hero with no skills.
+   BUG FIX (2026-07-23, "size depends on zoom" + sprite squeeze): these
+   badges were fixed px (16px/10px), while the sibling .ff-card-image-wrap
+   (the sprite) is flex:1 1 auto and absorbs whatever height is LEFT after
+   fixed-size siblings take theirs. A fixed-px sibling doesn't shrink when
+   the card's own rendered size shrinks (e.g. a narrower viewport, or a
+   browser/OS zoom level that effectively reduces the "logical" CSS-pixel
+   budget available to the grid) — so on a hero with several skills, this
+   row could eat a near-CONSTANT chunk of a SHRINKING total card height,
+   squeezing the sprite disproportionately at some zoom levels and leaving
+   it comfortably large at others. Reproduced directly: at 1400px/zoom 1 the
+   sprite:skills-row height ratio was ~6:1; at the same viewport under
+   zoom 1.5 it inverted to ~0.6:1 — the same card, same content, wildly
+   different internal proportions. Fixed by sizing these in cqw (relative to
+   .ff-card's own rendered width, see container-type above) instead of px —
+   same "tie it to the real box, not an unrelated reference frame" principle
+   the sprite's own 90%/90% fix already established. */
 .ff-card-skills {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 3px;
+  /* BUG FIX (2026-07-23): default align-items:stretch was overriding each
+     badge's aspect-ratio:1/1 on the cross-axis (height), making them tall
+     rectangles instead of squares. flex-start lets aspect-ratio actually win. */
+  align-items: flex-start;
+  gap: 2cqw;
 }
 .ff-card-skills .ff-skill-card {
-  width: 16px;
-  height: 16px;
+  /* BUG FIX (2026-07-23): the base .ff-skill-card rule (detail-panel corner
+     badges) sets an explicit height:26px — CSS cascades per PROPERTY, so
+     that fixed height was winning here even though THIS rule is more
+     specific, since this rule never explicitly overrode height, only width.
+     aspect-ratio has no effect once both width and height resolve to
+     explicit lengths, so it couldn't fix this by itself either. Setting
+     height explicitly (matching width) removes any ambiguity. */
+  width: 11cqw;
+  height: 11cqw;
+  aspect-ratio: 1 / 1;
   border-radius: 4px;
   box-shadow: none;
 }
-.ff-card-skills .ff-skill-icon { font-size: 10px; }
+.ff-card-skills .ff-skill-icon { font-size: 7cqw; }
 
 /* Replaces the removed 4-segment .ff-attr-bar: a single energy fill,
    standard left-anchored progress-bar physics (width:X% grows/shrinks
    toward the right as energy is gained/spent, no extra animation logic
    needed — the width itself already transitions smoothly below). */
 .ff-energy-bar {
-  height: 6px;
+  /* height in cqw (2026-07-23, zoom-proportion fix) — was a fixed 6px (6/150=4%) */
+  height: 4cqw;
   border: 1px solid var(--ff-ink);
   border-radius: 3px;
   overflow: hidden;
@@ -1903,7 +1983,17 @@ body:not(.ff-authed) #bottom-nav { display: none; }
 
 .ff-card-name {
   font-family: var(--ff-font-display);
-  font-size: clamp(9px, 0.8vw, 11px);
+  /* BUG FIX (2026-07-23, "size depends on zoom"): was clamp(9px, 0.8vw,
+     11px) — VIEWPORT-relative, the same anti-pattern already fixed for the
+     sprite. First attempt kept the fixed 9px/11px clamp bounds around a cqw
+     middle value, but 3.2cqw resolves BELOW 9px for every realistic card
+     width here, so the clamp always bottomed out at the fixed 9px floor
+     anyway — reintroducing the exact "scales with zoom, not with the card"
+     bug through the clamp bounds themselves. Pure 6.5cqw (no fixed-px
+     clamp) actually ties this to the card's own rendered width — calibrated
+     against a ~150px representative card width (10/150≈6.7%, the clamp's
+     old midpoint). */
+  font-size: 6.5cqw;
   color: var(--ff-cream);
   text-align: center;
   white-space: nowrap;

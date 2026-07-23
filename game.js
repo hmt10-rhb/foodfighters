@@ -440,6 +440,20 @@ function defaultState() {
     bcoin: 200,
     starCore: 0,
     totalMined: 0,
+    // Food Coins earned on the CURRENT map specifically (2026-07-23) — unlike
+    // totalMined (lifetime, never resets), this resets to 0 at every genuine
+    // new-map transition: a live wave-clear reroll (waveClear()), a brand-new
+    // game (this default), and a load-time/cloud-sync offline-advance that
+    // regenerates a fresh map instead of restoring the old one
+    // (restoreOrGenerateGrid()'s regenerate branch) — see each site's own
+    // comment. Only incremented at the one real "destroyed a Baú on THIS
+    // map" reward point in destroyTile() — NOT from Jaula (pays no Food
+    // Coins at all), NOT from Task/Missão Diária rewards (separate
+    // milestone systems, not tied to what this specific map produced), and
+    // NOT from simulate()'s offline catch-up (a closed-form estimate that
+    // can abstractly span zero, one, or many maps at once — fundamentally
+    // incompatible with "this one map's earnings").
+    mapEarned: 0,
     fusions: 0,
     heroes: [],
     houses: { tent: 0, cabin: 0, villa: 0, fortress: 0 },
@@ -532,6 +546,14 @@ function restoreOrGenerateGrid(raw, waveAtSave) {
     if (typeof raw.mapSeed === 'string') state.mapSeed = raw.mapSeed;
     return true;
   }
+  // Per-map earnings reset (2026-07-23) — see state.mapEarned's own comment
+  // in defaultState(). Reaching here means state.wave !== waveAtSave (an
+  // offline simulate() already advanced past the saved map) or the
+  // persisted grid was invalid — either way this is a genuinely NEW map,
+  // distinct from raw.mapEarned (the old map's leftover value, which
+  // Object.assign(defaultState(), raw) in load()/pullCloudSave() would
+  // otherwise have carried straight through unchanged).
+  state.mapEarned = 0;
   genLayout();
   return false;
 }
@@ -2340,6 +2362,10 @@ function destroyTile(r, c, box, folhadoDeOuroBomb) {
   const amt = randomBetween(rewardMin, rewardMax) * (folhadoDeOuroBomb ? FOLHADO_DE_OURO_BONUS : 1) * payoutVarianceMult();
   state.starCore += amt;
   state.totalMined += amt;
+  // Per-map earnings (2026-07-23) — see its own comment on state.mapEarned
+  // in defaultState(). This IS the genuine "earned by playing THIS map"
+  // event: a real Baú destroyed on the live current-map grid, right now.
+  state.mapEarned = (state.mapEarned || 0) + amt;
   // feeds both the lifetime Tasks milestones and the Missão Diária's
   // recurring counter — one real chest-break event, two counters
   state.totalChestsBroken = (state.totalChestsBroken || 0) + 1;
@@ -2393,6 +2419,11 @@ function waveClear() {
   toast(`💥 Map ${state.wave} cleared! Rolling a fresh map...`);
   setTimeout(() => {
     state.wave++;
+    // Per-map earnings reset (2026-07-23) — see state.mapEarned's own
+    // comment in defaultState(). A live wave-clear is a genuine new-map
+    // transition, so the counter starts fresh for whatever this next map
+    // produces.
+    state.mapEarned = 0;
     // Theme rotation (2026-07-22 user change): a random theme is now rolled
     // on EVERY single wave-clear — replaces the old mapsInTheme counter /
     // every-50-maps threshold entirely. Uniform random pick from
@@ -3049,22 +3080,35 @@ function renderHeader() {
 
 // HUD skeleton is static in index.html; per-tick we only fill value slots,
 // so the bulk buttons in the HUD are never rebuilt under the cursor
+// Top-bar simplification (2026-07-23, user-flagged, RESTORED here — an
+// external/concurrent "revert accidental inclusion" commit undid this
+// function's half of the change while leaving index.html's half of it in
+// place, e.g. hud-mult/hud-rate/hud-recovery elements were already gone from
+// the HTML but this function was still trying to write to them; redone here
+// while touching this same function for the new mapEarned display below):
+// "Wave" -> "Mapas" label (index.html), the ×N reward-multiplier suffix
+// removed entirely (waveMult() itself untouched, still permanently 1, just
+// not surfaced in the HUD). "Crates" -> "Baús" label. DMG RATE/RECOVERY
+// stats removed from the top bar — mineRate()/recoveryRate() themselves are
+// completely untouched (still real gameplay mechanics other code depends
+// on), only these two HUD readouts and the totalRate aggregate here are
+// gone. Sidebar rows simplified to name+rarity+energy bar only (blast
+// radius/bomb cycle/damage rate/Ascension badge/skill icons removed).
+// New (2026-07-23): "Moedas do Mapa" — Food Coins earned on THIS map
+// specifically (state.mapEarned, resets per-map; see its own comment in
+// defaultState() for exactly where/why), distinct from the lifetime
+// state.totalMined.
 function renderHunt() {
   const working = state.heroes.filter(h => h.mode === 'work');
-  const totalRate = working.reduce((s, h) => s + mineRate(h), 0);
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   set('hud-wave', state.wave);
-  set('hud-mult', '×' + waveMult().toFixed(2));
   set('hud-crates', `${cratesLeft} / ${cratesTotal}`);
   set('hud-workers', `${working.length} / ${MAX_WORKERS}`);
-  set('hud-rate', totalRate.toFixed(2) + ' dmg/s');
-  set('hud-recovery', recoveryRate().toFixed(2) + ' ⚡/s');
+  set('hud-map-earned', fmtCurrency(state.mapEarned || 0));
   document.getElementById('bombers').innerHTML = working.length
     ? working.map(h => {
         const maxE = maxEnergyFor(h);
         const pct = Math.round((h.energy / maxE) * 100);
-        const cycle = ((cooldownTicks(h) + FUSE_TICKS) * AI_MS / 1000).toFixed(1);
-        const badges = skillBadgesHtml(h);
         return `
         <div class="bomber-item r-${h.rarity}">
           <span class="bomber-sprite">${spriteHtml(h)}</span>
@@ -3073,13 +3117,6 @@ function renderHunt() {
               <span class="bomber-name">${h.name}</span>
               <span class="rarity-badge rarity-${h.rarity} bomber-badge">${rTag(h.rarity)}</span>
             </div>
-            <div class="bomber-stats">
-              <span title="Blast radius">💥 ${blastRadius(h)}</span>
-              <span title="Bomb cycle (fuse + cooldown)">⏱️ ${cycle}s</span>
-              <span title="Damage rate">⛏️ ${mineRate(h).toFixed(1)} dmg/s</span>
-              ${h.ascendCount > 0 ? `<span class="bomber-ascend" title="Ascension #${h.ascendCount} — permanent damage multiplier">🌌 ×${ascendMult(h).toFixed(2)}</span>` : ''}
-            </div>
-            ${badges ? `<div class="bomber-skills">${badges}</div>` : ''}
             <div class="energy-bar"><div class="fill ${pct < 25 ? 'low' : ''}" style="width:${pct}%"></div></div>
             <div class="bomber-energy-label">⚡ ${Math.floor(h.energy)} / ${maxE}</div>
           </div>
