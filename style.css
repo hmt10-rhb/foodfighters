@@ -793,7 +793,7 @@ main {
      itself has no overflow restriction, nor does #arena or #arena-frame
      (only #arena-wrap, well outside .actor, clips) — so the oversized
      .sprite is free to visually spill into neighboring tile space. */
-  --hero-scale: 1.9;
+  --hero-scale: 1.65;
   position: absolute;
   z-index: 4;
   width: var(--ts, 44px);
