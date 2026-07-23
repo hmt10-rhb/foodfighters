@@ -1930,6 +1930,7 @@ function aiTick() {
     // tile at a time, re-checking plant-eligibility after EACH step so a
     // fast Rango naturally stops the instant it reaches a plantable spot
     // within the same tick, rather than always "overshooting" every tick.
+    const tickStartR = a.r, tickStartC = a.c;
     let stepsThisTick = 0;
     while (a.moveBudget >= 1 && stepsThisTick < MOVE_STEPS_PER_TICK_CAP) {
       const beforeKey = a.r + ',' + a.c;
@@ -1944,25 +1945,30 @@ function aiTick() {
       }
     }
     // VISUAL CORNER-CUT FIX (2026-07-23, re-verification requested alongside
-    // the Massa Leve fix above): every individual step here is already
-    // cardinal-only and canWalk()-gated (bfsWalk()/moveActor(), re-verified
-    // from scratch — see the new tests) — the GRID LOGIC never violates the
-    // "4 directions only, no corner-cutting" rule. But when more than one
-    // step lands in the SAME tick (fast Rangos, high Speed), all of them
-    // call positionActor() synchronously before the browser ever paints —
-    // it only ever renders the LAST transform value, animated via .actor's
-    // CSS `transition: transform 0.45s linear` from wherever the sprite was
-    // BEFORE this tick. Since translate(x,y) interpolates both axes
-    // together, a multi-step tick whose net path bends (e.g. 1 tile east
-    // then 1 tile south around an L-shaped corner) would render as one
-    // smooth DIAGONAL slide straight to the final tile — visually cutting
-    // across whatever sits at the diagonal corner between them, even though
-    // no blocking tile was ever logically entered. Standard fix: snap
-    // instantly (no transition) whenever a tick moved more than one tile,
-    // forcing a reflow so the "no transition" state actually takes effect
-    // before it's restored for the next (normal, single-step) tick's smooth
-    // animation. Only paid for the multi-step case, not every tick.
-    if (stepsThisTick > 1) {
+    // the Massa Leve fix above) — REVISED (2026-07-23, urgent live
+    // regression fix): the grid logic (bfsWalk()/moveActor()) is already
+    // cardinal-only and canWalk()-gated, never a real bug — the only actual
+    // risk is a VISUAL one, and only in one specific case. The original fix
+    // here keyed off `stepsThisTick > 1`, which was wrong: any Rango with
+    // Speed >= 4 (a1 * (AI_MS/1000) = 2+ tiles' worth of budget per tick —
+    // ordinary for most rarities above Caseiro/Temperado, not a rare edge
+    // case) takes 2+ steps EVERY single tick in steady state, so that
+    // condition fired on nearly every tick for a large share of the roster,
+    // disabling the transition almost permanently and making ordinary
+    // movement look like instant teleporting instead of a smooth walk —
+    // exactly the live regression reported. The real risk was never "more
+    // than one tile moved this tick" (a fast Rango walking several tiles in
+    // a STRAIGHT line is a perfectly honest smooth glide, nothing to fix)
+    // — it's specifically a tick whose NET path BENDS (visits both a row
+    // AND a column change), which is what makes translate(x,y)'s linear
+    // interpolation cut a visible diagonal across the corner between them.
+    // Checking net displacement from BEFORE this tick's movement loop
+    // started (tickStartR/C) to after it, instead of the step count, keys
+    // on that real condition — genuinely rare (only when the path actually
+    // turns a corner within one 500ms tick), leaving ordinary single- AND
+    // multi-tile-straight-line movement smooth exactly like before this
+    // whole fix ever existed.
+    if (a.r !== tickStartR && a.c !== tickStartC) {
       a.el.style.transition = 'none';
       void a.el.offsetHeight; // force layout so 'none' is locked in before the transition is restored below
       a.el.style.transition = '';
@@ -2230,6 +2236,13 @@ function repositionActors() {
     a.r = r;
     a.c = c;
     positionActor(a.el, c, r);
+    // This is a genuine teleport (an arbitrary open tile anywhere on the
+    // fresh map), not organic walking — snap instantly instead of letting
+    // .actor's normal 0.45s transition glide the sprite across the whole
+    // arena. Same off/reflow/restore trick as aiTick()'s movement snap-fix.
+    a.el.style.transition = 'none';
+    void a.el.offsetHeight;
+    a.el.style.transition = '';
   }
 }
 
@@ -2820,8 +2833,6 @@ function readyTaskCount() {
 function renderHeader() {
   document.getElementById('bcoin-display').textContent = fmtCurrency(state.bcoin);
   document.getElementById('score-display').textContent = fmtCurrency(state.starCore);
-  document.getElementById('shard-display').textContent = fmt(state.skillShards || 0);
-  document.getElementById('prestige-display').textContent = fmt(state.prestigeCount || 0);
   const sleepBtn = document.getElementById('sleep-btn');
   sleepBtn.textContent = state.sleepMode ? '💤' : '🌙';
   sleepBtn.classList.toggle('sleep-on', !!state.sleepMode);
