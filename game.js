@@ -1157,21 +1157,36 @@ function randomBetween(min, max) { return min + Math.random() * (max - min); }
 // expected-value economy math to confirm balance. Data-only change — no
 // generation/distribution logic touched (see getChestLimits()/
 // rollChestTierCounts() below, both unmodified). Feasibility re-verified for
-// both configs at the new scale: for normalMapSpawnConfig,
-// sum(rarityLimits.min) = 12+6+3+0+0 = 21 <= chests.absoluteMin (26), so
-// rollChestTierCounts() can always satisfy every tier's minimum even at the
-// smallest realistic chest count; sum(rarityLimits.max) = 36+21+21+6+3 = 87
-// comfortably exceeds chests.absoluteMax (61). Same check for
-// nightKitchenSpawnConfig below its own definition.
+// both configs at the new scale (original numbers, before the density-bump
+// below): for normalMapSpawnConfig, sum(rarityLimits.min) = 12+6+3+0+0 = 21
+// <= chests.absoluteMin (26), so rollChestTierCounts() can always satisfy
+// every tier's minimum even at the smallest realistic chest count;
+// sum(rarityLimits.max) = 36+21+21+6+3 = 87 comfortably exceeds
+// chests.absoluteMax (61). Same check for nightKitchenSpawnConfig below its
+// own definition.
+//
+// Density bump (2026-07-23, second pass): normalMapSpawnConfig's numbers
+// below were raised again per a confirmed follow-up decision — validated
+// first as a read-only what-if simulation (1000-run audit calling the real
+// getChestLimits()/rollChestTierCounts() with this exact config object,
+// never written to the file until confirmed) before landing here for real.
+// That simulation showed: chest-count mean ~52.6/map (vs ~43.5 on the prior
+// numbers), every tier's distribution still spreads meaningfully across its
+// [min,max] band under the headroom-weighted fill (no clustering-near-max
+// regression), and a +21.9% average Food Coin yield per map (~6.95 vs
+// ~5.71) versus the prior numbers. Feasibility re-checked for THESE numbers:
+// sum(rarityLimits.min) = 15+7+4+0+0 = 26 <= chests.absoluteMin (30);
+// sum(rarityLimits.max) = 44+26+26+7+4 = 107 comfortably exceeds
+// chests.absoluteMax (74). nightKitchenSpawnConfig is untouched by this pass.
 const normalMapSpawnConfig = {
-  variableTables: { min: 85, max: 135 },
-  chests: { probability: 0.40, proportionalMin: 0.30, proportionalMax: 0.45, absoluteMin: 26, absoluteMax: 61 },
+  variableTables: { min: 100, max: 165 },
+  chests: { probability: 0.40, proportionalMin: 0.30, proportionalMax: 0.45, absoluteMin: 30, absoluteMax: 74 },
   rarityLimits: {
-    MADEIRA: { min: 12, max: 36 },
-    FERRO: { min: 6, max: 21 },
-    OURO: { min: 3, max: 21 },
-    DIAMANTE: { min: 0, max: 6 },
-    VIP: { min: 0, max: 3 },
+    MADEIRA: { min: 15, max: 44 },
+    FERRO: { min: 7, max: 26 },
+    OURO: { min: 4, max: 26 },
+    DIAMANTE: { min: 0, max: 7 },
+    VIP: { min: 0, max: 4 },
   },
 };
 // Mercado Noturno's per-wave variable-generation density config (richer than
