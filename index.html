@@ -14,8 +14,14 @@
      at boot (restoreCloudSession()) or established here by the player. No
      markup below this ever initializes/renders the actual game; game.js's
      enterGame() is the ONLY thing that reveals it. Reuses cloudSignIn()'s
-     existing field ids (cloud-email/cloud-pw) so no changes were needed to
-     that function's own field-reading logic. -->
+     dedicated login-email/login-pw ids (2026-07-23 fix — see login-btn's
+     handler in game.js): these used to be id="cloud-email"/"cloud-pw", the
+     SAME ids the dynamically-injected signup/account modal uses for its own
+     fields. With both on the page at once (this screen never unmounts;
+     the modal is just overlaid on top of it), getElementById always
+     resolved to THIS screen's (untouched) fields instead of whatever the
+     player actually typed in the visible modal — so "Criar conta" read an
+     empty email/password and silently failed. -->
 <div id="login-screen">
   <div class="login-card">
     <div class="ff-logo-plaque">
@@ -23,8 +29,8 @@
       <span class="ff-logo-text">FOOD FIGHTERS</span>
     </div>
     <h2>Entrar</h2>
-    <input id="cloud-email" type="email" placeholder="Email" autocomplete="username">
-    <input id="cloud-pw" type="password" placeholder="Senha" autocomplete="current-password">
+    <input id="login-email" type="email" placeholder="Email" autocomplete="username">
+    <input id="login-pw" type="password" placeholder="Senha" autocomplete="current-password">
     <label class="login-remember">
       <input type="checkbox" id="remember-me" checked>
       Lembrar de mim

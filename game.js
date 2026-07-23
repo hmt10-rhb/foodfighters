@@ -3819,8 +3819,15 @@ async function cloudSignUp() {
 
 async function cloudSignIn() {
   if (!sb) return;
-  const email = document.getElementById('cloud-email').value.trim();
-  const pw = document.getElementById('cloud-pw').value;
+  // BUG FIX (2026-07-23): the login screen's own fields are #login-email/
+  // #login-pw (renamed from #cloud-email/#cloud-pw, which collided with the
+  // signup/account modal's fields of the same id — see index.html's comment
+  // on #login-screen). Prefer those; fall back to #cloud-email/#cloud-pw for
+  // the modal's own "Já tenho conta — Entrar" path.
+  const emailEl = document.getElementById('login-email') || document.getElementById('cloud-email');
+  const pwEl = document.getElementById('login-pw') || document.getElementById('cloud-pw');
+  const email = emailEl.value.trim();
+  const pw = pwEl.value;
   if (!email || !pw) { toast('Preencha email e senha.'); return; }
   applyRememberMeChoiceFromCheckbox();
   const { data, error } = await sb.auth.signInWithPassword({ email, password: pw });
