@@ -11,12 +11,18 @@
   --accent2: #ffd54f;
   --green: #66bb6a;
   --red: #ef5350;
+  /* Rarity colors (2026-07-23, palette rework): Caseiro/Temperado unchanged
+     per explicit instruction. Gourmet -> dark purple, Especialidade da Casa
+     (renamed from Chef Renomado) -> light purple, Comida de Buteco (renamed
+     from Estrela Michelin) -> bright animated gold (see .r-COMIDA_DE_BUTECO
+     rules' shared butecoShine animation below). --c-im (a leftover "Imortal"
+     legacy-tier red) and the dead duplicate CSS rules that only it fed are
+     removed in this same pass — see each renamed selector's own comment. */
   --c-common: #9e9e9e;
   --c-rare: #42a5f5;
-  --c-epic: #ab47bc;
-  --c-legendary: #ffb300;
-  --c-sp: #ffea00;
-  --c-im: #ff1744;
+  --c-epic: #4a148c;
+  --c-legendary: #ce93d8;
+  --c-buteco: #ffd700;
 }
 
 html, body { height: 100%; }
@@ -122,6 +128,78 @@ body {
 /* mail-badge shows how many tasks are ready to claim; hidden entirely (not
    just showing "0") when there's nothing to claim right now */
 .ff-badge.hidden { display: none; }
+
+/* ===== Roda da Sorte floating button (2026-07-23) =====
+   WhatsApp-widget style: a small fixed circle floating above the game
+   content, reachable from any tab. Positioned bottom-right, above
+   #bottom-nav-tabs' pill so it never overlaps the nav (bottom-nav itself is
+   NOT position:fixed — see its own section further down — so this has to
+   clear it with a fixed offset rather than relying on stacking order
+   alone). Same glossy-round-button visual language as .ff-icon-btn (candy-
+   cartoon HUD), just bigger and circular. The badge dot is the EXACT same
+   .ff-badge element mail-badge uses (see above) — reused as-is, just with
+   an empty textContent so it reads as a plain attention dot instead of a
+   count (renderWheelBadge() in game.js only ever toggles its .hidden
+   class, never sets text on it). */
+/* right/bottom below are only the DEFAULT position, used until the player
+   has ever dragged the FAB (2026-07-23, draggable-FAB feature) —
+   restoreWheelFabPos() in game.js overrides them with explicit left/top
+   (and right/bottom:auto) the instant a saved position exists, applied at
+   boot before the player can see the default flash into place.
+   z-index bumped 55 -> 90 (highest in the normal always-visible shell —
+   header/arena/sidebar/bottom-nav/#wheel-panel/#toast all sit below it, so
+   a dragged FAB visually overlaps every one of them, per explicit
+   instruction) but deliberately still under #login-screen (100)/
+   #modal-backdrop (150)/.reveal-flash (160+): those are legitimate full-
+   screen takeovers that should keep dominating over a draggable widget,
+   not a shell element it needs to float above.
+   touch-action:none stops the browser's own touch-scroll/pan gesture from
+   fighting the pointer-based drag on touch devices — pointerdown/move/up
+   need to fully own the gesture once it starts. */
+.wheel-fab {
+  position: fixed;
+  right: 18px;
+  bottom: 96px;
+  width: 56px;
+  height: 56px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ffb238, #ff7a1a);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.28), 0 6px 14px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  font-size: 1.6rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 90;
+  touch-action: none;
+  transition: transform 0.08s ease;
+}
+.wheel-fab:hover { filter: brightness(1.08); }
+.wheel-fab:active { transform: translateY(2px); box-shadow: 0 2px 0 rgba(0, 0, 0, 0.28), 0 3px 8px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.35); }
+.wheel-fab.dragging { transition: none; cursor: grabbing; }
+/* Small countdown-until-next-free-spin text on the FAB itself (2026-07-23,
+   user-requested) — MUCH smaller/quieter than the badge dot on purpose (the
+   badge already screams "available now"; this is just a quiet "how long
+   until" for when it isn't). renderWheelBadge() in game.js toggles this and
+   the badge oppositely — never both shown at once. */
+.wheel-fab-timer {
+  position: absolute;
+  bottom: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #241c47;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 0.55rem;
+  font-weight: 700;
+  color: #f0e6d2;
+  white-space: nowrap;
+  line-height: 1.3;
+}
+.wheel-fab-timer.hidden { display: none; }
 
 /* ----- logo plaque: rounded cream/tan plaque, top-left, per the reference ----- */
 .ff-logo-plaque {
@@ -650,11 +728,15 @@ main {
 .bomber-item.r-CASEIRO { border-left-color: var(--c-common); }
 .bomber-item.r-TEMPERADO { border-left-color: var(--c-rare); }
 .bomber-item.r-GOURMET { border-left-color: var(--c-epic); }
-.bomber-item.r-CHEF_RENOMADO { border-left-color: var(--c-legendary); }
-.bomber-item.r-ESTRELA_MICHELIN { border-left-color: var(--c-sp); }
-.bomber-item.r-ESTRELA_MICHELIN { border-left-color: var(--c-im); }
-.bomber-item.r-RECEITA_DE_VO { border-left-color: #b388ff; }
-.bomber-item.r-RECEITA_DE_VO { border-left-color: var(--c-im); }
+.bomber-item.r-ESPECIALIDADE_DA_CASA { border-left-color: var(--c-legendary); }
+.bomber-item.r-COMIDA_DE_BUTECO { border-left-color: var(--c-buteco); animation: butecoShine 1.4s ease-in-out infinite; }
+/* RECEITA_DE_VO's border-left-color is intentionally NOT set here — the
+   combined-selector animation a few rules down (shinyBorder, covering
+   .hero-card/.bomber-item/.legend-row/.reveal-card together) animates the
+   full border-color shorthand continuously, which always overrides a
+   border-LEFT-color set here anyway; a static fallback color would just be
+   permanently-invisible dead weight, same class of cleanup as the old
+   --c-im duplicates removed in this pass. */
 .bomber-sprite { font-size: 1.9rem; line-height: 1; flex: none; margin-top: 1px; }
 .bomber-info { flex: 1; min-width: 0; }
 .bomber-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px; }
@@ -1006,23 +1088,17 @@ main {
 .rarity-CASEIRO { background: var(--c-common); }
 .rarity-TEMPERADO { background: var(--c-rare); }
 .rarity-GOURMET { background: var(--c-epic); color: #fff; }
-.rarity-CHEF_RENOMADO { background: var(--c-legendary); }
-.rarity-ESTRELA_MICHELIN {
+.rarity-ESPECIALIDADE_DA_CASA { background: var(--c-legendary); }
+.rarity-COMIDA_DE_BUTECO {
   background: linear-gradient(105deg, #ffea00, #fff59d, #ffd600);
   box-shadow: 0 0 8px rgba(255, 234, 0, 0.7);
+  animation: butecoShine 1.4s ease-in-out infinite;
 }
-.rarity-ESTRELA_MICHELIN { background: var(--c-im); color: #fff; box-shadow: 0 0 8px rgba(255, 23, 68, 0.6); }
 .rarity-RECEITA_DE_VO {
   background: linear-gradient(90deg, #ff5252, #ffb300, #ffee58, #69f0ae, #40c4ff, #b388ff, #ff5252);
   background-size: 300% 100%;
   animation: holoSlide 2.5s linear infinite;
-}
-.rarity-RECEITA_DE_VO {
-  background: linear-gradient(105deg, #d50000, #1a0000, #ff1744, #000, #d50000);
-  background-size: 300% 100%;
-  animation: holoSlide 1.6s linear infinite;
   color: #fff;
-  box-shadow: 0 0 10px rgba(255, 23, 68, 0.8);
 }
 @keyframes holoSlide {
   from { background-position: 0% 50%; }
@@ -1032,16 +1108,16 @@ main {
 .hero-card.r-CASEIRO { border-left: 4px solid var(--c-common); }
 .hero-card.r-TEMPERADO { border-left: 4px solid var(--c-rare); }
 .hero-card.r-GOURMET { border-left: 4px solid var(--c-epic); }
-.hero-card.r-CHEF_RENOMADO { border-left: 4px solid var(--c-legendary); }
-.hero-card.r-ESTRELA_MICHELIN { border-left: 4px solid var(--c-sp); box-shadow: 0 0 12px rgba(255, 234, 0, 0.25); }
-.hero-card.r-ESTRELA_MICHELIN { border-left: 4px solid var(--c-im); box-shadow: 0 0 12px rgba(255, 23, 68, 0.25); }
-.hero-card.r-RECEITA_DE_VO { border-left: 4px solid #b388ff; }
-.hero-card.r-RECEITA_DE_VO { border-left: 4px solid var(--c-im); }
+.hero-card.r-ESPECIALIDADE_DA_CASA { border-left: 4px solid var(--c-legendary); }
+.hero-card.r-COMIDA_DE_BUTECO { border-left: 4px solid var(--c-buteco); box-shadow: 0 0 12px rgba(255, 215, 0, 0.35); animation: butecoShine 1.4s ease-in-out infinite; }
+/* RECEITA_DE_VO: static border-left removed (2026-07-23 cleanup) — same
+   reasoning as .bomber-item.r-RECEITA_DE_VO above, the combined-selector
+   shinyBorder animation right below always overrides it anyway. Only ONE
+   animation now (the old competing robaBorder "Imortal" duplicate deleted)
+   so RECEITA_DE_VO is genuinely prismatic (cycles red/yellow/green/blue)
+   instead of silently losing to a static red pulse. */
 .hero-card.r-RECEITA_DE_VO, .bomber-item.r-RECEITA_DE_VO, .legend-row.r-RECEITA_DE_VO, .reveal-card.r-RECEITA_DE_VO {
   animation: shinyBorder 3s linear infinite;
-}
-.hero-card.r-RECEITA_DE_VO, .bomber-item.r-RECEITA_DE_VO, .legend-row.r-RECEITA_DE_VO, .reveal-card.r-RECEITA_DE_VO {
-  animation: robaBorder 1.1s ease-in-out infinite alternate;
 }
 @keyframes shinyBorder {
   0% { border-color: #ff5252; }
@@ -1050,11 +1126,14 @@ main {
   75% { border-color: #40c4ff; }
   100% { border-color: #ff5252; }
 }
-@keyframes robaBorder {
-  from { border-color: #ff1744; box-shadow: 0 0 14px rgba(255, 23, 68, 0.5); }
-  to { border-color: #200000; box-shadow: 0 0 4px rgba(0, 0, 0, 0.8); }
+/* Comida de Buteco (renamed from Estrela Michelin, 2026-07-23): a simple
+   brightness pulse — "dourado brilhante com efeito animado" per spec.
+   Shared by every .r-COMIDA_DE_BUTECO/.rarity-COMIDA_DE_BUTECO selector in
+   the file rather than redefined per-selector. */
+@keyframes butecoShine {
+  0%, 100% { filter: brightness(1) saturate(1); }
+  50% { filter: brightness(1.4) saturate(1.3); }
 }
-
 .energy-bar {
   height: 8px;
   background: #141009;
@@ -1151,11 +1230,10 @@ select {
 .legend-row.r-CASEIRO { border-left-color: var(--c-common); }
 .legend-row.r-TEMPERADO { border-left-color: var(--c-rare); }
 .legend-row.r-GOURMET { border-left-color: var(--c-epic); }
-.legend-row.r-CHEF_RENOMADO { border-left-color: var(--c-legendary); }
-.legend-row.r-ESTRELA_MICHELIN { border-left-color: var(--c-sp); }
-.legend-row.r-ESTRELA_MICHELIN { border-left-color: var(--c-im); }
-.legend-row.r-RECEITA_DE_VO { border-left-color: #b388ff; }
-.legend-row.r-RECEITA_DE_VO { border-left-color: var(--c-im); }
+.legend-row.r-ESPECIALIDADE_DA_CASA { border-left-color: var(--c-legendary); }
+.legend-row.r-COMIDA_DE_BUTECO { border-left-color: var(--c-buteco); animation: butecoShine 1.4s ease-in-out infinite; }
+/* RECEITA_DE_VO: no static color here either — covered by the combined
+   shinyBorder animation selector above, same reasoning as .hero-card's. */
 .legend-row .legend-sprite { font-size: 2.4rem; line-height: 1; }
 .legend-row .legend-tileart { display: flex; gap: 6px; }
 .legend-row .legend-tileart img { width: 2rem; height: 2rem; object-fit: contain; }
@@ -1330,10 +1408,9 @@ select {
 .sr-CASEIRO { --rc: var(--c-common); }
 .sr-TEMPERADO { --rc: var(--c-rare); }
 .sr-GOURMET { --rc: var(--c-epic); }
-.sr-CHEF_RENOMADO { --rc: var(--c-legendary); }
-.sr-ESTRELA_MICHELIN { --rc: var(--c-sp); }
-.sr-ESTRELA_MICHELIN { --rc: var(--c-im); }
-.sr-RECEITA_DE_VO { --rc: var(--c-im); }
+.sr-ESPECIALIDADE_DA_CASA { --rc: var(--c-legendary); }
+.sr-COMIDA_DE_BUTECO { --rc: var(--c-buteco); }
+.sr-RECEITA_DE_VO { --rc: #ff5252; } /* fallback only — the animated aura below always overrides this */
 
 /* Arena-only aura: a soft blurred glow following the portrait's silhouette
    (drop-shadow respects PNG alpha, unlike box-shadow), not a hard ring.
@@ -1343,23 +1420,27 @@ select {
 .actor .sprite img {
   filter: drop-shadow(0 0 0.1em var(--rc)) drop-shadow(0 0 0.28em var(--rc));
 }
-.actor .sr-ESTRELA_MICHELIN img {
-  filter: drop-shadow(0 0 0.12em var(--c-sp)) drop-shadow(0 0 0.36em rgba(255, 234, 0, 0.7));
+.actor .sr-COMIDA_DE_BUTECO img {
+  filter: drop-shadow(0 0 0.12em var(--c-buteco)) drop-shadow(0 0 0.36em rgba(255, 215, 0, 0.7));
+  animation: butecoAura 1.4s ease-in-out infinite;
 }
-.actor .sr-ESTRELA_MICHELIN img {
-  filter: drop-shadow(0 0 0.12em var(--c-im)) drop-shadow(0 0 0.36em rgba(255, 23, 68, 0.6));
+@keyframes butecoAura {
+  0%, 100% { filter: drop-shadow(0 0 0.12em var(--c-buteco)) drop-shadow(0 0 0.36em rgba(255, 215, 0, 0.7)); }
+  50% { filter: drop-shadow(0 0 0.18em var(--c-buteco)) drop-shadow(0 0 0.5em rgba(255, 215, 0, 0.9)); }
 }
-/* the old Shiny-specific holo-aura (.sr-Shiny, @keyframes auraHolo) is
-   REMOVED entirely per master spec #3/terminology — Shiny no longer exists
-   as a rarity, and its aura is deliberately NOT repurposed for Picante
-   (which gets no special visual treatment yet) or kept alive under a new
-   name. RECEITA_DE_VO (the tier that absorbs old Shiny+Robadasso) keeps
-   only the OLD Robadasso-derived aura below, which was never called out
-   for removal. */
-.actor .sr-RECEITA_DE_VO img { animation: auraRoba 1.2s ease-in-out infinite alternate; }
-@keyframes auraRoba {
-  from { filter: drop-shadow(0 0 0.14em #ff1744) drop-shadow(0 0 0.36em rgba(213, 0, 0, 0.7)); }
-  to { filter: drop-shadow(0 0 0.08em #200000) drop-shadow(0 0 0.44em rgba(0, 0, 0, 0.85)) brightness(1.15); }
+/* Receita de Vó aura (2026-07-23, palette rework): was a red/black pulse
+   (auraRoba, a leftover from the old "Robadasso" legacy tier) — replaced
+   with a genuinely prismatic cycle so the arena aura matches the
+   "prismático brilhante" treatment used everywhere else for this tier
+   (shinyBorder/holoSlide). Same rainbow sequence as those, just as a
+   drop-shadow instead of a border/background color. */
+.actor .sr-RECEITA_DE_VO img { animation: auraPrismatic 3s linear infinite; }
+@keyframes auraPrismatic {
+  0% { filter: drop-shadow(0 0 0.14em #ff5252) drop-shadow(0 0 0.4em rgba(255, 82, 82, 0.7)); }
+  25% { filter: drop-shadow(0 0 0.14em #ffee58) drop-shadow(0 0 0.4em rgba(255, 238, 88, 0.7)); }
+  50% { filter: drop-shadow(0 0 0.14em #69f0ae) drop-shadow(0 0 0.4em rgba(105, 240, 174, 0.7)); }
+  75% { filter: drop-shadow(0 0 0.14em #40c4ff) drop-shadow(0 0 0.4em rgba(64, 196, 255, 0.7)); }
+  100% { filter: drop-shadow(0 0 0.14em #ff5252) drop-shadow(0 0 0.4em rgba(255, 82, 82, 0.7)); }
 }
 
 .sp-skill {
@@ -1411,11 +1492,9 @@ select {
 .reveal-card.r-CASEIRO { border-color: var(--c-common); }
 .reveal-card.r-TEMPERADO { border-color: var(--c-rare); }
 .reveal-card.r-GOURMET { border-color: var(--c-epic); }
-.reveal-card.r-CHEF_RENOMADO { border-color: var(--c-legendary); }
-.reveal-card.r-ESTRELA_MICHELIN { border-color: var(--c-sp); }
-.reveal-card.r-ESTRELA_MICHELIN { border-color: var(--c-im); }
-.reveal-card.r-RECEITA_DE_VO { border-color: #b388ff; }
-.reveal-card.r-RECEITA_DE_VO { border-color: var(--c-im); }
+.reveal-card.r-ESPECIALIDADE_DA_CASA { border-color: var(--c-legendary); }
+.reveal-card.r-COMIDA_DE_BUTECO { border-color: var(--c-buteco); animation: butecoShine 1.4s ease-in-out infinite; }
+/* RECEITA_DE_VO: covered by the combined shinyBorder animation selector. */
 @keyframes cardIn {
   from { transform: scale(0.5) rotateY(120deg); opacity: 0; }
   to { transform: scale(1) rotateY(0); opacity: 1; }
@@ -1589,11 +1668,133 @@ body.shaking { animation: bodyShake 0.5s ease-in-out 2; }
 #modal .pull-item.r-CASEIRO { border-left-color: var(--c-common); }
 #modal .pull-item.r-TEMPERADO { border-left-color: var(--c-rare); }
 #modal .pull-item.r-GOURMET { border-left-color: var(--c-epic); }
-#modal .pull-item.r-CHEF_RENOMADO { border-left-color: var(--c-legendary); }
-#modal .pull-item.r-ESTRELA_MICHELIN { border-left-color: var(--c-sp); }
-#modal .pull-item.r-ESTRELA_MICHELIN { border-left-color: var(--c-im); }
-#modal .pull-item.r-RECEITA_DE_VO { border-left-color: #b388ff; animation: shinyBorder 3s linear infinite; }
-#modal .pull-item.r-RECEITA_DE_VO { border-left-color: var(--c-im); animation: robaBorder 1.1s ease-in-out infinite alternate; }
+#modal .pull-item.r-ESPECIALIDADE_DA_CASA { border-left-color: var(--c-legendary); }
+#modal .pull-item.r-COMIDA_DE_BUTECO { border-left-color: var(--c-buteco); animation: butecoShine 1.4s ease-in-out infinite; }
+#modal .pull-item.r-RECEITA_DE_VO { border-left-color: #ff5252; animation: shinyBorder 3s linear infinite; }
+
+/* ===== Roda da Sorte panel (2026-07-23, REPOSITIONED per user feedback) =====
+   Used to render inside the shared #modal-backdrop/#modal-body as a
+   centered, full-screen-dimming modal — moved into this dedicated fixed
+   panel instead (positionWheelPanel() in game.js computes its exact
+   top/left/width from the real "Rangos Ativos" sidebar's live bounding box,
+   with a fixed-corner fallback for any tab where that sidebar doesn't
+   exist), so browsing odds / spinning no longer blocks the whole screen.
+   The prize REVEAL after a spin lands still uses the shared modal system
+   below (a real celebration moment deliberately keeps taking over the full
+   screen) — only this resting/browsing UI moved out of it. */
+.wheel-panel {
+  position: fixed;
+  z-index: 55; /* same layer as the FAB — well below #modal-backdrop's 150, so a reveal on top of it still fully takes over */
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(0, 0, 0, 0.25) inset;
+  padding: 14px;
+  max-height: 60vh;
+  overflow-y: auto;
+  text-align: center;
+}
+.wheel-panel.hidden { display: none; }
+.wheel-panel-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font-size: 0.8rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.wheel-panel-close:hover { background: rgba(0, 0, 0, 0.4); }
+.wheel-frame {
+  position: relative;
+  width: 240px;
+  height: 240px;
+  margin: 8px auto 16px;
+  max-width: 100%;
+}
+.wheel-pointer {
+  position: absolute;
+  top: -16px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 1.5rem;
+  z-index: 2;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.45));
+}
+/* the actual pizza: 8 equal 45° slices via conic-gradient (built in JS —
+   wheelConicGradient() — from WHEEL_SLOTS/WHEEL_SLICE_COLORS so the CSS
+   never needs to hardcode 8 stops by hand). transition duration here MUST
+   stay in sync with WHEEL_SPIN_ANIM_MS in game.js (both are 3200ms/3.2s) —
+   that's what the setTimeout in spinWheel() waits on before revealing the
+   prize, so a mismatch would either cut the spin short or reveal the prize
+   before the wheel visually finishes turning. */
+.wheel-canvas {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 6px solid #3d2b1a;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), inset 0 0 0 3px rgba(255, 255, 255, 0.15);
+  position: relative;
+  transition: transform 3.2s cubic-bezier(0.17, 0.67, 0.12, 0.99);
+}
+.wheel-labels { position: absolute; inset: 0; }
+.wheel-label {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  font-size: 0.74rem;
+  font-weight: 800;
+  color: #2a1a08;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+  white-space: nowrap;
+}
+.wheel-hub {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #3d2b1a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  transition: width 0.2s ease, height 0.2s ease;
+}
+/* Once both the free AND paid spins are exhausted for this cycle
+   (2026-07-23, user-requested — the exact spot circled on their
+   screenshot): the hub grows a bit and shows a live "Xh<br>Ym" countdown
+   instead of just sitting on the idle pizza emoji. wheelHubHtml() in
+   game.js decides which; refreshWheelPanelLive() keeps it ticking. */
+.wheel-hub.locked { width: 64px; height: 64px; }
+.wheel-hub-countdown {
+  font-size: 0.62rem;
+  font-weight: 800;
+  color: #ffd54f;
+  line-height: 1.15;
+  text-align: center;
+}
+/* ----- Roda da Sorte's coin-prize reveal (2026-07-23) -----
+   Reuses .reveal-wrap/.reveal-card/.reveal-controls (the shared reveal
+   layout every other reward reveal in this file already uses) for spacing/
+   framing — only these 3 rules are new, for the parts a hero-reveal card
+   has no equivalent of (there's no sprite/stats to show for a plain coin
+   amount). Icon is the REAL food_coin.png currency asset (same one the
+   header pill uses, just bigger here) — not the retired 🪙 emoji, which an
+   existing test explicitly guards against reappearing anywhere in the
+   codebase (see game.js's own currency-rename cleanup). */
+.wheel-prize-card { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.wheel-prize-icon { width: 64px; height: 64px; object-fit: contain; }
+.wheel-prize-amount { font-size: 1.6rem; font-weight: 800; color: var(--accent2); }
+.wheel-prize-label { color: var(--muted); font-weight: 600; }
 
 /* ===== Mandatory login gate (2026-07-23) =====
    The game shell stays hidden and #login-screen stays visible until
@@ -1606,7 +1807,9 @@ body.shaking { animation: bodyShake 0.5s ease-in-out 2; }
 body:not(.ff-authed) #login-screen { display: flex; }
 body:not(.ff-authed) header.ff-hud-header,
 body:not(.ff-authed) #shell,
-body:not(.ff-authed) #bottom-nav { display: none; }
+body:not(.ff-authed) #bottom-nav,
+body:not(.ff-authed) #wheel-fab,
+body:not(.ff-authed) #wheel-panel { display: none; }
 
 #login-screen {
   position: fixed;
@@ -1866,9 +2069,8 @@ body:not(.ff-authed) #bottom-nav { display: none; }
 .ff-card.r-CASEIRO { box-shadow: 0 0 0 3px var(--c-common) inset, var(--ff-shadow-hard); }
 .ff-card.r-TEMPERADO { box-shadow: 0 0 0 3px var(--c-rare) inset, var(--ff-shadow-hard); }
 .ff-card.r-GOURMET { box-shadow: 0 0 0 3px var(--c-epic) inset, var(--ff-shadow-hard); }
-.ff-card.r-CHEF_RENOMADO { box-shadow: 0 0 0 3px var(--c-legendary) inset, var(--ff-shadow-hard); }
-.ff-card.r-ESTRELA_MICHELIN { box-shadow: 0 0 0 3px var(--c-sp) inset, var(--ff-shadow-hard); }
-.ff-card.r-ESTRELA_MICHELIN { box-shadow: 0 0 0 3px var(--c-im) inset, var(--ff-shadow-hard); }
+.ff-card.r-ESPECIALIDADE_DA_CASA { box-shadow: 0 0 0 3px var(--c-legendary) inset, var(--ff-shadow-hard); }
+.ff-card.r-COMIDA_DE_BUTECO { box-shadow: 0 0 0 3px var(--c-buteco) inset, var(--ff-shadow-hard); animation: butecoShine 1.4s ease-in-out infinite; }
 .ff-card.r-RECEITA_DE_VO { animation: ffHoloRing 2.5s linear infinite; }
 @keyframes ffHoloRing {
   0% { box-shadow: 0 0 0 3px #ff5252 inset, var(--ff-shadow-hard); }
@@ -1876,11 +2078,6 @@ body:not(.ff-authed) #bottom-nav { display: none; }
   50% { box-shadow: 0 0 0 3px #69f0ae inset, var(--ff-shadow-hard); }
   75% { box-shadow: 0 0 0 3px #40c4ff inset, var(--ff-shadow-hard); }
   100% { box-shadow: 0 0 0 3px #ff5252 inset, var(--ff-shadow-hard); }
-}
-.ff-card.r-RECEITA_DE_VO { animation: ffRobaRing 1.1s ease-in-out infinite alternate; }
-@keyframes ffRobaRing {
-  from { box-shadow: 0 0 0 3px #ff1744 inset, var(--ff-shadow-hard); }
-  to { box-shadow: 0 0 0 3px #200000 inset, var(--ff-shadow-hard); }
 }
 
 /* selection state must outrank the rarity ring above — matched specificity
@@ -1953,18 +2150,12 @@ body:not(.ff-authed) #bottom-nav { display: none; }
 .ff-rarity-badge.rarity-CASEIRO { background: var(--c-common); }
 .ff-rarity-badge.rarity-TEMPERADO { background: var(--c-rare); }
 .ff-rarity-badge.rarity-GOURMET { background: var(--c-epic); color: #fff; }
-.ff-rarity-badge.rarity-CHEF_RENOMADO { background: var(--c-legendary); }
-.ff-rarity-badge.rarity-ESTRELA_MICHELIN { background: linear-gradient(105deg, #ffea00, #fff59d, #ffd600); }
-.ff-rarity-badge.rarity-ESTRELA_MICHELIN { background: var(--c-im); color: #fff; }
+.ff-rarity-badge.rarity-ESPECIALIDADE_DA_CASA { background: var(--c-legendary); }
+.ff-rarity-badge.rarity-COMIDA_DE_BUTECO { background: linear-gradient(105deg, #ffea00, #fff59d, #ffd600); animation: butecoShine 1.4s ease-in-out infinite; }
 .ff-rarity-badge.rarity-RECEITA_DE_VO {
   background: linear-gradient(90deg, #ff5252, #ffb300, #ffee58, #69f0ae, #40c4ff, #b388ff, #ff5252);
   background-size: 300% 100%;
   animation: holoSlide 2.5s linear infinite;
-}
-.ff-rarity-badge.rarity-RECEITA_DE_VO {
-  background: linear-gradient(105deg, #d50000, #1a0000, #ff1744, #000, #d50000);
-  background-size: 300% 100%;
-  animation: holoSlide 1.6s linear infinite;
   color: #fff;
 }
 
@@ -2110,9 +2301,16 @@ body:not(.ff-authed) #bottom-nav { display: none; }
 .ff-details.r-CASEIRO { box-shadow: 0 0 0 3px var(--c-common) inset, var(--ff-shadow-hard); }
 .ff-details.r-TEMPERADO { box-shadow: 0 0 0 3px var(--c-rare) inset, var(--ff-shadow-hard); }
 .ff-details.r-GOURMET { box-shadow: 0 0 0 3px var(--c-epic) inset, var(--ff-shadow-hard); }
-.ff-details.r-CHEF_RENOMADO { box-shadow: 0 0 0 3px var(--c-legendary) inset, var(--ff-shadow-hard); }
-.ff-details.r-ESTRELA_MICHELIN { box-shadow: 0 0 0 3px var(--c-im) inset, var(--ff-shadow-hard); }
-.ff-details.r-RECEITA_DE_VO { box-shadow: 0 0 0 3px #ff1744 inset, var(--ff-shadow-hard); }
+.ff-details.r-ESPECIALIDADE_DA_CASA { box-shadow: 0 0 0 3px var(--c-legendary) inset, var(--ff-shadow-hard); }
+.ff-details.r-COMIDA_DE_BUTECO { box-shadow: 0 0 0 3px var(--c-buteco) inset, var(--ff-shadow-hard); animation: butecoShine 1.4s ease-in-out infinite; }
+.ff-details.r-RECEITA_DE_VO { animation: ffHoloRingDetails 2.5s linear infinite; }
+@keyframes ffHoloRingDetails {
+  0% { box-shadow: 0 0 0 3px #ff5252 inset, var(--ff-shadow-hard); }
+  25% { box-shadow: 0 0 0 3px #ffee58 inset, var(--ff-shadow-hard); }
+  50% { box-shadow: 0 0 0 3px #69f0ae inset, var(--ff-shadow-hard); }
+  75% { box-shadow: 0 0 0 3px #40c4ff inset, var(--ff-shadow-hard); }
+  100% { box-shadow: 0 0 0 3px #ff5252 inset, var(--ff-shadow-hard); }
+}
 
 .ff-empty-state {
   flex: 1 1 auto;
@@ -2240,18 +2438,12 @@ body:not(.ff-authed) #bottom-nav { display: none; }
 .ff-chip-rarity.rarity-CASEIRO { background: var(--c-common); }
 .ff-chip-rarity.rarity-TEMPERADO { background: var(--c-rare); }
 .ff-chip-rarity.rarity-GOURMET { background: var(--c-epic); color: #fff; }
-.ff-chip-rarity.rarity-CHEF_RENOMADO { background: var(--c-legendary); }
-.ff-chip-rarity.rarity-ESTRELA_MICHELIN { background: linear-gradient(105deg, #ffea00, #fff59d, #ffd600); }
-.ff-chip-rarity.rarity-ESTRELA_MICHELIN { background: var(--c-im); color: #fff; }
+.ff-chip-rarity.rarity-ESPECIALIDADE_DA_CASA { background: var(--c-legendary); }
+.ff-chip-rarity.rarity-COMIDA_DE_BUTECO { background: linear-gradient(105deg, #ffea00, #fff59d, #ffd600); animation: butecoShine 1.4s ease-in-out infinite; }
 .ff-chip-rarity.rarity-RECEITA_DE_VO {
   background: linear-gradient(90deg, #ff5252, #ffb300, #ffee58, #69f0ae, #40c4ff, #b388ff, #ff5252);
   background-size: 300% 100%;
   animation: holoSlide 2.5s linear infinite;
-}
-.ff-chip-rarity.rarity-RECEITA_DE_VO {
-  background: linear-gradient(105deg, #d50000, #1a0000, #ff1744, #000, #d50000);
-  background-size: 300% 100%;
-  animation: holoSlide 1.6s linear infinite;
   color: #fff;
 }
 .ff-chip-level { color: var(--ff-paper); background: var(--ff-petrol-800); }

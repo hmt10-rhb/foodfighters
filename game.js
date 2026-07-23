@@ -12,6 +12,7 @@ const SAVE_KEY = 'foodfighters-save-v1';
 // afterward (harmless leftover), never deleted.
 const OLD_SAVE_KEY = 'bombheroes-save-v1';
 const EXCHANGE_RATE = 10;          // 10 Food Coins -> 1 Chef Gems
+const MICHELIN_EXCHANGE_RATE = 5;  // 1 Estrela Michelin -> 5 Chef Gems (one-way only, see michelinExchange())
 // ENERGY MODEL REWORK (2026-07-23): base rest recovery is now a fixed 1
 // energy per MINUTE (was 0.25/s under the old continuous-drain model — a
 // ~15x reduction) — houses and Cafeinado (see recoveryRateFor()) are the
@@ -23,10 +24,10 @@ const EXCHANGE_RATE = 10;          // 10 Food Coins -> 1 Chef Gems
 const BASE_RECOVERY = 1 / 60;      // energy/s while resting (1 per minute), before house/Cafeinado bonuses
 const OFFLINE_CAP_S = 8 * 3600;    // away-progress cap so a week offline doesn't print money
 const MAX_WORKERS = 15;            // roster-wide cap on simultaneous fielded heroes
-// VIP (2026-07-23, mechanics-only pass): expiresAt is a plain future
-// timestamp; 0 or past means inactive. Mechanics-only for now — nothing
-// actually SELLS VIP yet (see vipDebugGrant() for the temporary manual
-// activation used to test this until real PIX payment collection exists).
+// VIP (2026-07-23): expiresAt is a plain future timestamp; 0 or past means
+// inactive. Bought with Estrela Michelin only (see buyVip()) — real PIX
+// payment collection to acquire Michelin itself isn't wired up yet (see
+// michelinDebugGrant() for the temporary manual stand-in).
 function isVipActive() { return state.vip && state.vip.expiresAt > Date.now(); }
 // Perk #2: VIP fields 1 extra simultaneous worker (16 instead of 15).
 // Replaces every direct MAX_WORKERS reference in live gameplay logic —
@@ -58,7 +59,7 @@ const SKILL_CHANCE = 0.07;
    that no longer exists) are a DELIBERATE, flagged exception — see
    canAscend() and the session report for why that was left exactly as-is
    rather than remapped to a new-tier equivalent. */
-const RARITIES = ['CASEIRO', 'TEMPERADO', 'GOURMET', 'CHEF_RENOMADO', 'ESTRELA_MICHELIN', 'RECEITA_DE_VO'];
+const RARITIES = ['CASEIRO', 'TEMPERADO', 'GOURMET', 'ESPECIALIDADE_DA_CASA', 'COMIDA_DE_BUTECO', 'RECEITA_DE_VO'];
 
 // ===== 5-STAT REWORK (2026-07-23): Poder/Speed/Tamanho/Bombas/Stamina =====
 // Replaces the old power/range/speed/maxEnergy curve entirely. FIELD NAMES
@@ -80,9 +81,9 @@ const RARITY_CONF = {
   CASEIRO:          { label: 'Caseiro',          power: [1, 3],   speed: [1, 3],   range: [1, 1], bombas: [1, 1], stamina: [1, 3],   sigla: 'C' },
   TEMPERADO:        { label: 'Temperado',        power: [3, 5],   speed: [1, 5],   range: [1, 2], bombas: [1, 2], stamina: [3, 5],   sigla: 'T' },
   GOURMET:          { label: 'Gourmet',          power: [4, 9],   speed: [5, 9],   range: [1, 2], bombas: [1, 2], stamina: [5, 9],   sigla: 'G' },
-  CHEF_RENOMADO:    { label: 'Chef Renomado',    power: [6, 11],  speed: [6, 11],  range: [2, 3], bombas: [2, 3], stamina: [6, 11],  sigla: 'CR' },
-  ESTRELA_MICHELIN: { label: 'Estrela Michelin', power: [9, 15],  speed: [10, 15], range: [4, 4], bombas: [4, 5], stamina: [10, 15], sigla: 'ME' },
-  RECEITA_DE_VO:    { label: 'Receita de Vó',    power: [14, 20], speed: [14, 20], range: [5, 6], bombas: [5, 6], stamina: [14, 20], sigla: 'VÓ' },
+  ESPECIALIDADE_DA_CASA: { label: 'Especialidade da Casa', power: [6, 11],  speed: [6, 11],  range: [2, 3], bombas: [2, 3], stamina: [6, 11],  sigla: 'EC' },
+  COMIDA_DE_BUTECO:      { label: 'Comida de Buteco',      power: [9, 15],  speed: [10, 15], range: [4, 4], bombas: [4, 5], stamina: [10, 15], sigla: 'CB' },
+  RECEITA_DE_VO:         { label: 'Receita de Vó',         power: [14, 20], speed: [14, 20], range: [5, 6], bombas: [5, 6], stamina: [14, 20], sigla: 'VÓ' },
 };
 // maxEnergy is no longer a fixed RARITY_CONF number — it's derived from
 // each hero's own ROLLED stamina (Stamina x 50). Every former
@@ -106,9 +107,21 @@ function rSigla(r) { return (RARITY_CONF[r] && RARITY_CONF[r].sigla) || r; }
 // string onto its new-tier equivalent, using the exact same interpolation
 // RARITY_CONF itself was built from.
 const LEGACY_RARITY_MIGRATION = {
-  Common: 'CASEIRO', Rare: 'TEMPERADO', Epic: 'GOURMET', Legendary: 'CHEF_RENOMADO',
-  SuperLegendario: 'ESTRELA_MICHELIN', Imortal: 'ESTRELA_MICHELIN',
+  Common: 'CASEIRO', Rare: 'TEMPERADO', Epic: 'GOURMET', Legendary: 'ESPECIALIDADE_DA_CASA',
+  SuperLegendario: 'COMIDA_DE_BUTECO', Imortal: 'COMIDA_DE_BUTECO',
   Shiny: 'RECEITA_DE_VO', Robadasso: 'RECEITA_DE_VO',
+  // RENAME MIGRATION (2026-07-23): CHEF_RENOMADO/ESTRELA_MICHELIN were real
+  // RARITY_CONF keys until this rename (the tier names, not the currency —
+  // "Estrela Michelin" the tier and "Estrela Michelin" the new premium
+  // currency are two unrelated things that happened to collide on the same
+  // name, which is exactly WHY the tier got renamed to Comida de Buteco).
+  // Any existing hero save still has these old key strings stored in
+  // h.rarity — without this entry they'd fail the RARITY_CONF[h.rarity]
+  // lookup in load() and get silently downgraded to CASEIRO, a real loss
+  // for existing players. Maps 1:1 to the new key at the same tier, not a
+  // stat change.
+  CHEF_RENOMADO: 'ESPECIALIDADE_DA_CASA',
+  ESTRELA_MICHELIN: 'COMIDA_DE_BUTECO',
 };
 
 /* ===== Picante — independent variant, NOT a 7th rarity (master spec #3) =====
@@ -136,9 +149,9 @@ const PICANTE_STAT_BONUS = {
   CASEIRO:          { power: [1, 2], speed: [0, 0], stamina: [1, 1] },
   TEMPERADO:        { power: [1, 2], speed: [1, 1], stamina: [1, 2] },
   GOURMET:          { power: [2, 3], speed: [2, 2], stamina: [1, 3] },
-  CHEF_RENOMADO:    { power: [3, 4], speed: [2, 3], stamina: [2, 3] },
-  ESTRELA_MICHELIN: { power: [4, 6], speed: [3, 3], stamina: [3, 4] },
-  RECEITA_DE_VO:    { power: [5, 7], speed: [3, 5], stamina: [3, 5] },
+  ESPECIALIDADE_DA_CASA: { power: [3, 4], speed: [2, 3], stamina: [2, 3] },
+  COMIDA_DE_BUTECO:      { power: [4, 6], speed: [3, 3], stamina: [3, 4] },
+  RECEITA_DE_VO:         { power: [5, 7], speed: [3, 5], stamina: [3, 5] },
 };
 // Applies the bonus in place and returns the same object (matches the old
 // no-op's return-the-input contract). Only ever meaningful for a hero whose isSpicy is
@@ -228,9 +241,9 @@ const SKILL_ROLL_TABLE = {
   CASEIRO:          { basic1: 0.10, basic2: 0.02, power1: 0.00, power2: 0.00 },
   TEMPERADO:        { basic1: 0.30, basic2: 0.07, power1: 0.00, power2: 0.00 },
   GOURMET:          { basic1: 1.00, basic2: 0.20, power1: 0.00, power2: 0.00 },
-  CHEF_RENOMADO:    { basic1: 1.00, basic2: 0.35, power1: 0.20, power2: 0.05 },
-  ESTRELA_MICHELIN: { basic1: 1.00, basic2: 0.55, power1: 0.60, power2: 0.20 },
-  RECEITA_DE_VO:    { basic1: 1.00, basic2: 0.75, power1: 1.00, power2: 0.50 },
+  ESPECIALIDADE_DA_CASA: { basic1: 1.00, basic2: 0.35, power1: 0.20, power2: 0.05 },
+  COMIDA_DE_BUTECO:      { basic1: 1.00, basic2: 0.55, power1: 0.60, power2: 0.20 },
+  RECEITA_DE_VO:         { basic1: 1.00, basic2: 0.75, power1: 1.00, power2: 0.50 },
 };
 function rollSkillsForRarity(rarity) {
   const t = SKILL_ROLL_TABLE[rarity];
@@ -291,8 +304,8 @@ const FUSE_SUCCESS_CHANCE = {
   CASEIRO: 0.95,
   TEMPERADO: 0.80,
   GOURMET: 0.55,
-  CHEF_RENOMADO: 0.25,
-  ESTRELA_MICHELIN: 0.06,
+  ESPECIALIDADE_DA_CASA: 0.25,
+  COMIDA_DE_BUTECO: 0.06,
 };
 // a successful fusion can leap +2 tiers instead of +1 (clamped at RECEITA_DE_VO)
 const FUSE_BONUS_JUMP = 0.18;
@@ -307,7 +320,7 @@ const FUSE_BONUS_JUMP = 0.18;
    helper the Jaula table below also uses — see master spec #12). */
 const SHOP_RARITY_WEIGHTS = {
   CASEIRO: 0.8287, TEMPERADO: 0.1036, GOURMET: 0.0518,
-  CHEF_RENOMADO: 0.0104, ESTRELA_MICHELIN: 0.0052, RECEITA_DE_VO: 0.0004,
+  ESPECIALIDADE_DA_CASA: 0.0104, COMIDA_DE_BUTECO: 0.0052, RECEITA_DE_VO: 0.0004,
 };
 const PACKS = [
   { size: 1,  cost: 20 },
@@ -480,6 +493,15 @@ function defaultState() {
     // Starting Chef Gems (2026-07-23, balance tweak): 500 -> 200 — exactly
     // enough for one x10 pack at the current PACKS pricing (20/100/200/300).
     bcoin: 200,
+    // Estrela Michelin (2026-07-23, 3-currency restructure): the premium
+    // currency, real-money-only (PIX — not implemented yet, see
+    // michelinDebugGrant()'s own comment). Named after
+    // the SAME words as the old top-but-one rarity tier on purpose — that's
+    // exactly why that tier got renamed to Comida de Buteco (ESPECIALIDADE_
+    // DA_CASA/COMIDA_DE_BUTECO's own migration comment in
+    // LEGACY_RARITY_MIGRATION explains the collision). Starts at 0 — no
+    // starter grant, unlike bcoin.
+    michelinCoin: 0,
     starCore: 0,
     totalMined: 0,
     // Food Coins earned on the CURRENT map specifically (2026-07-23) — unlike
@@ -524,16 +546,16 @@ function defaultState() {
     skillShards: 0,
     breeds: 0,
     ascensions: 0,
-    // VIP (2026-07-23, mechanics-only pass — no real payment wired up yet,
-    // see vipDebugGrant()): expiresAt is a plain timestamp, 0/past means
-    // inactive. autoWorkPct is the shared threshold (10-100, step 10) for
-    // perk #1 — a single global setting, not per-Rango (only WHICH Rangos
-    // opt in is per-Rango, via h.autoWork).
+    // VIP (2026-07-23): bought with Estrela Michelin (see buyVip()).
+    // expiresAt is a plain timestamp, 0/past means inactive. autoWorkPct is
+    // the shared threshold (10-100, step 10) for perk #1 — a single global
+    // setting, not per-Rango (only WHICH Rangos opt in is per-Rango, via
+    // h.autoWork).
     vip: { expiresAt: 0, autoWorkPct: 100, lastRerollAt: 0 },
     // "Mais Apimentado" lure (2026-07-23): +50% on the Jaula spawn chance
-    // while expiresAt is in the future. Duration accumulates freely across
-    // purchases (see vipDebugGrant()/grantPicanteBoost()); the +50% itself
-    // never stacks no matter how much duration is banked — see
+    // while expiresAt is in the future. Bought with Estrela Michelin (see
+    // buyPicanteBoost()). Duration accumulates freely across purchases; the
+    // +50% itself never stacks no matter how much duration is banked — see
     // jaulaSpawnChance()'s own comment for why that's a deliberate cap.
     picanteBoost: { expiresAt: 0 },
     // Roda da Sorte (2026-07-23) — see WHEEL_SLOTS/spinWheel() for the full
@@ -1138,7 +1160,7 @@ function economyTick() {
   }
   syncActors();
   renderHeader();
-  refreshWheelButtonIfOpen(); // keeps "Volte em Xh Ym"/button state live if the Roda da Sorte modal happens to be open
+  refreshWheelPanelLive(); // keeps the panel's button/hub countdown live if the Roda da Sorte panel happens to be open
   const active = document.querySelector('.tab-panel.active').id;
   if (active === 'tab-hunt') renderHunt();
   else if (active === 'tab-inventory') updateInventoryLive();
@@ -2647,29 +2669,62 @@ function toggleAutoWork(id, checked) {
   save();
 }
 
-// TEMPORARY manual test hooks (2026-07-23) — no real PIX payment collection
-// exists yet (would need a payment gateway + a Supabase Edge Function to
-// confirm/grant, similar to the existing admin-grant-currency function).
-// These stand in for "a successful payment just happened" so the mechanics
-// above (auto work/rest, +1 slot, reroll, Jaula boost) are actually
-// testable end to end. Wired to debug-only buttons in Extras — replace the
-// CALL SITE with a real payment-confirmation webhook later; these functions
-// themselves (the actual granting logic) can very plausibly stay as-is.
-function vipDebugGrant(days) {
+// Real Estrela Michelin prices (2026-07-23, closed in design discussion —
+// see FF - Monetização e VIP in Obsidian) — VIP and "Mais Apimentado" are
+// exclusive to the Michelin shop now, no free debug grant of the perks
+// themselves anymore. Keys are the same days/hours values the buttons in
+// Extras already pass (vipDebugGrant(1/7/30), picanteBoostDebugGrant
+// (1/3/6/12/24) before this rewrite) so the call sites barely changed.
+const VIP_MICHELIN_PRICE = { 1: 2, 7: 7, 30: 16 };
+const LURE_MICHELIN_PRICE = { 1: 1, 3: 2, 6: 3, 12: 6, 24: 10 };
+
+function buyVip(days) {
+  const cost = VIP_MICHELIN_PRICE[days];
+  if (!cost) return;
+  if ((state.michelinCoin || 0) < cost) {
+    toast(`Precisa de ${cost} 🌟 Estrela Michelin (você tem ${state.michelinCoin || 0}).`);
+    return;
+  }
+  state.michelinCoin -= cost;
   const now = Date.now();
   const base = isVipActive() ? state.vip.expiresAt : now;
   state.vip.expiresAt = base + days * 86400 * 1000;
   save();
+  renderHeader();
   renderExtras();
-  toast(`✅ VIP +${days}d (debug) — expira em ${new Date(state.vip.expiresAt).toLocaleString()}`);
+  toast(`👑 VIP +${days}d (−${cost} 🌟) — expira em ${new Date(state.vip.expiresAt).toLocaleString()}`);
 }
-function picanteBoostDebugGrant(hours) {
+
+function buyPicanteBoost(hours) {
+  const cost = LURE_MICHELIN_PRICE[hours];
+  if (!cost) return;
+  if ((state.michelinCoin || 0) < cost) {
+    toast(`Precisa de ${cost} 🌟 Estrela Michelin (você tem ${state.michelinCoin || 0}).`);
+    return;
+  }
+  state.michelinCoin -= cost;
   const now = Date.now();
   const base = isPicanteBoostActive() ? state.picanteBoost.expiresAt : now;
   state.picanteBoost.expiresAt = base + hours * 3600 * 1000;
   save();
+  renderHeader();
   renderExtras();
-  toast(`🌶️ Mais Apimentado +${hours}h (debug) — expira em ${new Date(state.picanteBoost.expiresAt).toLocaleString()}`);
+  toast(`🌶️ Mais Apimentado +${hours}h (−${cost} 🌟) — expira em ${new Date(state.picanteBoost.expiresAt).toLocaleString()}`);
+}
+
+// TEMPORARY manual test hook (2026-07-23) — no real PIX payment collection
+// exists yet (would need a payment gateway + a Supabase Edge Function to
+// confirm/grant, similar to the existing admin-grant-currency function).
+// Stands in for "a successful Estrela Michelin purchase just happened" so
+// buyVip()/buyPicanteBoost() above (the REAL spend logic) are actually
+// testable end to end. Wired to a debug-only button in Extras — replace the
+// CALL SITE with a real payment-confirmation webhook later.
+function michelinDebugGrant(amount) {
+  state.michelinCoin = (state.michelinCoin || 0) + amount;
+  save();
+  renderHeader();
+  renderExtras();
+  toast(`🌟 +${amount} Estrela Michelin (debug — sem PIX real ainda)`);
 }
 
 // wave walls can appear under a standing hero; shove them onto open floor
@@ -2838,7 +2893,7 @@ function wheelPaidAvailable() {
 }
 
 // Applies whatever WHEEL_SLOTS entry was rolled. Returns a small descriptive
-// object the caller (spinWheel()) uses for the toast/result text — never
+// object the caller (spinWheel()) uses to decide/build the reveal — never
 // mutates anything itself beyond the actual prize grant.
 function applyWheelPrize(slot) {
   if (slot.kind === 'pack') {
@@ -2850,10 +2905,7 @@ function applyWheelPrize(slot) {
     // refund standing in for one.
     const hero = makeHero(rollRarity(SHOP_RARITY_WEIGHTS));
     state.heroes.push(hero);
-    return {
-      toastMsg: `🎡 Roda da Sorte: Pack Unidade grátis — ${hero.emoji} ${hero.name} (${rLabel(hero.rarity)})!`,
-      hero,
-    };
+    return { hero };
   }
   // coins: a flat Food Coin amount, credited to both the spendable balance
   // AND the lifetime total — but deliberately NOT state.mapEarned. The
@@ -2863,7 +2915,7 @@ function applyWheelPrize(slot) {
   // defaultState()) — a wheel spin can happen with no map even loaded.
   state.starCore += slot.amount;
   state.totalMined += slot.amount;
-  return { toastMsg: `🎡 Roda da Sorte: +${fmtCurrency(slot.amount)} Food Coins!` };
+  return { amount: slot.amount };
 }
 
 let wheelSpinInProgress = false; // ephemeral UI-only guard against double-clicking mid-animation; not persisted, same spirit as the module-level `bombs`/`actors` vars
@@ -2898,8 +2950,6 @@ function spinWheel(isPaid) {
   renderHeader(); // reflect the just-spent Chef Gems (paid spin) immediately, don't wait for the animation
   const btn = document.getElementById('wheel-spin-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Girando...'; }
-  const resultEl = document.getElementById('wheel-result');
-  if (resultEl) resultEl.textContent = '';
   animateWheelSpin(slotIndex);
   setTimeout(() => {
     wheelSpinInProgress = false;
@@ -2907,17 +2957,25 @@ function spinWheel(isPaid) {
     save();
     pushCloudSaveThrottled(); // master spec #4 precedent: push right after a reward event (throttled), not just the 30s baseline
     renderHeader();
-    if (outcome.hero) renderInventory();
-    toast(outcome.toastMsg);
-    const resultEl2 = document.getElementById('wheel-result');
-    if (resultEl2) resultEl2.textContent = outcome.toastMsg;
-    // Safe to fully rebuild the modal now — the animation is over, nothing
-    // is mid-transition anymore. This is the ONLY other place besides
-    // openWheelModal() that rebuilds the whole modal body; spinWheel()
-    // itself only ever touches the button/result text directly above,
-    // specifically so it never wipes the wheel-canvas element's in-flight
-    // CSS transition by replacing it mid-spin.
-    renderWheelModal();
+    // REVISED (2026-07-23, user feedback on the live wheel): landing on a
+    // prize used to just toast it and rebuild the panel in place — replaced
+    // with a proper reveal moment, reusing the EXISTING reveal/celebration
+    // system rather than only a toast. A hero prize gets the exact same
+    // rich single-card reveal a real Pack Unidade purchase or a Jaula
+    // rescue already gets (startPackReveal() — animation, stats, "Next"/
+    // Close chrome, all untouched); a coin prize gets its own small new
+    // reveal (startWheelCoinReveal()) that still reuses the shared
+    // spawnRevealFlash()/#modal-backdrop machinery, just with simpler
+    // content (there's no hero to show a stat card for). No separate
+    // toast() call anymore — the reveal itself IS the announcement now,
+    // and double-announcing the same win would be redundant.
+    closeWheelPanel(); // the reveal takes over the shared modal on top of it; the panel underneath should be closed, not left open/stale
+    if (outcome.hero) {
+      renderInventory();
+      startPackReveal([outcome.hero], `🍕 Roda da Sorte — Pack Unidade grátis! Você ganhou:`);
+    } else {
+      startWheelCoinReveal(outcome.amount);
+    }
   }, WHEEL_SPIN_ANIM_MS);
 }
 
@@ -2931,6 +2989,33 @@ function exchange() {
   state.bcoin += whole;
   save();
   toast(`Exchanged ${fmtCurrency(whole * EXCHANGE_RATE)} Food Coins → ${fmtCurrency(whole)} Chef Gems`);
+  renderHeader();
+}
+
+// Estrela Michelin -> Chef Gem, ONE-WAY only (2026-07-23) — no Chef Gem/Food
+// Coin path ever converts back into Michelin. This is the deliberate design
+// principle behind the whole 3-currency split (see FF - Monetização e VIP
+// in Obsidian): Michelin is real-money-only, so letting it flow back out
+// into the grindable currencies is fine (a payer choosing to buy Rango
+// packs instead of VIP/lure), but the reverse would let grinding eventually
+// reach premium-only content, which is exactly what the split exists to
+// prevent.
+//
+// Unlike exchange() (Food->Chef), Michelin is always a whole integer (sold
+// in whole-unit bundles, spent in whole-unit VIP/lure prices — never
+// fractional like Food Coin), so this converts the WHOLE current balance in
+// one go rather than floor-dividing off a remainder.
+function michelinExchange() {
+  const amount = state.michelinCoin || 0;
+  if (amount < 1) {
+    toast('No Estrela Michelin to exchange.');
+    return;
+  }
+  const gained = amount * MICHELIN_EXCHANGE_RATE;
+  state.michelinCoin = 0;
+  state.bcoin += gained;
+  save();
+  toast(`Exchanged ${fmtCurrency(amount)} 🌟 Estrela Michelin → ${fmtCurrency(gained)} Chef Gems`);
   renderHeader();
 }
 
@@ -3403,6 +3488,8 @@ function readyTaskCount() {
 function renderHeader() {
   document.getElementById('bcoin-display').textContent = fmtCurrency(state.bcoin);
   document.getElementById('score-display').textContent = fmtCurrency(state.starCore);
+  const mcoinEl = document.getElementById('michelin-display');
+  if (mcoinEl) mcoinEl.textContent = fmtCurrency(state.michelinCoin || 0);
 
   // mail icon is a real Tasks shortcut now — badge shows how many are ready
   // to claim right now, hidden entirely when there's nothing to claim
@@ -3422,9 +3509,23 @@ function renderHeader() {
 // renderHeader() (itself called every economyTick(), i.e. every real
 // second) so the dot appears the instant the 24h window reopens even if
 // the player never navigates away and back.
+// EXTENDED (2026-07-23, user-requested): also drives a second, much
+// smaller text overlay directly on the FAB (#wheel-fab-timer) showing how
+// long until the next free spin — the badge dot alone only communicates
+// "available right now"; this adds the "how long until it is" half,
+// visible without even opening the panel. Shown exactly when the dot is
+// hidden (free spin not currently available) and vice versa — never both
+// at once, since a countdown to something already available makes no
+// sense.
 function renderWheelBadge() {
   const badge = document.getElementById('wheel-badge');
-  if (badge) badge.classList.toggle('hidden', !wheelFreeAvailable());
+  const free = wheelFreeAvailable();
+  if (badge) badge.classList.toggle('hidden', !free);
+  const timer = document.getElementById('wheel-fab-timer');
+  if (timer) {
+    timer.classList.toggle('hidden', free);
+    if (!free) timer.textContent = fmtWheelCountdown(wheelNextFreeAt() - Date.now());
+  }
 }
 
 // HUD skeleton is static in index.html; per-tick we only fill value slots,
@@ -3778,10 +3879,14 @@ function fmtCountdown(ms) {
   return `${mins}min`;
 }
 
-// VIP + "Mais Apimentado" status/debug panel (2026-07-23, mechanics-only
-// pass — see vipDebugGrant()/picanteBoostDebugGrant() for why the grant
-// buttons here are temporary stand-ins for a real PIX purchase flow).
+// VIP + "Mais Apimentado" status/shop panel (2026-07-23) — both exclusive
+// to the Estrela Michelin shop now (see buyVip()/buyPicanteBoost()); the
+// only remaining "no real payment yet" stand-in is michelinDebugGrant()
+// itself (acquiring Michelin, not spending it).
 function renderExtras() {
+  const balanceEls = document.querySelectorAll('.michelin-balance');
+  balanceEls.forEach(el => { el.textContent = fmtCurrency(state.michelinCoin || 0); });
+
   const vipStatus = document.getElementById('vip-status');
   if (vipStatus) {
     vipStatus.textContent = isVipActive()
@@ -3792,12 +3897,20 @@ function renderExtras() {
   if (autoworkSelect && document.activeElement !== autoworkSelect) {
     autoworkSelect.value = String(state.vip.autoWorkPct);
   }
+  document.querySelectorAll('[data-vip-buy]').forEach(b => {
+    b.disabled = (state.michelinCoin || 0) < VIP_MICHELIN_PRICE[Number(b.dataset.vipBuy)];
+  });
+
   const boostStatus = document.getElementById('picante-boost-status');
   if (boostStatus) {
     boostStatus.textContent = isPicanteBoostActive()
       ? `🌶️ Mais Apimentado ativo — expira em ${fmtCountdown(state.picanteBoost.expiresAt - Date.now())}. +50% na chance de Jaula.`
       : 'Nenhum boost ativo.';
   }
+  document.querySelectorAll('[data-lure-buy]').forEach(b => {
+    b.disabled = (state.michelinCoin || 0) < LURE_MICHELIN_PRICE[Number(b.dataset.lureBuy)];
+  });
+
   updateVipRerollButton();
 }
 
@@ -4085,16 +4198,28 @@ const RARITY_INFO = {
   CASEIRO: `The everyday Rango — the bulk of pack pulls (${fmtPct(SHOP_RARITY_WEIGHTS.CASEIRO)} shop odds). Fuse 9 for a ${Math.round(FUSE_SUCCESS_CHANCE.CASEIRO * 100)}% shot at Temperado.`,
   TEMPERADO: `A real step up. ${fmtPct(SHOP_RARITY_WEIGHTS.TEMPERADO)} shop odds; 9× fusion succeeds ${Math.round(FUSE_SUCCESS_CHANCE.TEMPERADO * 100)}% of the time.`,
   GOURMET: `Heavy hitter. ${fmtPct(SHOP_RARITY_WEIGHTS.GOURMET)} shop odds — or fuse 9 Temperados (${Math.round(FUSE_SUCCESS_CHANCE.TEMPERADO * 100)}%).`,
-  CHEF_RENOMADO: `The first tier that can roll Power skills. ${fmtPct(SHOP_RARITY_WEIGHTS.CHEF_RENOMADO)} shop odds, or fuse 9 Gourmets (${Math.round(FUSE_SUCCESS_CHANCE.GOURMET * 100)}%).`,
-  ESTRELA_MICHELIN: `Genuinely rare. ${fmtPct(SHOP_RARITY_WEIGHTS.ESTRELA_MICHELIN)} shop odds — or a risky 9× Chef Renomado fusion (${Math.round(FUSE_SUCCESS_CHANCE.CHEF_RENOMADO * 100)}%).`,
-  RECEITA_DE_VO: `The ceiling. ${fmtPct(SHOP_RARITY_WEIGHTS.RECEITA_DE_VO)} shop odds, or the ${Math.round(FUSE_SUCCESS_CHANCE.ESTRELA_MICHELIN * 100)}% miracle of fusing 9 Estrela Michelins. Cannot be fused further.`,
+  ESPECIALIDADE_DA_CASA: `The first tier that can roll Power skills. ${fmtPct(SHOP_RARITY_WEIGHTS.ESPECIALIDADE_DA_CASA)} shop odds, or fuse 9 Gourmets (${Math.round(FUSE_SUCCESS_CHANCE.GOURMET * 100)}%).`,
+  COMIDA_DE_BUTECO: `Genuinely rare. ${fmtPct(SHOP_RARITY_WEIGHTS.COMIDA_DE_BUTECO)} shop odds — or a risky 9× Especialidade da Casa fusion (${Math.round(FUSE_SUCCESS_CHANCE.ESPECIALIDADE_DA_CASA * 100)}%).`,
+  RECEITA_DE_VO: `The ceiling. ${fmtPct(SHOP_RARITY_WEIGHTS.RECEITA_DE_VO)} shop odds, or the ${Math.round(FUSE_SUCCESS_CHANCE.COMIDA_DE_BUTECO * 100)}% miracle of fusing 9 Comida de Butecos. Cannot be fused further.`,
 };
 
-/* ============ Roda da Sorte — modal UI (HTML build + spin animation) ============
+/* ============ Roda da Sorte — panel UI (HTML build + spin animation) ============
    Economy/state logic (eligibility, prize granting) lives above near
    buyHouse()/exchange() — this block is purely presentational: building the
-   modal's HTML, the pizza wheel's conic-gradient + label markup, the spin
-   animation, and the button's dual-purpose (free/paid/locked) text. */
+   panel's HTML, the pizza wheel's conic-gradient + label markup, the spin
+   animation, and the button's dual-purpose (free/paid/locked) text.
+
+   REPOSITIONED (2026-07-23, user feedback on the live wheel): this used to
+   render into the shared #modal-backdrop/#modal-body (a centered, full-
+   screen-dimming overlay). Moved into its own dedicated #wheel-panel — a
+   small fixed-position panel anchored under the "Rangos Ativos" sidebar,
+   same general idea as the FAB itself (floats above the game, never blocks
+   the whole view) rather than a full modal takeover. The shared modal
+   system is still reused, just for a DIFFERENT moment now: the prize
+   REVEAL after a spin lands (see spinWheel()/startWheelCoinReveal()) still
+   takes over the full screen, exactly like every other reward reveal in
+   this file already does — only the wheel's own "browse odds / spin"
+   resting UI moved out of it. */
 
 // mm:ss-style would be misleading for a multi-hour wait — "Xh Ym" (or just
 // "Ym" once under an hour) reads clearly at the actual timescale involved.
@@ -4108,10 +4233,10 @@ function fmtWheelCountdown(ms) {
 }
 
 // Single source of truth for the spin button's current label/disabled/mode
-// — read both when first building the modal AND on every periodic refresh
-// (refreshWheelButtonIfOpen(), called from economyTick()) so the countdown
+// — read both when first building the panel AND on every periodic refresh
+// (refreshWheelPanelLive(), called from economyTick()) so the countdown
 // ticks down live and the button flips the instant the 24h window reopens,
-// without needing to close/reopen the modal.
+// without needing to close/reopen the panel.
 function wheelButtonState() {
   if (wheelSpinInProgress) return { label: 'Girando...', disabled: true, mode: '' };
   if (wheelFreeAvailable()) return { label: 'Resgatar Recompensa', disabled: false, mode: 'free' };
@@ -4149,37 +4274,232 @@ function wheelLabelsHtml() {
   }).join('');
 }
 
-function wheelModalHtml() {
+// The pizza's center hub (2026-07-23, user-requested): shows the plain
+// pizza emoji as long as ANY spin (free or paid) is still available this
+// cycle — once BOTH are exhausted, the exact spot the user circled on
+// their screenshot becomes a live countdown to the next free spin instead
+// of just sitting idle. Reuses fmtWheelCountdown() (the same text the
+// button below already showed) rather than a second time-formatting
+// function — just laid out on 2 lines (own CSS) instead of the button's
+// single-line "Volte em Xh Ym", since the hub itself is a small circle.
+function wheelHubHtml() {
+  if (wheelFreeAvailable() || wheelPaidAvailable()) return '🍕';
+  const parts = fmtWheelCountdown(wheelNextFreeAt() - Date.now()).split(' ');
+  return `<span class="wheel-hub-countdown">${parts.join('<br>')}</span>`;
+}
+
+function wheelPanelHtml() {
   const btn = wheelButtonState();
+  const locked = !wheelFreeAvailable() && !wheelPaidAvailable();
   return `
-    <div class="wheel-modal" data-wheel-modal="1">
-      <h3>🍕 Roda da Sorte</h3>
-      <p class="muted" style="margin-bottom:10px">Um giro grátis a cada 24h — 8 fatias, prêmios em Food Coins ou um Rango de graça.</p>
-      <div class="wheel-frame">
-        <div class="wheel-pointer">▼</div>
-        <div class="wheel-canvas" id="wheel-canvas" style="background: ${wheelConicGradient()};">
-          <div class="wheel-labels">${wheelLabelsHtml()}</div>
-          <div class="wheel-hub">🍕</div>
-        </div>
+    <button id="wheel-panel-close" class="wheel-panel-close" title="Fechar">✕</button>
+    <h3>🍕 Roda da Sorte</h3>
+    <p class="muted" style="margin-bottom:10px">Um giro grátis a cada 24h — 8 fatias, prêmios em Food Coins ou um Rango de graça.</p>
+    <div class="wheel-frame">
+      <div class="wheel-pointer">▼</div>
+      <div class="wheel-canvas" id="wheel-canvas" style="background: ${wheelConicGradient()};">
+        <div class="wheel-labels">${wheelLabelsHtml()}</div>
+        <div class="wheel-hub${locked ? ' locked' : ''}">${wheelHubHtml()}</div>
       </div>
-      <div id="wheel-result" class="wheel-result"></div>
-      <button id="wheel-spin-btn" class="btn btn-primary" ${btn.disabled ? 'disabled' : ''} data-mode="${btn.mode}">${btn.label}</button>
     </div>
+    <button id="wheel-spin-btn" class="btn btn-primary" ${btn.disabled ? 'disabled' : ''} data-mode="${btn.mode}">${btn.label}</button>
   `;
 }
 
-// Full rebuild of #modal-body's wheel content — ONLY ever called when
-// opening the modal fresh or right after a spin's animation has already
-// finished (see spinWheel()'s own comment on why it never calls this
-// mid-spin: replacing the DOM mid-transition would wipe out the
-// wheel-canvas element's in-flight CSS animation).
-function renderWheelModal() {
-  document.getElementById('modal-body').innerHTML = wheelModalHtml();
+// Full rebuild of #wheel-panel's content — ONLY ever called when opening
+// the panel fresh or right after a spin's animation has already finished
+// (see spinWheel()'s own comment on why it never calls this mid-spin:
+// replacing the DOM mid-transition would wipe out the wheel-canvas
+// element's in-flight CSS animation).
+function renderWheelPanel() {
+  const panel = document.getElementById('wheel-panel');
+  if (panel) panel.innerHTML = wheelPanelHtml();
 }
 
-function openWheelModal() {
-  renderWheelModal();
-  document.getElementById('modal-backdrop').classList.remove('hidden');
+// Anchors #wheel-panel right under the real "Rangos Ativos" sidebar
+// (#bombers-panel) — computed from its ACTUAL live bounding box (position,
+// width) every time the panel opens, rather than a hardcoded pixel guess,
+// so it stays correctly placed regardless of viewport size, zoom, or how
+// many heroes are currently listed.
+// CLAMPED anchor, not the sidebar's literal true bottom edge (found via a
+// live screenshot check, 2026-07-23): #bombers-panel is a flex:stretch
+// column that fills the WHOLE remaining vertical space next to the arena
+// (it can be 1000px+ tall on a full-height window), even though it only
+// visually READS as a short card with empty dark space below it — its own
+// background blends with the page's, so the "empty space below the list"
+// the user pointed at is actually INSIDE the sidebar's own (very tall,
+// mostly-empty) box, not literally below its DOM bounds. Anchoring at the
+// sidebar's real getBoundingClientRect().bottom would therefore often land
+// the wheel panel far off-screen. Clamping to at most 300px below the
+// sidebar's TOP (roughly a heading + a couple of hero rows) lands it inside
+// that visually-empty region instead, regardless of how tall the sidebar's
+// underlying box actually stretches.
+// FALLBACK: #bombers-panel only exists in the Hunt tab's layout — on any
+// OTHER tab it's not visible (real browsers return an all-zero rect for a
+// display:none element, and the fake test-DOM's getBoundingClientRect()
+// stub is always all-zero too), so this falls back to a fixed corner spot
+// near the FAB instead of anchoring to a nonsensical (0,0).
+function positionWheelPanel() {
+  const panel = document.getElementById('wheel-panel');
+  if (!panel) return;
+  const sidebar = document.getElementById('bombers-panel');
+  const rect = sidebar ? sidebar.getBoundingClientRect() : null;
+  if (rect && rect.width > 0 && rect.height > 0) {
+    const anchorY = Math.min(rect.bottom, rect.top + 300);
+    panel.style.top = (anchorY + 12) + 'px';
+    panel.style.left = rect.left + 'px';
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+    panel.style.width = rect.width + 'px';
+  } else {
+    panel.style.top = 'auto';
+    panel.style.left = 'auto';
+    panel.style.right = '18px';
+    panel.style.bottom = '166px';
+    panel.style.width = '272px'; // matches #bombers-panel's own width for visual consistency even in the fallback spot
+  }
+}
+
+// Ephemeral UI-only open/closed tracking for the panel — NOT read back via
+// classList.contains('hidden') on purpose: that would work fine in a real
+// browser, but relying on it here would make this feature's correctness
+// depend on classList.contains()'s fidelity in ANY environment this code
+// runs in, for no real benefit — a plain flag (same "ephemeral, not
+// persisted" spirit as wheelSpinInProgress above) is simpler, has no such
+// dependency, and is exactly as correct in production.
+let wheelPanelOpen = false;
+
+function toggleWheelPanel() {
+  const panel = document.getElementById('wheel-panel');
+  if (!panel) return;
+  if (wheelPanelOpen) {
+    closeWheelPanel();
+  } else {
+    renderWheelPanel();
+    positionWheelPanel();
+    panel.classList.remove('hidden');
+    wheelPanelOpen = true;
+  }
+}
+
+function closeWheelPanel() {
+  const panel = document.getElementById('wheel-panel');
+  if (panel) panel.classList.add('hidden');
+  wheelPanelOpen = false;
+}
+
+/* ============ Roda da Sorte FAB — draggable positioning (2026-07-23) ============
+   Pointer events (not mouse-only) so a single set of handlers covers both
+   mouse and touch drag identically — this is exactly what pointerdown/
+   pointermove/pointerup unify, per explicit instruction, rather than
+   separate mousedown/touchstart implementations. Persisted to localStorage
+   so a dragged position survives a reload, same "own dedicated key,
+   restored once at boot" pattern SAVE_KEY/USERNAME_KEY already use
+   elsewhere in this file (the OLD bottom-nav-collapse preference used to
+   live in a shared foodfighters-ui blob via loadUiPrefs(), but that whole
+   feature — key, function, and all — was removed 2026-07-23 in an earlier
+   pass this same day; this intentionally does NOT resurrect/reuse that
+   dead key, it's a clean new one scoped to just this). */
+const WHEEL_FAB_POS_KEY = 'foodfighters-wheel-fab-pos';
+const WHEEL_FAB_DRAG_THRESHOLD = 6; // px of pointer movement before a press counts as a genuine drag rather than a click/tap that should open the panel
+
+function saveWheelFabPos(left, top) {
+  try { localStorage.setItem(WHEEL_FAB_POS_KEY, JSON.stringify({ left, top })); } catch (e) {}
+}
+
+function loadWheelFabPos() {
+  try {
+    const raw = localStorage.getItem(WHEEL_FAB_POS_KEY);
+    if (!raw) return null;
+    const pos = JSON.parse(raw);
+    if (typeof pos.left === 'number' && typeof pos.top === 'number') return pos;
+  } catch (e) {}
+  return null;
+}
+
+// Keeps at least the WHOLE fab within the viewport (a strictly stronger,
+// simpler guarantee than "at least part visible" — never lets it become
+// fully unreachable off-screen). Falls back to sane defaults for both the
+// FAB's own size and the viewport size when either is unavailable (the fake
+// test-DOM defines neither window.innerWidth/innerHeight nor a real
+// offsetWidth/offsetHeight, so this must not depend on them to run safely).
+function clampWheelFabPos(left, top) {
+  const fab = document.getElementById('wheel-fab');
+  const w = (fab && fab.offsetWidth) || 56;
+  const h = (fab && fab.offsetHeight) || 56;
+  const vw = (typeof window !== 'undefined' && window.innerWidth) || 1400;
+  const vh = (typeof window !== 'undefined' && window.innerHeight) || 900;
+  return {
+    left: Math.min(Math.max(left, 0), Math.max(0, vw - w)),
+    top: Math.min(Math.max(top, 0), Math.max(0, vh - h)),
+  };
+}
+
+// Applies a position directly (left/top, switching off the default right/
+// bottom anchor) — used by both the live drag (every pointermove) and
+// restoreWheelFabPos() (once, at boot).
+function applyWheelFabPos(left, top) {
+  const fab = document.getElementById('wheel-fab');
+  if (!fab) return;
+  const c = clampWheelFabPos(left, top);
+  fab.style.left = c.left + 'px';
+  fab.style.top = c.top + 'px';
+  fab.style.right = 'auto';
+  fab.style.bottom = 'auto';
+}
+
+function restoreWheelFabPos() {
+  const pos = loadWheelFabPos();
+  if (pos) applyWheelFabPos(pos.left, pos.top);
+}
+
+// null when no pointer is currently down on the FAB; otherwise tracks the
+// press's origin (both the pointer's own start coordinates and the FAB's
+// own on-screen position at press-time) plus whether movement has crossed
+// WHEEL_FAB_DRAG_THRESHOLD yet (the drag/click disambiguator).
+let wheelFabDrag = null;
+
+function wheelFabPointerDown(e) {
+  const fab = document.getElementById('wheel-fab');
+  if (!fab) return;
+  const rect = fab.getBoundingClientRect();
+  wheelFabDrag = { startX: e.clientX, startY: e.clientY, origLeft: rect.left, origTop: rect.top, dragging: false };
+  // Pointer capture keeps this element receiving pointermove/pointerup for
+  // the rest of the gesture even once the cursor/finger moves outside the
+  // FAB's own (small, 56px) bounds — without it, a fast drag would "escape"
+  // the element and stop generating events entirely. Guarded: the fake
+  // test-DOM has no such method at all.
+  if (fab.setPointerCapture) { try { fab.setPointerCapture(e.pointerId); } catch (err) {} }
+}
+
+function wheelFabPointerMove(e) {
+  if (!wheelFabDrag) return;
+  const dx = e.clientX - wheelFabDrag.startX;
+  const dy = e.clientY - wheelFabDrag.startY;
+  if (!wheelFabDrag.dragging && Math.hypot(dx, dy) >= WHEEL_FAB_DRAG_THRESHOLD) {
+    wheelFabDrag.dragging = true;
+    const fab = document.getElementById('wheel-fab');
+    if (fab) fab.classList.add('dragging');
+  }
+  if (wheelFabDrag.dragging) applyWheelFabPos(wheelFabDrag.origLeft + dx, wheelFabDrag.origTop + dy);
+}
+
+// Fires on pointerup OR pointercancel (e.g. a touch gesture interrupted by
+// the OS) — either way the press is over: if it crossed the drag
+// threshold, persist the final position; if it never did, this was a
+// plain click/tap, so open the panel exactly like the old click-listener
+// used to (removed in favor of this — see bindEvents()'s own comment).
+function wheelFabPointerUp(e) {
+  if (!wheelFabDrag) return;
+  const wasDragging = wheelFabDrag.dragging;
+  const fab = document.getElementById('wheel-fab');
+  if (wasDragging) {
+    if (fab) fab.classList.remove('dragging');
+    const rect = fab ? fab.getBoundingClientRect() : { left: 0, top: 0 };
+    saveWheelFabPos(rect.left, rect.top);
+  }
+  wheelFabDrag = null;
+  if (!wasDragging) toggleWheelPanel();
 }
 
 // Purely visual: the actual prize was already decided by rollWheelSlot()
@@ -4188,7 +4508,7 @@ function openWheelModal() {
 // the top. No reflow-forcing reset-then-restore trick is needed here (an
 // established pattern elsewhere in this file for same-tick insert+animate
 // cases, e.g. aiTick()'s corner-cut fix): #wheel-canvas was already
-// inserted and painted once when the modal opened, so this transform
+// inserted and painted once when the panel opened, so this transform
 // change happens on a stable, already-rendered element in a later user-
 // triggered tick — the CSS transition on .wheel-canvas fires normally.
 function animateWheelSpin(slotIndex) {
@@ -4199,22 +4519,21 @@ function animateWheelSpin(slotIndex) {
   el.style.transform = `rotate(${extraTurns * 360 + (360 - mid)}deg)`;
 }
 
-// Keeps the open modal's button (label/disabled/countdown) live-accurate
-// once a second, via economyTick() — e.g. so "Volte em 5m" counts down
-// without needing to close/reopen the modal, and so the button flips to
-// "Resgatar Recompensa" the instant the 24h window elapses while the modal
-// happens to be sitting open. Deliberately touches ONLY the button text/
-// disabled state, never re-renders the wheel-canvas/labels, so it can never
-// interrupt an in-flight spin animation (also guarded by
-// wheelSpinInProgress directly, belt-and-suspenders).
-function refreshWheelButtonIfOpen() {
+// Keeps the open panel (button label/disabled/countdown AND the center-hub
+// countdown) live-accurate once a second, via economyTick() — e.g. so
+// "Volte em 5m" counts down without needing to close/reopen the panel, and
+// so the button/hub flip the instant the 24h window reopens while the
+// panel happens to be sitting open. Rebuilding the whole panel every
+// second is safe/cheap here (unlike the OLD modal-based version, closing
+// the wheel panel the instant a spin lands — see spinWheel() — means this
+// can never run WHILE the wheel-canvas has an in-flight spin transition;
+// wheelSpinInProgress is still checked directly too, belt-and-suspenders).
+// Runs unconditionally (not gated on the panel actually being open) — it's
+// a cheap small-HTML rebuild, and harmless when hidden since it never
+// touches the .hidden class itself.
+function refreshWheelPanelLive() {
   if (wheelSpinInProgress) return;
-  const btn = document.getElementById('wheel-spin-btn');
-  if (!btn) return;
-  const s = wheelButtonState();
-  btn.textContent = s.label;
-  btn.disabled = s.disabled;
-  btn.dataset.mode = s.mode;
+  renderWheelPanel();
 }
 
 function showLegendModal() {
@@ -4278,7 +4597,7 @@ function showLegendModal() {
       <div><b>${SKILL_DEFS.AL_DENTE.label}</b><div class="muted">${SKILL_DEFS.AL_DENTE.text}</div></div>
     </div>
     <h3 style="margin-top:16px">👑 Skills de poder</h3>
-    <p class="muted" style="margin-bottom:8px">Only ever rolled from Chef Renomado upward — never on Caseiro/Temperado/Gourmet. See the rarity guide above for the exact odds per tier.</p>
+    <p class="muted" style="margin-bottom:8px">Only ever rolled from Especialidade da Casa upward — never on Caseiro/Temperado/Gourmet. See the rarity guide above for the exact odds per tier.</p>
     <div class="legend-row">
       <span class="legend-sprite">${SKILL_DEFS.FOLHADO_DE_OURO.icon}</span>
       <div><b>${SKILL_DEFS.FOLHADO_DE_OURO.label}</b><div class="muted">${SKILL_DEFS.FOLHADO_DE_OURO.text}</div></div>
@@ -4313,11 +4632,11 @@ let reveal = null;
 
 // Judgment call (flagged in the session report, not given explicit numbers
 // by the master spec, which doesn't mention pull-reveal celebration at
-// all): CHEF_RENOMADO+ is the new "celebrated" threshold, replacing the old
-// Legendary+ (index 3 of 8) with the same relative "upper tiers" position
-// on the new 6-tier ladder (index 3 of 6).
+// all): ESPECIALIDADE_DA_CASA+ (was CHEF_RENOMADO+, renamed 2026-07-23) is
+// the "celebrated" threshold, same relative "upper tiers" position on the
+// 6-tier ladder (index 3 of 6) — the rename didn't move the threshold.
 function isCelebrated(h) {
-  return RARITIES.indexOf(h.rarity) >= RARITIES.indexOf('CHEF_RENOMADO');
+  return RARITIES.indexOf(h.rarity) >= RARITIES.indexOf('ESPECIALIDADE_DA_CASA');
 }
 
 // speed mode never lets a celebrated card fly by: celebrated pulls always
@@ -4403,17 +4722,60 @@ function startJaulaReveal(hero) {
   startPackReveal([hero], `🔓 Rango libertado! ${rLabel(hero.rarity)} ${hero.name} entra pro seu time:`);
 }
 
+// Roda da Sorte's coin-prize reveal (2026-07-23, user feedback on the live
+// wheel): a hero prize reuses startPackReveal() verbatim (see spinWheel()) —
+// there's no equivalent "card" for a plain currency amount, so this is a
+// small NEW reveal screen, but it deliberately reuses the SAME underlying
+// pieces as every other reveal in this file rather than inventing a
+// separate celebration system: spawnRevealFlash() for the flash (the exact
+// primitive playCelebration()/playPicanteCelebration() themselves use), the
+// same #modal-backdrop/#modal-body host every reveal already renders into,
+// and the same .reveal-wrap/.reveal-card/.reveal-controls layout classes
+// for spacing/framing consistency. cancelReveal() first: guards against a
+// stray leftover hero-reveal `reveal` global/timer (this screen doesn't
+// participate in that state machine at all, so nothing to set here, but a
+// leftover timer from an interrupted PRIOR reveal should still be cleared).
+function startWheelCoinReveal(amount) {
+  cancelReveal();
+  spawnRevealFlash(); // plain default flash (no modifier) — the same "solid, celebratory but not top-tier" treatment an Especialidade da Casa+ hero pull gets
+  document.getElementById('modal-body').innerHTML = `
+    <div class="reveal-wrap">
+      <div class="reveal-card wheel-prize-card">
+        <img class="wheel-prize-icon" src="assets/coins/food_coin.png" alt="Food Coins">
+        <div class="wheel-prize-amount">+${fmtCurrency(amount)}</div>
+        <div class="wheel-prize-label">Food Coins</div>
+      </div>
+      <div class="reveal-controls">
+        <button class="btn" id="wheel-reveal-continue">Continuar</button>
+      </div>
+    </div>`;
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+
 function cancelReveal() {
   if (!reveal) return;
   clearTimeout(reveal.timer);
   reveal = null;
 }
 
-function playCelebration(h) {
+// Shared one-shot flash primitive (extracted 2026-07-23 while adding the
+// Roda da Sorte's own coin-prize reveal): every celebration in this file —
+// playCelebration()'s rarity flash, playPicanteCelebration()'s picante
+// flash, and now the wheel's coin-prize flash — is the exact same "append a
+// full-screen radial-gradient div, remove it 900ms later" primitive, just
+// with a different modifier class controlling the tint. Factored out so the
+// wheel's reveal is a genuine REUSE of the existing celebration mechanism
+// (per explicit instruction), not a parallel reimplementation of it.
+function spawnRevealFlash(extraClass) {
   const flash = document.createElement('div');
-  flash.className = 'reveal-flash' + (h.rarity === 'RECEITA_DE_VO' ? ' mega-flash' : '');
+  flash.className = 'reveal-flash' + (extraClass ? ' ' + extraClass : '');
   document.body.appendChild(flash);
   setTimeout(() => flash.remove(), 900);
+  return flash;
+}
+
+function playCelebration(h) {
+  spawnRevealFlash(h.rarity === 'RECEITA_DE_VO' ? 'mega-flash' : '');
   if (h.rarity === 'RECEITA_DE_VO') {
     const mega = document.createElement('div');
     mega.className = 'mega-overlay';
@@ -4436,10 +4798,7 @@ function playCelebration(h) {
 const PICANTE_PARTICLE_GLYPHS = ['🌶️', '🔥', '✨'];
 const PICANTE_PARTICLE_COUNT = 20;
 function playPicanteCelebration(h) {
-  const flash = document.createElement('div');
-  flash.className = 'reveal-flash picante-flash';
-  document.body.appendChild(flash);
-  setTimeout(() => flash.remove(), 900);
+  spawnRevealFlash('picante-flash');
 
   const card = document.getElementById('reveal-card');
   const rect = card ? card.getBoundingClientRect() : null;
@@ -4557,7 +4916,23 @@ function bindEvents() {
   });
 
   document.getElementById('exchange-btn').addEventListener('click', exchange);
+  document.getElementById('michelin-exchange-btn').addEventListener('click', michelinExchange);
   document.getElementById('legend-btn').addEventListener('click', showLegendModal);
+
+  // Roda da Sorte floating button — draggable (2026-07-23): a plain
+  // 'click' listener is REMOVED on purpose (would double-fire toggleWheelPanel()
+  // alongside wheelFabPointerUp()'s own click-vs-drag logic below, since a
+  // real un-dragged press still generates a native click event too) —
+  // pointerdown/move/up/cancel now own the whole gesture, deciding for
+  // themselves whether it was a drag (reposition + persist) or a plain
+  // click/tap (open the panel, exactly like the old click listener did).
+  // Pointer events (not separate mouse/touch handlers) cover mouse AND
+  // touch drag identically, per explicit instruction.
+  const wheelFab = document.getElementById('wheel-fab');
+  wheelFab.addEventListener('pointerdown', wheelFabPointerDown);
+  wheelFab.addEventListener('pointermove', wheelFabPointerMove);
+  wheelFab.addEventListener('pointerup', wheelFabPointerUp);
+  wheelFab.addEventListener('pointercancel', () => { wheelFabDrag = null; wheelFab.classList.remove('dragging'); });
 
   // Extras is our de facto settings page (Reset, Account, etc.)
   document.getElementById('settings-btn').addEventListener('click', () => switchTab('extras'));
@@ -4652,6 +5027,30 @@ function bindEvents() {
     if (e.target.closest('#reveal-card')) advanceReveal();
   });
 
+  // Roda da Sorte's spin button is dual-purpose (free/paid) — the button's
+  // own data-mode attribute (set by wheelButtonState(), refreshed live by
+  // refreshWheelPanelLive()) says which; a disabled button never fires a
+  // click at all, so no extra guard is needed here beyond reading the mode.
+  // Lives on #wheel-panel now (2026-07-23: moved out of the shared
+  // #modal-backdrop into its own dedicated fixed corner panel — see
+  // toggleWheelPanel()), so this delegation is on the panel, not #modal-body.
+  document.getElementById('wheel-panel').addEventListener('click', e => {
+    if (e.target.closest('#wheel-panel-close')) { closeWheelPanel(); return; }
+    const spinBtn = e.target.closest('#wheel-spin-btn');
+    if (spinBtn) spinWheel(spinBtn.dataset.mode === 'paid');
+  });
+
+  // The wheel's coin-prize reveal (startWheelCoinReveal()) DOES render into
+  // the shared #modal-body — only the pizza wheel itself moved out, the
+  // celebratory reveal moment still reuses the same modal every other
+  // reveal uses. "Continuar" just closes the reveal, same as the generic
+  // #modal-close button already does for every other modal.
+  document.getElementById('modal-body').addEventListener('click', e => {
+    if (e.target.closest('#wheel-reveal-continue')) {
+      document.getElementById('modal-backdrop').classList.add('hidden');
+    }
+  });
+
   document.getElementById('reroll-select').addEventListener('change', updateRerollCost);
   document.getElementById('reroll-btn').addEventListener('click', () => {
     rerollHero(Number(document.getElementById('reroll-select').value));
@@ -4720,16 +5119,21 @@ function bindEvents() {
     toast('Automine package set (cosmetic only in this MVP).');
   });
 
-  // VIP + "Mais Apimentado" (2026-07-23, mechanics-only pass) — see
-  // vipDebugGrant()/picanteBoostDebugGrant()'s own comments for why these
-  // are temporary manual test buttons instead of a real PIX purchase flow.
+  // Estrela Michelin + VIP + "Mais Apimentado" (2026-07-23) — see
+  // michelinDebugGrant()'s own comment for why that one button is a
+  // temporary manual test hook instead of a real PIX purchase flow;
+  // buyVip()/buyPicanteBoost() are the REAL spend logic, not temporary.
+  document.getElementById('michelin-debug-box').addEventListener('click', e => {
+    const b = e.target.closest('[data-michelin-debug]');
+    if (b) michelinDebugGrant(Number(b.dataset.michelinDebug));
+  });
   document.getElementById('vip-box').addEventListener('click', e => {
-    const b = e.target.closest('[data-vip-debug]');
-    if (b) vipDebugGrant(Number(b.dataset.vipDebug));
+    const b = e.target.closest('[data-vip-buy]');
+    if (b) buyVip(Number(b.dataset.vipBuy));
   });
   document.getElementById('picante-boost-box').addEventListener('click', e => {
-    const b = e.target.closest('[data-lure-debug]');
-    if (b) picanteBoostDebugGrant(Number(b.dataset.lureDebug));
+    const b = e.target.closest('[data-lure-buy]');
+    if (b) buyPicanteBoost(Number(b.dataset.lureBuy));
   });
   document.getElementById('vip-autowork-pct').addEventListener('change', e => {
     state.vip.autoWorkPct = Number(e.target.value);
@@ -5181,6 +5585,7 @@ function enterGame() {
   gameStarted = true;
   document.getElementById('ref-code').textContent = `https://foodfighters.example/ref/${state.refCode}`;
   applyTheme(state.activeThemeId);
+  restoreWheelFabPos(); // one-time, same as every other boot-only init call in this block — a dragged position persists across reloads/re-logins
   buildArena();
   syncActors();
   renderAll();
