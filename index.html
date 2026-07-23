@@ -88,6 +88,9 @@
         <div class="hud-actions">
           <button class="btn btn-small bulk-work">🍳 Todos pra Cozinha</button>
           <button class="btn btn-small btn-ghost bulk-rest">🛌 Descansar Todos</button>
+          <!-- VIP perk #3 (2026-07-23): hidden by default, only shown/enabled
+               via updateVipRerollButton() in game.js when VIP is active -->
+          <button id="vip-reroll-btn" class="btn btn-small btn-ghost" hidden>🎲 Reroll de fase (VIP)</button>
         </div>
       </div>
       <div id="hunt-main">
@@ -326,6 +329,48 @@
       <div class="extra-box">
         <h3>🏛️ Club</h3>
         <p class="muted">Coming soon.</p>
+      </div>
+
+      <!-- VIP + "Mais Apimentado" (2026-07-23, mechanics-only pass): real
+           payment (PIX) isn't wired up yet, so the grant buttons here are
+           TEMPORARY manual test hooks (vipDebugGrant()/
+           picanteBoostDebugGrant() in game.js) standing in for "a purchase
+           just succeeded" — see those functions' own comments. -->
+      <div class="extra-box" id="vip-box">
+        <h3>👑 VIP</h3>
+        <p class="muted" id="vip-status">Nenhum VIP ativo.</p>
+        <div class="vip-autowork-row">
+          <label for="vip-autowork-pct">Auto work/rest a partir de:</label>
+          <select id="vip-autowork-pct">
+            <option value="10">10%</option>
+            <option value="20">20%</option>
+            <option value="30">30%</option>
+            <option value="40">40%</option>
+            <option value="50">50%</option>
+            <option value="60">60%</option>
+            <option value="70">70%</option>
+            <option value="80">80%</option>
+            <option value="90">90%</option>
+            <option value="100" selected>100%</option>
+          </select>
+        </div>
+        <p class="muted vip-debug-label">Teste (sem pagamento real ainda):</p>
+        <div class="vip-debug-row">
+          <button class="btn btn-small" data-vip-debug="1">+1 dia</button>
+          <button class="btn btn-small" data-vip-debug="7">+7 dias</button>
+          <button class="btn btn-small" data-vip-debug="30">+30 dias</button>
+        </div>
+      </div>
+
+      <div class="extra-box" id="picante-boost-box">
+        <h3>🌶️ Mais Apimentado</h3>
+        <p class="muted" id="picante-boost-status">Nenhum boost ativo.</p>
+        <p class="muted vip-debug-label">Teste (sem pagamento real ainda):</p>
+        <div class="vip-debug-row">
+          <button class="btn btn-small" data-lure-debug="1">+1h</button>
+          <button class="btn btn-small" data-lure-debug="6">+6h</button>
+          <button class="btn btn-small" data-lure-debug="24">+24h</button>
+        </div>
       </div>
 
       <!-- Admin panel (2026-07-23): visibility here is a pure CLIENT-SIDE

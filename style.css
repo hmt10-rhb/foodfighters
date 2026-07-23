@@ -1276,6 +1276,24 @@ select {
 .ref-row { display: flex; gap: 10px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
 .ref-row code { background: #141009; padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; }
 
+/* ===== VIP + "Mais Apimentado" (2026-07-23, mechanics-only pass) ===== */
+.vip-autowork-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.vip-autowork-row label { font-size: 0.85rem; color: var(--muted); }
+.vip-autowork-row select { background: #141009; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+.vip-debug-label { margin-top: 12px; font-size: 0.75rem; }
+.vip-debug-row { display: flex; gap: 8px; flex-wrap: wrap; }
+/* Per-Rango auto work/rest opt-in checkbox, Armário detail panel footer —
+   only rendered while VIP is active (see renderInventoryDetails()) */
+.ff-autowork-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
 /* ===== Hero portraits (12 fixed character images, decoupled from rarity) ===== */
 /* No wrapper border/frame around the portrait anywhere — it's a clean PNG.
    Rarity shows via context instead: card/panel border-accents + colored

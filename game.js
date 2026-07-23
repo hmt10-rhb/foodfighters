@@ -23,6 +23,15 @@ const EXCHANGE_RATE = 10;          // 10 Food Coins -> 1 Chef Gems
 const BASE_RECOVERY = 1 / 60;      // energy/s while resting (1 per minute), before house/Cafeinado bonuses
 const OFFLINE_CAP_S = 8 * 3600;    // away-progress cap so a week offline doesn't print money
 const MAX_WORKERS = 15;            // roster-wide cap on simultaneous fielded heroes
+// VIP (2026-07-23, mechanics-only pass): expiresAt is a plain future
+// timestamp; 0 or past means inactive. Mechanics-only for now — nothing
+// actually SELLS VIP yet (see vipDebugGrant() for the temporary manual
+// activation used to test this until real PIX payment collection exists).
+function isVipActive() { return state.vip && state.vip.expiresAt > Date.now(); }
+// Perk #2: VIP fields 1 extra simultaneous worker (16 instead of 15).
+// Replaces every direct MAX_WORKERS reference in live gameplay logic —
+// MAX_WORKERS itself stays the base/non-VIP constant, unchanged.
+function maxWorkersFor() { return MAX_WORKERS + (isVipActive() ? 1 : 0); }
 // LEGACY, Lab-compatibility only: this constant (and the h.ghost/h.swift
 // boolean fields it rolls in makeHero()) exist purely so the Lab tab's
 // re-roll/sacrifice/breeding/implant/ascension code — explicitly left
@@ -307,6 +316,39 @@ const PACKS = [
   { size: 15, cost: 300 },
 ];
 
+/* ===== Roda da Sorte (Wheel of Fortune) — free daily spin =====
+   8-slot pizza wheel: 6 low Food Coin amounts split EVENLY at 16.33% each
+   (98% combined, per spec), 1 slot granting a free Pack Unidade pull (0.5%),
+   1 slot paying a flat 7.00 Food Coins (1.5%) — 98 + 0.5 + 1.5 = 100%.
+   REVISED (2026-07-23, coordinator correction): the two rare slots were
+   originally 1%/1% in the first spec message, corrected to 0.5%/1.5% before
+   implementation — the values below are the corrected, final ones. Weights
+   are literal percentages from the spec (0.1633 x6, not the exact repeating
+   98/6 fraction) — same "independently-specified, tiny rounding artifact"
+   precedent as SHOP_RARITY_WEIGHTS (sums to 99.98%, not exactly 100%; see
+   rollWheelSlot()'s fallback for why that's harmless).
+   Declared in this specific order for VISUAL variety only (the pizza's 8
+   equal 45° slices are laid out in array order, one slice per slot) — order
+   has ZERO effect on the actual odds, which come purely from each slot's own
+   `weight` field, not its position. */
+const WHEEL_SLOTS = [
+  { id: 'coin_0_01', kind: 'coins', amount: 0.01, weight: 0.1633 },
+  { id: 'coin_0_02', kind: 'coins', amount: 0.02, weight: 0.1633 },
+  { id: 'pack_unidade', kind: 'pack', weight: 0.005 },
+  { id: 'coin_0_05', kind: 'coins', amount: 0.05, weight: 0.1633 },
+  { id: 'coin_0_10', kind: 'coins', amount: 0.10, weight: 0.1633 },
+  { id: 'coin_7_00', kind: 'coins', amount: 7.00, weight: 0.015 },
+  { id: 'coin_0_20', kind: 'coins', amount: 0.20, weight: 0.1633 },
+  { id: 'coin_0_50', kind: 'coins', amount: 0.50, weight: 0.1633 },
+];
+// 8 alternating slice colors matching WHEEL_SLOTS' order 1:1 — the 2 rare
+// slots (pack at index 2, 7.00 coins at index 5) get their own distinct
+// colors so they visually stand out from the 6 ordinary coin slices.
+const WHEEL_SLICE_COLORS = ['#f4c95d', '#f1b93f', '#e94b3c', '#f4c95d', '#f1b93f', '#4caf6e', '#f4c95d', '#f1b93f'];
+const WHEEL_COOLDOWN_MS = 24 * 60 * 60 * 1000; // free spin: once every 24 REAL hours from the exact last-claim timestamp, not a calendar-day reset
+const WHEEL_PAID_SPIN_COST = 2; // Chef Gems, one extra spin per 24h cycle, only after the free spin is claimed
+const WHEEL_SPIN_ANIM_MS = 3200; // matches .wheel-canvas's CSS transition duration in style.css exactly — keep these two in sync if either changes
+
 const HOUSES = [
   { id: 'tent',     name: 'Tiny Tent',      emoji: '⛺', cost: 200,  recovery: 0.2 },
   { id: 'cabin',    name: 'Brick Cabin',    emoji: '🏠', cost: 600,  recovery: 0.5 },
@@ -482,6 +524,34 @@ function defaultState() {
     skillShards: 0,
     breeds: 0,
     ascensions: 0,
+    // VIP (2026-07-23, mechanics-only pass — no real payment wired up yet,
+    // see vipDebugGrant()): expiresAt is a plain timestamp, 0/past means
+    // inactive. autoWorkPct is the shared threshold (10-100, step 10) for
+    // perk #1 — a single global setting, not per-Rango (only WHICH Rangos
+    // opt in is per-Rango, via h.autoWork).
+    vip: { expiresAt: 0, autoWorkPct: 100, lastRerollAt: 0 },
+    // "Mais Apimentado" lure (2026-07-23): +50% on the Jaula spawn chance
+    // while expiresAt is in the future. Duration accumulates freely across
+    // purchases (see vipDebugGrant()/grantPicanteBoost()); the +50% itself
+    // never stacks no matter how much duration is banked — see
+    // jaulaSpawnChance()'s own comment for why that's a deliberate cap.
+    picanteBoost: { expiresAt: 0 },
+    // Roda da Sorte (2026-07-23) — see WHEEL_SLOTS/spinWheel() for the full
+    // mechanic. wheelLastClaim is a real epoch-ms timestamp, 0 meaning
+    // "never claimed" — Date.now() - 0 is always >= WHEEL_COOLDOWN_MS, so a
+    // brand-new save (and, via Object.assign(defaultState(), raw) in load(),
+    // any OLD save from before this feature existed too) starts with a free
+    // spin immediately available. This is NOT a retroactive stealth buff to
+    // existing saves the way the standing no-migration policy warns against
+    // (see the skill-flag migration comments below in load()) — every
+    // player, new or returning, gets exactly the same "never claimed yet"
+    // starting point, because the feature itself is brand new for everyone.
+    // wheelPaidSpinUsed tracks whether THIS 24h cycle's one optional paid
+    // extra spin has already been used — reset to false only when a new
+    // free spin is actually claimed (spinWheel()), never on a timer of its
+    // own; it just rides along inside the free-spin's 24h window.
+    wheelLastClaim: 0,
+    wheelPaidSpinUsed: false,
   };
 }
 
@@ -595,6 +665,8 @@ function load() {
   state = Object.assign(defaultState(), raw);
   state.houses = Object.assign({ tent: 0, cabin: 0, villa: 0, fortress: 0 }, raw.houses);
   state.upgrades = Object.assign({ mining: 0, blast: 0, haste: 0 }, raw.upgrades);
+  state.vip = Object.assign({ expiresAt: 0, autoWorkPct: 100, lastRerollAt: 0 }, raw.vip);
+  state.picanteBoost = Object.assign({ expiresAt: 0 }, raw.picanteBoost);
   // the grid snapshot travels inside the save JSON (see save()) but is NOT a
   // real state field — pull it back off state right away so it doesn't sit
   // around as a stale mirror of the module-level grid vars below
@@ -622,6 +694,7 @@ function load() {
     // retroactively (rolling them now would be indistinguishable from a
     // free stealth buff to every existing save on load)
     h.isSpicy = !!h.isSpicy;
+    h.autoWork = !!h.autoWork; // VIP auto work/rest pre-selection (2026-07-23) — off by default, opt-in per Rango
     h.massaLeve = !!h.massaLeve;
     h.cafeinado = !!h.cafeinado;
     // 3 genuinely NEW Basic skills (2026-07-23 stat-system rework) — same
@@ -669,7 +742,7 @@ function load() {
   }
   let fielded = 0;
   for (const h of state.heroes) {
-    if (h.mode === 'work' && ++fielded > MAX_WORKERS) h.mode = 'rest';
+    if (h.mode === 'work' && ++fielded > maxWorkersFor()) h.mode = 'rest';
   }
 
   // Mid-wave resume, part 1: remember which wave the persisted grid
@@ -752,6 +825,7 @@ function makeHero(rarity) {
     mode: 'rest',
     bonusPower: 0,   // permanent additive bonus from Sacrifice; survives re-rolls
     ascendCount: 0,  // number of times Ascended; drives ascendMult()
+    autoWork: false, // VIP auto work/rest pre-selection (2026-07-23) — opt-in per Rango, off by default
   };
 }
 
@@ -788,6 +862,22 @@ function rollRarity(odds) {
     if (r <= 0) return rarity;
   }
   return 'CASEIRO';
+}
+
+// Roda da Sorte's own weighted roll — deliberately mirrors rollRarity()'s
+// exact iterate-and-subtract style/fallback shape (reuse the existing
+// PATTERN, per explicit instruction, rather than inventing a new one), just
+// applied to WHEEL_SLOTS' own `weight` field instead of a RARITIES-keyed
+// odds object. Falls back to WHEEL_SLOTS[0] (same role as rollRarity()'s
+// CASEIRO fallback) for the ~0.02% float-rounding gap left by the spec's
+// own independently-specified percentages (see WHEEL_SLOTS' comment).
+function rollWheelSlot() {
+  let r = Math.random();
+  for (const slot of WHEEL_SLOTS) {
+    r -= slot.weight;
+    if (r <= 0) return slot;
+  }
+  return WHEEL_SLOTS[0];
 }
 
 // LEVELING PROPOSAL (2026-07-23 stat-system rework — this is MY OWN design
@@ -1024,20 +1114,38 @@ function economyTick() {
   // amounts (see bombEnergyCost()/plantBomb(), driven from aiTick() on its
   // own 500ms cycle). This 1-second tick's only remaining energy job is
   // resting recovery.
+  //
+  // VIP PERK #1 (2026-07-23, mechanics-only pass): auto work/rest. Only
+  // Rangos individually opted in (h.autoWork) auto-resume once their energy
+  // crosses state.vip.autoWorkPct% of max — everyone else still needs a
+  // manual toggleMode()/setAllModes() click, exactly as before. Gated on
+  // isVipActive() so the perk stops applying the instant VIP expires (the
+  // h.autoWork flag itself is harmless and persists — it just goes inert).
+  // workingCount() is re-checked on every hero (not cached) so the
+  // maxWorkersFor() cap is respected even if several Rangos cross their
+  // threshold in the same tick.
+  const vipAutoActive = isVipActive();
+  const autoPct = state.vip ? state.vip.autoWorkPct : 100;
   for (const h of state.heroes) {
     if (h.mode !== 'work') {
       const maxE = maxEnergyFor(h);
       h.energy = Math.min(maxE, h.energy + recoveryRateFor(h));
+      if (vipAutoActive && h.autoWork && h.mode === 'rest' &&
+          h.energy / maxE >= autoPct / 100 && workingCount() < maxWorkersFor()) {
+        h.mode = 'work';
+      }
     }
   }
   syncActors();
   renderHeader();
+  refreshWheelButtonIfOpen(); // keeps "Volte em Xh Ym"/button state live if the Roda da Sorte modal happens to be open
   const active = document.querySelector('.tab-panel.active').id;
   if (active === 'tab-hunt') renderHunt();
   else if (active === 'tab-inventory') updateInventoryLive();
   else if (active === 'tab-ranking') renderRanking();
   else if (active === 'tab-tasks') updateTaskButtons();
   else if (active === 'tab-shop') updateShopButtons();
+  else if (active === 'tab-extras') renderExtras();
   if (Math.floor(Date.now() / 1000) % 5 === 0) save();
 }
 
@@ -1210,7 +1318,21 @@ const JAULA_SPAWN_CHANCE_MERCADO_NOTURNO = 0.50;
 // which is what was actually being asked for.
 const MERCADO_NOTURNO_THEME_ID = 'mercado_noturno';
 function isMercadoNoturnoActive() { return state.activeThemeId === MERCADO_NOTURNO_THEME_ID; }
-function jaulaSpawnChance() { return isMercadoNoturnoActive() ? JAULA_SPAWN_CHANCE_MERCADO_NOTURNO : JAULA_SPAWN_CHANCE_NORMAL; }
+// "Mais Apimentado" lure (2026-07-23, mechanics-only pass): +50% (x1.5) on
+// the base Jaula spawn chance while active. Deliberately a FLAT x1.5, never
+// compounding no matter how many purchases are currently banked (duration
+// stacks freely — see state.picanteBoost's own comment in defaultState() —
+// but the multiplier itself is capped at a single x1.5) — explicit design
+// call to keep Jaula "still rare" even for a player who stacks a lot of
+// lure time at once. Verified via a 40k-map Monte Carlo against the real
+// genLayout() pipeline: base ~0.52%, boosted ~0.75% (expected 0.5%/0.75%),
+// still averaging ~130 maps between Jaulas even boosted.
+const PICANTE_BOOST_MULT = 1.5;
+function isPicanteBoostActive() { return state.picanteBoost && state.picanteBoost.expiresAt > Date.now(); }
+function jaulaSpawnChance() {
+  const base = isMercadoNoturnoActive() ? JAULA_SPAWN_CHANCE_MERCADO_NOTURNO : JAULA_SPAWN_CHANCE_NORMAL;
+  return isPicanteBoostActive() ? base * PICANTE_BOOST_MULT : base;
+}
 
 // FUSE_TICKS=7 (2026-07-23): bombs now take exactly 7 * AI_MS(500ms) = 3.5s
 // to explode after being planted (was 3 ticks = 1.5s) — a clean integer
@@ -2436,6 +2558,38 @@ function updateHpBar(r, c) {
   prop.innerHTML = hpBarHtml(r, c);
 }
 
+// Factored out of waveClear() (2026-07-23) so the VIP reroll perk
+// (vipReroll() below) can reuse the exact same "advance to a fresh map"
+// logic instead of duplicating it — same "extract, don't copy-paste"
+// pattern newGameState() already established for load()/reset-button reuse.
+function advanceToNewMap() {
+  state.wave++;
+  // Per-map earnings reset (2026-07-23) — see state.mapEarned's own
+  // comment in defaultState(). A genuine new-map transition (wave-clear OR
+  // a VIP reroll), so the counter starts fresh for whatever this next map
+  // produces.
+  state.mapEarned = 0;
+  // Theme rotation (2026-07-22 user change): a random theme is now rolled
+  // on EVERY single wave-clear — replaces the old mapsInTheme counter /
+  // every-50-maps threshold entirely. Uniform random pick from
+  // THEME_ROTATION via the same generic pick() helper used everywhere
+  // else in this file; back-to-back repeats of the same theme are
+  // allowed (no "never immediately repeat" constraint was requested).
+  // With 2 real themes registered (jardim_fresquinho,
+  // jardim_fresquinho_sliced), each new map is a 50/50 coin flip between
+  // them. state.activeThemeId itself is unchanged as the persistence
+  // mechanism (still saved/restored exactly as before) — only the
+  // ADVANCEMENT trigger changed, from "every 50th clear" to "every clear".
+  state.activeThemeId = pick(THEME_ROTATION);
+  applyTheme(state.activeThemeId);
+  syncActiveSpawnConfig(); // Mercado Noturno's jaula/density config wiring — see master spec #9
+  genLayout();
+  applyTileClasses();
+  repositionActors();
+  waveRegen = false;
+  save();
+}
+
 function waveClear() {
   waveRegen = true;
   for (const b of bombs) b.el.remove();
@@ -2445,33 +2599,77 @@ function waveClear() {
   // reroll of the variable tables/chests), so the old toast actively lied
   // about escalating difficulty/reward. Just announces the reroll now.
   toast(`💥 Map ${state.wave} cleared! Rolling a fresh map...`);
-  setTimeout(() => {
-    state.wave++;
-    // Per-map earnings reset (2026-07-23) — see state.mapEarned's own
-    // comment in defaultState(). A live wave-clear is a genuine new-map
-    // transition, so the counter starts fresh for whatever this next map
-    // produces.
-    state.mapEarned = 0;
-    // Theme rotation (2026-07-22 user change): a random theme is now rolled
-    // on EVERY single wave-clear — replaces the old mapsInTheme counter /
-    // every-50-maps threshold entirely. Uniform random pick from
-    // THEME_ROTATION via the same generic pick() helper used everywhere
-    // else in this file; back-to-back repeats of the same theme are
-    // allowed (no "never immediately repeat" constraint was requested).
-    // With 2 real themes registered (jardim_fresquinho,
-    // jardim_fresquinho_sliced), each new map is a 50/50 coin flip between
-    // them. state.activeThemeId itself is unchanged as the persistence
-    // mechanism (still saved/restored exactly as before) — only the
-    // ADVANCEMENT trigger changed, from "every 50th clear" to "every clear".
-    state.activeThemeId = pick(THEME_ROTATION);
-    applyTheme(state.activeThemeId);
-    syncActiveSpawnConfig(); // Mercado Noturno's jaula/density config wiring — see master spec #9
-    genLayout();
-    applyTileClasses();
-    repositionActors();
-    waveRegen = false;
-    save();
-  }, 2000);
+  setTimeout(advanceToNewMap, 2000);
+}
+
+// VIP PERK #3 (2026-07-23, mechanics-only pass): reroll the current map on
+// demand, gated to once every 8h. Forfeits whatever's left UNBROKEN on the
+// current map (remaining Baús/Jaula chance) but keeps everything already
+// earned — Food Coins are awarded immediately per-chest in destroyTile(),
+// never held back until wave-clear, so "keep what you already earned" is
+// just "don't touch state.bcoin/totalMined/mapEarned here", not something
+// that needs special-casing. Reuses advanceToNewMap() directly (no 2s
+// delay/toast-then-timeout — this is a deliberate player action, not an
+// event the player needs a moment to read).
+const VIP_REROLL_COOLDOWN_MS = 8 * 3600 * 1000;
+function vipRerollReadyAt() {
+  return (state.vip ? state.vip.lastRerollAt : 0) + VIP_REROLL_COOLDOWN_MS;
+}
+function vipRerollAvailable() {
+  return isVipActive() && Date.now() >= vipRerollReadyAt();
+}
+function vipReroll() {
+  if (!isVipActive()) { toast('VIP only.'); return; }
+  if (!vipRerollAvailable()) {
+    const mins = Math.ceil((vipRerollReadyAt() - Date.now()) / 60000);
+    toast(`Reroll ainda em cooldown — libera em ${Math.ceil(mins / 60)}h.`);
+    return;
+  }
+  state.vip.lastRerollAt = Date.now();
+  waveRegen = true;
+  for (const b of bombs) b.el.remove();
+  bombs = [];
+  toast('🎲 VIP: nova fase gerada!');
+  advanceToNewMap();
+  renderHunt();
+}
+
+// VIP PERK #1 support: per-Rango opt-in checkbox in renderInventoryDetails()
+// (only shown while VIP is active — see that function). Deliberately no
+// isVipActive() guard here: unchecking should always work even if VIP just
+// lapsed, and a stray autoWork:true on an inactive-VIP save is harmless
+// (economyTick() itself already gates the actual auto-resume on
+// isVipActive()).
+function toggleAutoWork(id, checked) {
+  const h = state.heroes.find(x => x.id === id);
+  if (!h) return;
+  h.autoWork = checked;
+  save();
+}
+
+// TEMPORARY manual test hooks (2026-07-23) — no real PIX payment collection
+// exists yet (would need a payment gateway + a Supabase Edge Function to
+// confirm/grant, similar to the existing admin-grant-currency function).
+// These stand in for "a successful payment just happened" so the mechanics
+// above (auto work/rest, +1 slot, reroll, Jaula boost) are actually
+// testable end to end. Wired to debug-only buttons in Extras — replace the
+// CALL SITE with a real payment-confirmation webhook later; these functions
+// themselves (the actual granting logic) can very plausibly stay as-is.
+function vipDebugGrant(days) {
+  const now = Date.now();
+  const base = isVipActive() ? state.vip.expiresAt : now;
+  state.vip.expiresAt = base + days * 86400 * 1000;
+  save();
+  renderExtras();
+  toast(`✅ VIP +${days}d (debug) — expira em ${new Date(state.vip.expiresAt).toLocaleString()}`);
+}
+function picanteBoostDebugGrant(hours) {
+  const now = Date.now();
+  const base = isPicanteBoostActive() ? state.picanteBoost.expiresAt : now;
+  state.picanteBoost.expiresAt = base + hours * 3600 * 1000;
+  save();
+  renderExtras();
+  toast(`🌶️ Mais Apimentado +${hours}h (debug) — expira em ${new Date(state.picanteBoost.expiresAt).toLocaleString()}`);
 }
 
 // wave walls can appear under a standing hero; shove them onto open floor
@@ -2548,8 +2746,8 @@ function toggleMode(id) {
       toast('This Rango has no energy — let them rest first.');
       return;
     }
-    if (workingCount() >= MAX_WORKERS) {
-      toast(`Max ${MAX_WORKERS} Rangos can work at once.`);
+    if (workingCount() >= maxWorkersFor()) {
+      toast(`Max ${maxWorkersFor()} Rangos can work at once.`);
       return;
     }
   }
@@ -2611,6 +2809,116 @@ function buyHouse(id) {
   toast(`${house.emoji} ${house.name} built! Recovery is now ${recoveryRate().toFixed(2)} energy/s.`);
   renderHeader();
   renderDespensa();
+}
+
+/* ============ Roda da Sorte — eligibility + spin/prize logic ============
+   UI (modal HTML/CSS build, badge, spin animation, countdown refresh) lives
+   further down near showLegendModal()/renderHeader() — this block is purely
+   the economy/state logic: when is a spin allowed, what does landing on
+   each slot actually grant. */
+
+// true whenever a free spin can be claimed right now — a real elapsed-time
+// gate (Date.now() - last claim >= 24h), NOT a calendar-day reset, exactly
+// per spec. wheelLastClaim=0 (never claimed) always satisfies this.
+function wheelFreeAvailable() {
+  return Date.now() - (state.wheelLastClaim || 0) >= WHEEL_COOLDOWN_MS;
+}
+// epoch ms of the next moment a free spin reopens — only meaningful while
+// wheelFreeAvailable() is false; used purely for the countdown display.
+function wheelNextFreeAt() {
+  return (state.wheelLastClaim || 0) + WHEEL_COOLDOWN_MS;
+}
+// the ONE optional paid extra spin: only offered after the free spin for
+// THIS cycle has already been claimed, and only until it's used once —
+// using it (or the 24h window elapsing naturally) is what "re-locks"
+// everything, per spec ("does NOT reset/extend the 24h timer on its own,
+// it just fills the same window").
+function wheelPaidAvailable() {
+  return !wheelFreeAvailable() && !state.wheelPaidSpinUsed;
+}
+
+// Applies whatever WHEEL_SLOTS entry was rolled. Returns a small descriptive
+// object the caller (spinWheel()) uses for the toast/result text — never
+// mutates anything itself beyond the actual prize grant.
+function applyWheelPrize(slot) {
+  if (slot.kind === 'pack') {
+    // Landing here runs the EXACT SAME pull logic buyPack()'s unit-pack
+    // tier uses — rollRarity(SHOP_RARITY_WEIGHTS) is the one flat table
+    // every pack size shares regardless of size (master spec #6), so a
+    // single roll against it here IS that tier's real per-pull logic, not
+    // an approximation of it. A genuine free hero, never a 20-Chef-Gem
+    // refund standing in for one.
+    const hero = makeHero(rollRarity(SHOP_RARITY_WEIGHTS));
+    state.heroes.push(hero);
+    return {
+      toastMsg: `🎡 Roda da Sorte: Pack Unidade grátis — ${hero.emoji} ${hero.name} (${rLabel(hero.rarity)})!`,
+      hero,
+    };
+  }
+  // coins: a flat Food Coin amount, credited to both the spendable balance
+  // AND the lifetime total — but deliberately NOT state.mapEarned. The
+  // wheel is a separate daily-bonus system, not a genuine on-map chest
+  // event; same "separate milestone system" carve-out already established
+  // for Task/Missão Diária rewards (see state.mapEarned's own comment in
+  // defaultState()) — a wheel spin can happen with no map even loaded.
+  state.starCore += slot.amount;
+  state.totalMined += slot.amount;
+  return { toastMsg: `🎡 Roda da Sorte: +${fmtCurrency(slot.amount)} Food Coins!` };
+}
+
+let wheelSpinInProgress = false; // ephemeral UI-only guard against double-clicking mid-animation; not persisted, same spirit as the module-level `bombs`/`actors` vars
+
+// isPaid=false: the free daily spin (must be currently eligible).
+// isPaid=true: the one optional paid extra spin (must be currently
+// eligible AND affordable) — costs WHEEL_PAID_SPIN_COST Chef Gems.
+// The actual weighted roll happens immediately (rollWheelSlot() — the
+// RESULT is decided right away); only the visual spin + prize application
+// are deferred behind the animation, via animateWheelSpin()/a setTimeout
+// matching WHEEL_SPIN_ANIM_MS, same "commit state now, reveal after the
+// animation" shape used elsewhere in this file for reveal flows.
+function spinWheel(isPaid) {
+  if (wheelSpinInProgress) return;
+  if (isPaid) {
+    if (!wheelPaidAvailable()) return;
+    if (state.bcoin < WHEEL_PAID_SPIN_COST) {
+      toast(`Not enough Chef Gems — need ${fmtCurrency(WHEEL_PAID_SPIN_COST)}.`);
+      return;
+    }
+    state.bcoin -= WHEEL_PAID_SPIN_COST;
+    state.wheelPaidSpinUsed = true;
+  } else {
+    if (!wheelFreeAvailable()) return;
+    state.wheelLastClaim = Date.now();
+    state.wheelPaidSpinUsed = false; // a fresh 24h cycle begins right now
+  }
+  const slot = rollWheelSlot();
+  const slotIndex = WHEEL_SLOTS.indexOf(slot);
+  wheelSpinInProgress = true;
+  save();
+  renderHeader(); // reflect the just-spent Chef Gems (paid spin) immediately, don't wait for the animation
+  const btn = document.getElementById('wheel-spin-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Girando...'; }
+  const resultEl = document.getElementById('wheel-result');
+  if (resultEl) resultEl.textContent = '';
+  animateWheelSpin(slotIndex);
+  setTimeout(() => {
+    wheelSpinInProgress = false;
+    const outcome = applyWheelPrize(slot);
+    save();
+    pushCloudSaveThrottled(); // master spec #4 precedent: push right after a reward event (throttled), not just the 30s baseline
+    renderHeader();
+    if (outcome.hero) renderInventory();
+    toast(outcome.toastMsg);
+    const resultEl2 = document.getElementById('wheel-result');
+    if (resultEl2) resultEl2.textContent = outcome.toastMsg;
+    // Safe to fully rebuild the modal now — the animation is over, nothing
+    // is mid-transition anymore. This is the ONLY other place besides
+    // openWheelModal() that rebuilds the whole modal body; spinWheel()
+    // itself only ever touches the button/result text directly above,
+    // specifically so it never wipes the wheel-canvas element's in-flight
+    // CSS transition by replacing it mid-spin.
+    renderWheelModal();
+  }, WHEEL_SPIN_ANIM_MS);
 }
 
 function exchange() {
@@ -2747,7 +3055,7 @@ function setAllModes(mode) {
       if (h.mode !== 'rest') { h.mode = 'rest'; changed++; }
     }
   } else {
-    let slots = MAX_WORKERS - workingCount();
+    let slots = maxWorkersFor() - workingCount();
     // strongest first, so the cap fields the best available squad
     const idle = state.heroes.filter(h => h.mode !== 'work').sort((a, b) => b.power - a.power);
     for (const h of idle) {
@@ -2765,7 +3073,7 @@ function setAllModes(mode) {
   renderHunt();
   const parts = [];
   if (tired) parts.push(`${tired} too tired`);
-  if (capped) parts.push(`${capped} over the ${MAX_WORKERS}-worker cap`);
+  if (capped) parts.push(`${capped} over the ${maxWorkersFor()}-worker cap`);
   toast(mode === 'work'
     ? `⛏️ ${changed} Rango${changed === 1 ? '' : 's'} sent to work${parts.length ? ` (${parts.join(', ')})` : ''}`
     : `😴 ${changed} Rango${changed === 1 ? '' : 's'} sent to rest`);
@@ -3104,6 +3412,19 @@ function renderHeader() {
     badge.textContent = String(ready);
     badge.classList.toggle('hidden', ready === 0);
   }
+  renderWheelBadge();
+}
+
+// Roda da Sorte's floating-button badge — same .ff-badge dot/count pattern
+// mail-badge already uses (reused on purpose, not a new indicator style),
+// just with no digit at all: this is purely an "available/not" dot, not a
+// count, so it's shown/hidden rather than given text. Called from
+// renderHeader() (itself called every economyTick(), i.e. every real
+// second) so the dot appears the instant the 24h window reopens even if
+// the player never navigates away and back.
+function renderWheelBadge() {
+  const badge = document.getElementById('wheel-badge');
+  if (badge) badge.classList.toggle('hidden', !wheelFreeAvailable());
 }
 
 // HUD skeleton is static in index.html; per-tick we only fill value slots,
@@ -3131,8 +3452,9 @@ function renderHunt() {
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   set('hud-wave', state.wave);
   set('hud-crates', `${cratesLeft} / ${cratesTotal}`);
-  set('hud-workers', `${working.length} / ${MAX_WORKERS}`);
+  set('hud-workers', `${working.length} / ${maxWorkersFor()}`);
   set('hud-map-earned', fmtCurrency(state.mapEarned || 0));
+  updateVipRerollButton();
   document.getElementById('bombers').innerHTML = working.length
     ? working.map(h => {
         const maxE = maxEnergyFor(h);
@@ -3347,6 +3669,11 @@ function renderInventoryDetails() {
       <div class="ff-actions-wrap">
         <button type="button" class="ff-toggle-btn${working ? ' ff-toggle-rest' : ''}" id="ff-work-btn" data-toggle-id="${h.id}">${working ? 'REST' : 'WORK'}</button>
       </div>
+      ${isVipActive() ? `
+      <label class="ff-autowork-row" title="Volta sozinho pro trabalho ao atingir ${state.vip.autoWorkPct}% de energia (ajuste em Extras)">
+        <input type="checkbox" data-autowork-id="${h.id}" ${h.autoWork ? 'checked' : ''}>
+        👑 Auto work/rest (VIP)
+      </label>` : ''}
     </footer>
   `;
 }
@@ -3434,6 +3761,58 @@ function updateShopButtons() {
   document.querySelectorAll('[data-pack]').forEach(b => {
     b.disabled = state.bcoin < PACKS[Number(b.dataset.pack)].cost;
   });
+}
+
+// Human-readable "Xd Yh" / "Yh Zm" countdown to a future timestamp — shared
+// by the VIP and Mais Apimentado status lines below, same rounding (minutes
+// dropped once there's at least 1 full hour left, matching how a player
+// actually thinks about "how long is left" at that granularity).
+function fmtCountdown(ms) {
+  if (ms <= 0) return null;
+  const totalMin = Math.ceil(ms / 60000);
+  const days = Math.floor(totalMin / 1440);
+  const hours = Math.floor((totalMin % 1440) / 60);
+  const mins = totalMin % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${mins}min`;
+  return `${mins}min`;
+}
+
+// VIP + "Mais Apimentado" status/debug panel (2026-07-23, mechanics-only
+// pass — see vipDebugGrant()/picanteBoostDebugGrant() for why the grant
+// buttons here are temporary stand-ins for a real PIX purchase flow).
+function renderExtras() {
+  const vipStatus = document.getElementById('vip-status');
+  if (vipStatus) {
+    vipStatus.textContent = isVipActive()
+      ? `👑 VIP ativo — expira em ${fmtCountdown(state.vip.expiresAt - Date.now())}. +1 slot, reroll de fase, auto work/rest.`
+      : 'Nenhum VIP ativo.';
+  }
+  const autoworkSelect = document.getElementById('vip-autowork-pct');
+  if (autoworkSelect && document.activeElement !== autoworkSelect) {
+    autoworkSelect.value = String(state.vip.autoWorkPct);
+  }
+  const boostStatus = document.getElementById('picante-boost-status');
+  if (boostStatus) {
+    boostStatus.textContent = isPicanteBoostActive()
+      ? `🌶️ Mais Apimentado ativo — expira em ${fmtCountdown(state.picanteBoost.expiresAt - Date.now())}. +50% na chance de Jaula.`
+      : 'Nenhum boost ativo.';
+  }
+  updateVipRerollButton();
+}
+
+// Lives here (not just inside renderHunt()) because VIP status can change
+// from the Extras tab (debug grant buttons) while the Hunt tab isn't the
+// active one — economyTick() only re-renders whichever tab IS active, so
+// this needs to be callable from both renderExtras() and renderHunt().
+function updateVipRerollButton() {
+  const btn = document.getElementById('vip-reroll-btn');
+  if (!btn) return;
+  if (!isVipActive()) { btn.hidden = true; return; }
+  btn.hidden = false;
+  const ready = vipRerollAvailable();
+  btn.disabled = !ready;
+  btn.textContent = ready ? '🎲 Reroll de fase (VIP)' : `🎲 Reroll em ${fmtCountdown(vipRerollReadyAt() - Date.now())}`;
 }
 
 function updateTaskButtons() {
@@ -3710,6 +4089,133 @@ const RARITY_INFO = {
   ESTRELA_MICHELIN: `Genuinely rare. ${fmtPct(SHOP_RARITY_WEIGHTS.ESTRELA_MICHELIN)} shop odds — or a risky 9× Chef Renomado fusion (${Math.round(FUSE_SUCCESS_CHANCE.CHEF_RENOMADO * 100)}%).`,
   RECEITA_DE_VO: `The ceiling. ${fmtPct(SHOP_RARITY_WEIGHTS.RECEITA_DE_VO)} shop odds, or the ${Math.round(FUSE_SUCCESS_CHANCE.ESTRELA_MICHELIN * 100)}% miracle of fusing 9 Estrela Michelins. Cannot be fused further.`,
 };
+
+/* ============ Roda da Sorte — modal UI (HTML build + spin animation) ============
+   Economy/state logic (eligibility, prize granting) lives above near
+   buyHouse()/exchange() — this block is purely presentational: building the
+   modal's HTML, the pizza wheel's conic-gradient + label markup, the spin
+   animation, and the button's dual-purpose (free/paid/locked) text. */
+
+// mm:ss-style would be misleading for a multi-hour wait — "Xh Ym" (or just
+// "Ym" once under an hour) reads clearly at the actual timescale involved.
+// Exact wording/format is this task's own call (flagged as such in the
+// final report), not a spec-given string.
+function fmtWheelCountdown(ms) {
+  const totalMin = Math.max(0, Math.ceil(ms / 60000));
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+// Single source of truth for the spin button's current label/disabled/mode
+// — read both when first building the modal AND on every periodic refresh
+// (refreshWheelButtonIfOpen(), called from economyTick()) so the countdown
+// ticks down live and the button flips the instant the 24h window reopens,
+// without needing to close/reopen the modal.
+function wheelButtonState() {
+  if (wheelSpinInProgress) return { label: 'Girando...', disabled: true, mode: '' };
+  if (wheelFreeAvailable()) return { label: 'Resgatar Recompensa', disabled: false, mode: 'free' };
+  if (!state.wheelPaidSpinUsed) {
+    const affordable = state.bcoin >= WHEEL_PAID_SPIN_COST;
+    return {
+      label: affordable
+        ? `Gire por +${fmtCurrency(WHEEL_PAID_SPIN_COST)} Moedas do Chefe`
+        : `Saldo insuficiente (precisa de ${fmtCurrency(WHEEL_PAID_SPIN_COST)} Moedas do Chefe)`,
+      disabled: !affordable,
+      mode: 'paid',
+    };
+  }
+  return { label: `Volte em ${fmtWheelCountdown(wheelNextFreeAt() - Date.now())}`, disabled: true, mode: '' };
+}
+
+function wheelConicGradient() {
+  const stops = WHEEL_SLOTS.map((slot, i) => `${WHEEL_SLICE_COLORS[i]} ${i * 45}deg ${(i + 1) * 45}deg`);
+  return `conic-gradient(${stops.join(', ')})`;
+}
+
+function wheelSlotLabelText(slot) {
+  return slot.kind === 'pack' ? '🎁' : fmtCurrency(slot.amount);
+}
+
+// Each label is positioned via rotate->translate->counter-rotate (a
+// standard radial-layout trick) so it sits at its own slice's mid-angle but
+// stays perfectly upright/horizontal — easier to read at a glance than text
+// rotated to follow the slice.
+function wheelLabelsHtml() {
+  const r = 78; // px from center; tuned for the 240px .wheel-frame/.wheel-canvas below
+  return WHEEL_SLOTS.map((slot, i) => {
+    const mid = i * 45 + 22.5;
+    return `<span class="wheel-label" style="transform: translate(-50%, -50%) rotate(${mid}deg) translateY(-${r}px) rotate(${-mid}deg);">${wheelSlotLabelText(slot)}</span>`;
+  }).join('');
+}
+
+function wheelModalHtml() {
+  const btn = wheelButtonState();
+  return `
+    <div class="wheel-modal" data-wheel-modal="1">
+      <h3>🍕 Roda da Sorte</h3>
+      <p class="muted" style="margin-bottom:10px">Um giro grátis a cada 24h — 8 fatias, prêmios em Food Coins ou um Rango de graça.</p>
+      <div class="wheel-frame">
+        <div class="wheel-pointer">▼</div>
+        <div class="wheel-canvas" id="wheel-canvas" style="background: ${wheelConicGradient()};">
+          <div class="wheel-labels">${wheelLabelsHtml()}</div>
+          <div class="wheel-hub">🍕</div>
+        </div>
+      </div>
+      <div id="wheel-result" class="wheel-result"></div>
+      <button id="wheel-spin-btn" class="btn btn-primary" ${btn.disabled ? 'disabled' : ''} data-mode="${btn.mode}">${btn.label}</button>
+    </div>
+  `;
+}
+
+// Full rebuild of #modal-body's wheel content — ONLY ever called when
+// opening the modal fresh or right after a spin's animation has already
+// finished (see spinWheel()'s own comment on why it never calls this
+// mid-spin: replacing the DOM mid-transition would wipe out the
+// wheel-canvas element's in-flight CSS animation).
+function renderWheelModal() {
+  document.getElementById('modal-body').innerHTML = wheelModalHtml();
+}
+
+function openWheelModal() {
+  renderWheelModal();
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+
+// Purely visual: the actual prize was already decided by rollWheelSlot()
+// before this is ever called (see spinWheel()) — this only rotates the
+// wheel so slotIndex's slice ends up centered under the fixed pointer at
+// the top. No reflow-forcing reset-then-restore trick is needed here (an
+// established pattern elsewhere in this file for same-tick insert+animate
+// cases, e.g. aiTick()'s corner-cut fix): #wheel-canvas was already
+// inserted and painted once when the modal opened, so this transform
+// change happens on a stable, already-rendered element in a later user-
+// triggered tick — the CSS transition on .wheel-canvas fires normally.
+function animateWheelSpin(slotIndex) {
+  const el = document.getElementById('wheel-canvas');
+  if (!el) return;
+  const mid = slotIndex * 45 + 22.5;
+  const extraTurns = 5; // purely cosmetic flourish, doesn't affect the result at all
+  el.style.transform = `rotate(${extraTurns * 360 + (360 - mid)}deg)`;
+}
+
+// Keeps the open modal's button (label/disabled/countdown) live-accurate
+// once a second, via economyTick() — e.g. so "Volte em 5m" counts down
+// without needing to close/reopen the modal, and so the button flips to
+// "Resgatar Recompensa" the instant the 24h window elapses while the modal
+// happens to be sitting open. Deliberately touches ONLY the button text/
+// disabled state, never re-renders the wheel-canvas/labels, so it can never
+// interrupt an in-flight spin animation (also guarded by
+// wheelSpinInProgress directly, belt-and-suspenders).
+function refreshWheelButtonIfOpen() {
+  if (wheelSpinInProgress) return;
+  const btn = document.getElementById('wheel-spin-btn');
+  if (!btn) return;
+  const s = wheelButtonState();
+  btn.textContent = s.label;
+  btn.disabled = s.disabled;
+  btn.dataset.mode = s.mode;
+}
 
 function showLegendModal() {
   document.getElementById('modal-body').innerHTML = `
@@ -4097,6 +4603,8 @@ function bindEvents() {
     if (t) { toggleMode(Number(t.dataset.toggleId)); return; }
     const l = e.target.closest('[data-levelup-id]');
     if (l) { levelUp(Number(l.dataset.levelupId)); return; }
+    const aw = e.target.closest('[data-autowork-id]');
+    if (aw) { toggleAutoWork(Number(aw.dataset.autoworkId), aw.checked); return; }
     // LAB button removed from this footer (2026-07-23 UI rework) — the
     // data-lab-id wiring that used to live here is gone, but
     // jumpToLabForReroll() itself is untouched and still fully reachable
@@ -4211,6 +4719,24 @@ function bindEvents() {
     save();
     toast('Automine package set (cosmetic only in this MVP).');
   });
+
+  // VIP + "Mais Apimentado" (2026-07-23, mechanics-only pass) — see
+  // vipDebugGrant()/picanteBoostDebugGrant()'s own comments for why these
+  // are temporary manual test buttons instead of a real PIX purchase flow.
+  document.getElementById('vip-box').addEventListener('click', e => {
+    const b = e.target.closest('[data-vip-debug]');
+    if (b) vipDebugGrant(Number(b.dataset.vipDebug));
+  });
+  document.getElementById('picante-boost-box').addEventListener('click', e => {
+    const b = e.target.closest('[data-lure-debug]');
+    if (b) picanteBoostDebugGrant(Number(b.dataset.lureDebug));
+  });
+  document.getElementById('vip-autowork-pct').addEventListener('change', e => {
+    state.vip.autoWorkPct = Number(e.target.value);
+    save();
+    toast(`Auto work/rest ajustado pra ${state.vip.autoWorkPct}%.`);
+  });
+  document.getElementById('vip-reroll-btn').addEventListener('click', vipReroll);
 
   document.getElementById('reset-btn').addEventListener('click', async () => {
     if (!confirm('Wipe all Food Fighters progress?')) return;
@@ -4479,6 +5005,8 @@ async function pullCloudSave() {
     state = Object.assign(defaultState(), data.state);
     state.houses = Object.assign({ tent: 0, cabin: 0, villa: 0, fortress: 0 }, data.state.houses);
     state.upgrades = Object.assign({ mining: 0, blast: 0, haste: 0 }, data.state.upgrades);
+    state.vip = Object.assign({ expiresAt: 0, autoWorkPct: 100, lastRerollAt: 0 }, data.state.vip);
+    state.picanteBoost = Object.assign({ expiresAt: 0 }, data.state.picanteBoost);
     // gridTiles/tileHp/cratesLeft/cratesTotal travel inside data.state the
     // same way they travel inside the local save blob (see saveSnapshot()) —
     // strip them back off state itself, mirroring load()'s own handling
