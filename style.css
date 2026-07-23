@@ -48,7 +48,7 @@ body {
    soft rounded shapes, painterly gradients, thick cream text outlines, soft
    drop shadows. That style inconsistency between tabs is a known, accepted
    tradeoff (flagged by the user, not something to reconcile here). Everything
-   below is scoped under ff-hud-*/ff-icon-btn/ff-*/#bottom-nav/#powers-panel
+   below is scoped under ff-hud-* / ff-icon-btn / ff-* / #bottom-nav / #powers-panel
    classes so it can't leak into or fight with any other tab's styling.
    Responsive approach: flex-wrap on the header (so it degrades to a second
    row rather than clipping on narrow viewports) and a fixed-width
@@ -199,20 +199,6 @@ body {
 }
 .ff-plus-btn:hover { filter: brightness(1.08); }
 .ff-plus-btn:active { transform: translateY(1px); }
-
-.ff-mini-currency {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 0.82rem;
-  color: #ece6ff;
-  white-space: nowrap;
-}
-.ff-mini-currency b { color: #fff; }
 
 .ff-hud-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 
