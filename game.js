@@ -4049,6 +4049,10 @@ function bindEvents() {
     if (b) claimTask(b.dataset.task);
   });
 
+  document.getElementById('daily-task').addEventListener('click', e => {
+    if (e.target.closest('#daily-task-claim')) claimDailyTask();
+  });
+
   document.getElementById('modal-close').addEventListener('click', () => {
     cancelReveal();
     document.getElementById('modal-backdrop').classList.add('hidden');

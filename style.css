@@ -1143,6 +1143,31 @@ select {
 .task-item .task-name { font-weight: 700; }
 .task-item .task-reward { color: var(--accent2); font-size: 0.85rem; }
 .task-item.done { opacity: 0.55; }
+
+/* Missão Diária (2026-07-23) — visually distinct from the plain long-term
+   TASKS list below it: warm accent border/glow (recurring, fast-cadence
+   grind) instead of the neutral card border regular tasks use. */
+.daily-task-item {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, var(--card), #2a1f0d);
+  box-shadow: 0 0 0 1px rgba(255, 167, 38, 0.25) inset, 0 0 16px rgba(255, 167, 38, 0.12);
+  margin-bottom: 16px;
+}
+.daily-task-progress {
+  margin-top: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+  max-width: 320px;
+}
+.daily-task-progress-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  transition: width 0.3s ease;
+}
+
 .locked-box {
   background: var(--card);
   border: 1px dashed var(--border);
