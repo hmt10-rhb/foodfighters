@@ -1276,9 +1276,27 @@ function expectedChestTierWeights(config, wave) {
 // Distributes `chestCount` chests across CHEST_TIERS respecting each tier's
 // [min,max] (no longer wave-gated): first guarantees every tier's minimum
 // (capped so the total never exceeds chestCount), then fills the remainder
-// randomly among tiers that still have room. Returns counts summing to
-// exactly chestCount (a `wood` overflow fallback absorbs the astronomically
-// unlikely case where every tier hits its max before the remainder runs out).
+// among tiers that still have room. Returns counts summing to exactly
+// chestCount (a `wood` overflow fallback absorbs the astronomically unlikely
+// case where every tier hits its max before the remainder runs out).
+//
+// Remainder-fill weighting (2026-07-23 distribution-skew fix): a large-N
+// simulation audit (thousands of real genLayout()/seedCrates() calls) found
+// that the original uniform `counts[pick(eligible)]++` pick — equal odds for
+// every still-eligible tier regardless of its own max — made small-max tiers
+// (DIAMANTE, VIP) saturate to at/near their ceiling almost every single map
+// instead of spreading across their configured [min,max] band (Mercado
+// Noturno's VIP averaged 2.98/3, never once observed at its configured
+// floor of 0 across 5000 runs), which compressed the intended ~2.1x Mercado
+// Noturno reward premium down to a real ~1.53x. Fixed by weighting each
+// eligible tier's odds, on every single-unit draw, by its REMAINING
+// headroom (limits[t].max - counts[t]) as a fraction of the total remaining
+// headroom across all eligible tiers — a tier with a small max simply starts
+// with proportionally less weight instead of the same odds as a tier with a
+// huge max, so it no longer gets filled disproportionately fast just because
+// it's cheap to stay "eligible." Still guarantees mins first, still returns
+// counts summing to exactly chestCount, still keeps the `wood` overflow
+// fallback — only the remainder-fill's per-draw ODDS changed.
 function rollChestTierCounts(chestCount, config = ACTIVE_SPAWN_CONFIG, wave = state.wave) {
   const limits = chestTierLimitsForWave(config, wave);
   const counts = {};
@@ -1294,7 +1312,15 @@ function rollChestTierCounts(chestCount, config = ACTIVE_SPAWN_CONFIG, wave = st
   while (remaining > 0 && guard-- > 0) {
     const eligible = CHEST_TIERS.filter(t => counts[t] < limits[t].max);
     if (!eligible.length) break;
-    counts[pick(eligible)]++;
+    let totalHeadroom = 0;
+    for (const t of eligible) totalHeadroom += (limits[t].max - counts[t]);
+    let roll = Math.random() * totalHeadroom;
+    let chosen = eligible[eligible.length - 1]; // float-rounding fallback at the boundary
+    for (const t of eligible) {
+      roll -= (limits[t].max - counts[t]);
+      if (roll < 0) { chosen = t; break; }
+    }
+    counts[chosen]++;
     remaining--;
   }
   if (remaining > 0) counts.wood += remaining; // safety fallback, should not normally trigger
