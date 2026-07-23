@@ -391,7 +391,7 @@ function load() {
     const elapsed = Math.min(Math.max((Date.now() - state.lastSeen) / 1000, 0), OFFLINE_CAP_S);
     if (elapsed > 5) {
       const mined = simulate(elapsed, SLEEP_MODE_MULT);
-      if (mined >= 1) toast(`💤 Sleep Mode: your Rangos mined ${fmt(mined)} Food Coins while you were away.`);
+      if (mined >= 1) toast(`💤 Sleep Mode: your Rangos mined ${fmtCurrency(mined)} Food Coins while you were away.`);
     }
   }
 
@@ -1775,7 +1775,7 @@ function levelUp(id) {
   if (!h || h.level >= MAX_LEVEL) return;
   const cost = levelCost(h);
   if (state.starCore < cost) {
-    toast(`Need ${fmt(cost)} Food Coins to level up.`);
+    toast(`Need ${fmtCurrency(cost)} Food Coins to level up.`);
     return;
   }
   state.starCore -= cost;
@@ -1789,7 +1789,7 @@ function levelUp(id) {
 function buyPack(idx) {
   const pack = PACKS[idx];
   if (state.bcoin < pack.cost) {
-    toast(`Not enough Chef Gems — need ${fmt(pack.cost)}.`);
+    toast(`Not enough Chef Gems — need ${fmtCurrency(pack.cost)}.`);
     return;
   }
   state.bcoin -= pack.cost;
@@ -1811,7 +1811,7 @@ function buyPack(idx) {
 function buyHouse(id) {
   const house = HOUSES.find(h => h.id === id);
   if (state.bcoin < house.cost) {
-    toast(`Not enough Chef Gems — need ${fmt(house.cost)}.`);
+    toast(`Not enough Chef Gems — need ${fmtCurrency(house.cost)}.`);
     return;
   }
   state.bcoin -= house.cost;
@@ -1831,7 +1831,7 @@ function exchange() {
   state.starCore -= whole * EXCHANGE_RATE;
   state.bcoin += whole;
   save();
-  toast(`Exchanged ${fmt(whole * EXCHANGE_RATE)} Food Coins → ${fmt(whole)} Chef Gems`);
+  toast(`Exchanged ${fmtCurrency(whole * EXCHANGE_RATE)} Food Coins → ${fmtCurrency(whole)} Chef Gems`);
   renderHeader();
 }
 
@@ -1987,7 +1987,7 @@ function claimTask(id) {
   state.starCore += task.reward;
   state.totalMined += task.reward;
   save();
-  toast(`Task complete! +${fmt(task.reward)} Food Coins`);
+  toast(`Task complete! +${fmtCurrency(task.reward)} Food Coins`);
   renderHeader();
   renderTasks();
 }
@@ -2049,7 +2049,7 @@ function rerollHero(id) {
   if (!h) return false;
   const cost = rerollCost(h);
   if (state.bcoin < cost) {
-    toast(`Need ${fmt(cost)} Chef Gems to re-roll this hero.`);
+    toast(`Need ${fmtCurrency(cost)} Chef Gems to re-roll this hero.`);
     return false;
   }
   state.bcoin -= cost;
@@ -2075,7 +2075,7 @@ function buyUpgrade(key) {
   if (!UPGRADE_DEFS[key]) return false;
   const cost = upgradeCost(key);
   if (state.bcoin < cost) {
-    toast(`Need ${fmt(cost)} Chef Gems for the next ${UPGRADE_DEFS[key].name} level.`);
+    toast(`Need ${fmtCurrency(cost)} Chef Gems for the next ${UPGRADE_DEFS[key].name} level.`);
     return false;
   }
   state.bcoin -= cost;
@@ -2120,7 +2120,7 @@ function breedHeroes(id1, id2) {
   if (!p1 || !p2) return null;
   const cost = breedCost(p1, p2);
   if (state.bcoin < cost) {
-    toast(`Need ${fmt(cost)} Chef Gems to breed these two heroes.`);
+    toast(`Need ${fmtCurrency(cost)} Chef Gems to breed these two heroes.`);
     return null;
   }
   state.bcoin -= cost;
@@ -2194,6 +2194,19 @@ function ascendHero(heroId, sacrificeIds) {
 
 function fmt(n) {
   return Math.floor(n).toLocaleString('en-US');
+}
+
+// BUG FIX (2026-07-22, confirmed live): fmt()'s Math.floor() silently
+// discards all decimals — harmless for plain integer counts (wave number,
+// worker count, prestige count, skill shard count) but actively wrong for
+// currency now that chest rewards are tiny (0.01-3.00 Food Coins per the
+// master spec pivot): any reward under 1.00 displayed as "0", making it
+// look like destroying a chest didn't pay out at all, when state.starCore
+// was actually incrementing correctly the whole time — purely a display
+// bug. Dedicated function for Food Coins/Chef Gems displays specifically;
+// fmt() itself is UNCHANGED and still used for real plain-count displays.
+function fmtCurrency(n) {
+  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function fmtPct(p) {
@@ -2272,7 +2285,7 @@ function heroCardHtml(h, opts) {
     <div class="hero-actions">
       <button class="btn btn-small ${working ? 'btn-ghost' : ''}" data-toggle-id="${h.id}">${working ? '😴 Rest' : '⛏️ Work'}</button>
       ${h.level < MAX_LEVEL
-        ? `<button class="btn btn-small btn-ghost" data-level-id="${h.id}">⬆️ Lv ${h.level + 1} (${fmt(levelCost(h))} Food Coins)</button>`
+        ? `<button class="btn btn-small btn-ghost" data-level-id="${h.id}">⬆️ Lv ${h.level + 1} (${fmtCurrency(levelCost(h))} Food Coins)</button>`
         : '<span class="muted">Max level</span>'}
     </div>` : ''}
   </div>`;
@@ -2286,8 +2299,8 @@ function readyTaskCount() {
 }
 
 function renderHeader() {
-  document.getElementById('bcoin-display').textContent = fmt(state.bcoin);
-  document.getElementById('score-display').textContent = fmt(state.starCore);
+  document.getElementById('bcoin-display').textContent = fmtCurrency(state.bcoin);
+  document.getElementById('score-display').textContent = fmtCurrency(state.starCore);
   document.getElementById('shard-display').textContent = fmt(state.skillShards || 0);
   document.getElementById('prestige-display').textContent = fmt(state.prestigeCount || 0);
   const sleepBtn = document.getElementById('sleep-btn');
@@ -2488,13 +2501,13 @@ function renderInventoryDetails() {
       <div class="ff-reward-row">
         <div class="ff-reward-item">
           <span class="ff-reward-icon"><img src="assets/coins/food_coin.png" alt="Food Coins" loading="lazy"></span>
-          <span class="ff-reward-value">${fmt(starPerHour)}</span>
+          <span class="ff-reward-value">${fmtCurrency(starPerHour)}</span>
           <span class="ff-reward-unit">Food Coins/hr</span>
         </div>
         <div class="ff-reward-divider"></div>
         <div class="ff-reward-item">
           <span class="ff-reward-icon"><img src="assets/coins/chef_coin.png" alt="Chef Gems" loading="lazy"></span>
-          <span class="ff-reward-value">${fmt(bcoinPerHour)}</span>
+          <span class="ff-reward-value">${fmtCurrency(bcoinPerHour)}</span>
           <span class="ff-reward-unit">Chef Gems/hr</span>
         </div>
       </div>
@@ -2517,7 +2530,7 @@ function renderInventoryDetails() {
         <div class="ff-level-badge"><span class="ff-level-star">★</span><span class="ff-level-number">${h.level}</span></div>
         <div class="ff-xp-track">
           <div class="ff-xp-fill" id="ff-xp-fill" style="width:${xpPct}%"></div>
-          <span class="ff-xp-text" id="ff-xp-text">${atMax ? 'MAX LEVEL' : `${fmt(state.starCore)} / ${fmt(cost)} Food Coins`}</span>
+          <span class="ff-xp-text" id="ff-xp-text">${atMax ? 'MAX LEVEL' : `${fmtCurrency(state.starCore)} / ${fmtCurrency(cost)} Food Coins`}</span>
         </div>
         <button type="button" class="ff-evolve-btn" id="ff-levelup-btn" data-levelup-id="${h.id}" ${atMax ? 'disabled' : ''} title="${atMax ? 'Max level' : 'Level up'}">▲</button>
       </div>
@@ -2560,7 +2573,7 @@ function updateInventoryLive() {
   const fill = document.getElementById('ff-xp-fill');
   if (fill) fill.style.width = xpPct + '%';
   const text = document.getElementById('ff-xp-text');
-  if (text) text.textContent = atMax ? 'MAX LEVEL' : `${fmt(state.starCore)} / ${fmt(cost)} Food Coins`;
+  if (text) text.textContent = atMax ? 'MAX LEVEL' : `${fmtCurrency(state.starCore)} / ${fmtCurrency(cost)} Food Coins`;
   const lvlBtn = document.getElementById('ff-levelup-btn');
   if (lvlBtn) lvlBtn.disabled = atMax;
   const workBtn = document.getElementById('ff-work-btn');
@@ -2578,7 +2591,7 @@ function renderShop() {
       <div class="odds">
         ${RARITIES.map(r => `<span class="rarity-badge rarity-${r}">${rTag(r)}</span> ${fmtPct(SHOP_RARITY_WEIGHTS[r])}`).join('<br>')}
       </div>
-      <div class="price">${fmt(p.cost)} Chef Gems</div>
+      <div class="price">${fmtCurrency(p.cost)} Chef Gems</div>
       <button class="btn" data-pack="${i}" ${state.bcoin < p.cost ? 'disabled' : ''}>Buy pack</button>
     </div>`).join('');
 
@@ -2587,7 +2600,7 @@ function renderShop() {
       <h3>${h.emoji} ${h.name}</h3>
       <div class="muted">+${h.recovery.toFixed(1)} energy/s recovery</div>
       <div class="owned">Owned: ${state.houses[h.id]}</div>
-      <div class="price">${fmt(h.cost)} Chef Gems</div>
+      <div class="price">${fmtCurrency(h.cost)} Chef Gems</div>
       <button class="btn" data-house="${h.id}" ${state.bcoin < h.cost ? 'disabled' : ''}>Build</button>
     </div>`).join('');
 }
@@ -2655,7 +2668,7 @@ function renderRanking() {
     <tr class="${r.player ? 'player-row' : ''}">
       <td>${['🥇', '🥈', '🥉'][i] || i + 1}</td>
       <td>${r.name}</td>
-      <td>${fmt(r.score)}</td>
+      <td>${fmtCurrency(r.score)}</td>
     </tr>`).join('');
 }
 
@@ -2673,7 +2686,7 @@ function renderTasks() {
     <div class="task-item ${claimed ? 'done' : ''}">
       <div class="task-info">
         <div class="task-name">${claimed ? '✅' : ready ? '🟡' : '⬜'} ${t.name}</div>
-        <div class="task-reward">Reward: ${fmt(t.reward)} Food Coins</div>
+        <div class="task-reward">Reward: ${fmtCurrency(t.reward)} Food Coins</div>
       </div>
       ${claimed
         ? '<span class="muted">Claimed</span>'
@@ -2749,7 +2762,7 @@ function renderLab() {
 function updateRerollCost() {
   const heroId = Number(document.getElementById('reroll-select').value);
   const h = state.heroes.find(x => x.id === heroId);
-  document.getElementById('reroll-cost').textContent = h ? `Cost: ${fmt(rerollCost(h))} Chef Gems` : '';
+  document.getElementById('reroll-cost').textContent = h ? `Cost: ${fmtCurrency(rerollCost(h))} Chef Gems` : '';
   updateHeroPreview('reroll-preview', heroId);
 }
 
@@ -2783,7 +2796,7 @@ function updateBreedCost() {
   const out = document.getElementById('breed-cost');
   if (!p1 || !p2 || p1.id === p2.id) { out.textContent = p1 && p2 && p1.id === p2.id ? 'Pick two different heroes' : ''; return; }
   const childRarity = RARITIES[Math.min(RARITIES.indexOf(p1.rarity), RARITIES.indexOf(p2.rarity))];
-  out.textContent = `Cost: ${fmt(breedCost(p1, p2))} Chef Gems · Child rarity: ${rTag(childRarity)}`;
+  out.textContent = `Cost: ${fmtCurrency(breedCost(p1, p2))} Chef Gems · Child rarity: ${rTag(childRarity)}`;
 }
 
 function updateImplantCost() {
@@ -2830,7 +2843,7 @@ function renderPrestige() {
       <h3>${def.icon} ${def.name}</h3>
       <p class="muted">${def.desc}</p>
       <div class="lvl">Level ${lvl}</div>
-      <div class="price">${fmt(cost)} Chef Gems</div>
+      <div class="price">${fmtCurrency(cost)} Chef Gems</div>
       <button class="btn btn-small" data-upgrade="${key}" ${state.bcoin < cost ? 'disabled' : ''}>Upgrade</button>
     </div>`;
   }).join('');
