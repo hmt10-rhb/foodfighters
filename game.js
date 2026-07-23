@@ -960,7 +960,7 @@ function simulate(seconds, rateMult = 1) {
 
     // Remainder pass (< one full wave-bag of damage left): spend it on the
     // CHEAPEST tiers first, not at the wave's blended average HP. A flat
-    // average is dominated by rare-but-huge tiers (VIP=2000 HP) even at a
+    // average is dominated by rare-but-huge tiers (ESPECIAL=2000 HP) even at a
     // tiny spawn weight, which would otherwise zero out a weak/fresh squad's
     // ENTIRE offline income once every tier became eligible from wave 1.
     // Real live play doesn't work this way either: heroes path to nearby/
@@ -1179,7 +1179,15 @@ const MESA_VARIAVEL_HP = 1;
 
 /* ===== Jaula — replaces the old "Baú Especial" chest tier entirely (master
    spec #7). Grants exactly 1 Rango (not Food Coins) on destruction — this
-   IS the old jail/hero-granting mechanic, fully renamed and re-tuned. =====
+   IS the old jail/hero-granting mechanic, fully renamed and re-tuned.
+   NAMING COLLISION, read carefully (2026-07-23): a completely separate,
+   later change renamed the VIP chest tier to "Especial" too (see
+   CHEST_TIERS/CHEST_TIER_HP/CHEST_TIER_REWARD_RANGE below) — that ESPECIAL
+   is an ordinary Food-Coin-paying chest tier (Mercado-Noturno-exclusive
+   now), NOT this old removed "Baú Especial" concept and NOT Jaula. Same
+   Portuguese word, two unrelated systems; don't let the coincidence read as
+   if they're the same thing — this comment describes the OLD, already-gone
+   tier that Jaula replaced. =====
 
    REBALANCED (2026-07-23, explicit user spec): a Jaula is now the ONLY
    source of Picante Rangos (packs no longer roll it at all — see the
@@ -1239,29 +1247,38 @@ let gridTiles = [], tileEls = [], cratesLeft = 0, cratesTotal = 0, waveRegen = f
 let tileHp = {};
 
 /* ============ Chests + per-wave variable generation ============ (master spec #8)
-   5 tiers now, not 6 — "especial" became Jaula (see above), no longer a
-   Food-Coin-granting chest tier at all. Chest HP AND reward are both now
-   FIXED numbers straight from the spec — CHEST_TIER_REWARD_RANGE fully
-   REPLACES the old HP x CHEST_WORTH_S x tier-multiplier formula; reward is
-   `randomBetween(min, max)` uniformly, decimals preserved (never rounded to
-   an integer). This is a drastically smaller reward scale than the rest of
-   the current economy (shop/upgrade/re-roll costs are in the hundreds-to-
-   thousands) — per explicit instruction relayed with the spec, implemented
-   exactly as given anyway, NOT rescaled to compensate; that's a separate
-   future ask. See fmt()/floatLabel() for the small-decimal display fix this
-   required. */
-const CHEST_TIERS = ['MADEIRA', 'FERRO', 'OURO', 'DIAMANTE', 'VIP'];
-const CHEST_TIER_HP = { MADEIRA: 70, FERRO: 150, OURO: 600, DIAMANTE: 1100, VIP: 2000 };
+   5 tiers now, not 6 — the OLD "especial" tier (a distinct, since-removed
+   6th chest tier — see the Jaula section above's own naming-collision note)
+   became Jaula, no longer a Food-Coin-granting chest tier at all. Chest HP
+   AND reward are both now FIXED numbers straight from the spec —
+   CHEST_TIER_REWARD_RANGE fully REPLACES the old HP x CHEST_WORTH_S x
+   tier-multiplier formula; reward is `randomBetween(min, max)` uniformly,
+   decimals preserved (never rounded to an integer). This is a drastically
+   smaller reward scale than the rest of the current economy (shop/upgrade/
+   re-roll costs are in the hundreds-to-thousands) — per explicit
+   instruction relayed with the spec, implemented exactly as given anyway,
+   NOT rescaled to compensate; that's a separate future ask. See fmt()/
+   floatLabel() for the small-decimal display fix this required.
+
+   VIP -> ESPECIAL rename (2026-07-23, unrelated to the paragraph above):
+   the 5th tier, VIP, is renamed "Especial" ("Baú Especial") here — same
+   underlying stats otherwise, new reward range, and Mercado-Noturno-
+   exclusive (normalMapSpawnConfig's rarityLimits.ESPECIAL is {min:0,max:0}
+   below — it simply never spawns on a Normal map anymore).
+   CHEST_TIERS keeps its ORIGINAL declaration order/count (still 5 keys) —
+   only the VIP slot's key/values changed, nothing renumbered. */
+const CHEST_TIERS = ['MADEIRA', 'FERRO', 'OURO', 'DIAMANTE', 'ESPECIAL'];
+const CHEST_TIER_HP = { MADEIRA: 70, FERRO: 150, OURO: 600, DIAMANTE: 1100, ESPECIAL: 2000 };
 const CHEST_TIER_REWARD_RANGE = {
   MADEIRA: [0.01, 0.02],
   FERRO: [0.03, 0.05],
   OURO: [0.16, 0.25],
   DIAMANTE: [0.40, 1.00],
-  VIP: [0.40, 3.00],
+  ESPECIAL: [0.50, 4.00], // was VIP's [0.40, 3.00] — new flat 0.5-4 range (2026-07-23 rename)
 };
 const CHEST_TIER_ICON = {
   MADEIRA: 'bau_madeira', FERRO: 'bau_ferro', OURO: 'bau_ouro',
-  DIAMANTE: 'bau_diamante', VIP: 'bau_vip',
+  DIAMANTE: 'bau_diamante', ESPECIAL: 'bau_especial',
 };
 function randomBetween(min, max) { return min + Math.random() * (max - min); }
 // Wave-gating from an earlier round stays removed — every tier is eligible
@@ -1293,6 +1310,13 @@ function randomBetween(min, max) { return min + Math.random() * (max - min); }
 // sum(rarityLimits.min) = 15+7+4+0+0 = 26 <= chests.absoluteMin (30);
 // sum(rarityLimits.max) = 44+26+26+7+4 = 107 comfortably exceeds
 // chests.absoluteMax (74). nightKitchenSpawnConfig is untouched by this pass.
+//
+// VIP -> ESPECIAL rename + Mercado-Noturno exclusivity (2026-07-23, third
+// pass): the historical max-sum above (107) is now stale for THIS config
+// only — ESPECIAL's rarityLimits here drop to {min:0, max:0} (Especial no
+// longer spawns on Normal maps at all, full stop), so the real current
+// max-sum is 44+26+26+7+0 = 103, still comfortably above absoluteMax (74).
+// min-sum is unaffected (VIP's/Especial's min here was already 0).
 const normalMapSpawnConfig = {
   variableTables: { min: 100, max: 165 },
   chests: { probability: 0.40, proportionalMin: 0.30, proportionalMax: 0.45, absoluteMin: 30, absoluteMax: 74 },
@@ -1301,7 +1325,7 @@ const normalMapSpawnConfig = {
     FERRO: { min: 7, max: 26 },
     OURO: { min: 4, max: 26 },
     DIAMANTE: { min: 0, max: 7 },
-    VIP: { min: 0, max: 4 },
+    ESPECIAL: { min: 0, max: 0 }, // was VIP {min:0,max:4} — now Mercado-Noturno-exclusive, never spawns here
   },
 };
 // Mercado Noturno's per-wave variable-generation density config (richer than
@@ -1323,6 +1347,10 @@ const normalMapSpawnConfig = {
 // tier's minimum is always satisfiable; sum(rarityLimits.max) =
 // 30+26+28+8+3 = 95 comfortably exceeds both chests.absoluteMax (75) and the
 // real chestCount (70).
+//
+// VIP -> ESPECIAL rename (2026-07-23): key renamed only, min/max UNCHANGED
+// here — Mercado Noturno is precisely where Especial stays available (see
+// normalMapSpawnConfig's own note: Normal maps drop it to {min:0,max:0}).
 const nightKitchenSpawnConfig = {
   variableTables: { min: 100, max: 100 },
   chests: { probability: 0.70, proportionalMin: 0.70, proportionalMax: 0.70, absoluteMin: 65, absoluteMax: 75 },
@@ -1331,7 +1359,7 @@ const nightKitchenSpawnConfig = {
     FERRO: { min: 8, max: 26 },
     OURO: { min: 6, max: 28 },
     DIAMANTE: { min: 1, max: 8 },
-    VIP: { min: 0, max: 3 },
+    ESPECIAL: { min: 0, max: 3 }, // was VIP — same min/max, key renamed only
   },
 };
 // live/default config for every wave; kept in sync with the active theme by
@@ -1414,9 +1442,11 @@ function expectedChestTierWeights(config, wave) {
 // simulation audit (thousands of real genLayout()/seedCrates() calls) found
 // that the original uniform `counts[pick(eligible)]++` pick — equal odds for
 // every still-eligible tier regardless of its own max — made small-max tiers
-// (DIAMANTE, VIP) saturate to at/near their ceiling almost every single map
-// instead of spreading across their configured [min,max] band (Mercado
-// Noturno's VIP averaged 2.98/3, never once observed at its configured
+// (DIAMANTE, VIP — VIP since renamed to ESPECIAL, 2026-07-23; this comment
+// predates that rename and describes the same key under its old name)
+// saturate to at/near their ceiling almost every single map instead of
+// spreading across their configured [min,max] band (Mercado Noturno's VIP
+// (now ESPECIAL) averaged 2.98/3, never once observed at its configured
 // floor of 0 across 5000 runs), which compressed the intended ~2.1x Mercado
 // Noturno reward premium down to a real ~1.53x. Fixed by weighting each
 // eligible tier's odds, on every single-unit draw, by its REMAINING
@@ -1514,9 +1544,10 @@ function tileClassFor(val) {
 
 // Single source of truth for a tile PROP's className (the .tile-prop overlay
 // element that carries the actual wall/obstacle/chest/jail art + HP bar —
-// see setTile() below), INCLUDING the chest-<tier> modifier (chest-wood/
-// iron/gold/diamond/special/vip) when applicable — so CSS can show the right
-// bau_*.png per tier (see tileHp[key].tier). Used by BOTH setTile() (first
+// see setTile() below), INCLUDING the chest-<tier> modifier (chest-madeira/
+// ferro/ouro/diamante/especial — especial was chest-vip before the
+// 2026-07-23 VIP->ESPECIAL rename) when applicable — so CSS can show the
+// right bau_*.png per tier (see tileHp[key].tier). Used by BOTH setTile() (first
 // placement) and updateHpBar() (every non-lethal hit) so they can never
 // drift apart again: this exact bug already happened twice — jail tiles
 // losing their lock icon on hit, then chest tiers losing their tier art on
@@ -1524,8 +1555,8 @@ function tileClassFor(val) {
 // string independently instead of sharing this logic.
 function classNameForProp(r, c, val) {
   const box = tileHp[r + ',' + c];
-  // tier keys are uppercase (MADEIRA/FERRO/OURO/DIAMANTE/VIP, matching the
-  // spec's literal slugs) but CSS classes stay lowercase-conventional
+  // tier keys are uppercase (MADEIRA/FERRO/OURO/DIAMANTE/ESPECIAL, matching
+  // the spec's literal slugs) but CSS classes stay lowercase-conventional
   const tierClass = (val === T_CHEST && box && box.tier) ? ' chest-' + box.tier.toLowerCase() : '';
   return 'tile-prop ' + tileClassFor(val) + tierClass;
 }
@@ -3702,13 +3733,13 @@ function showLegendModal() {
     </div>
     <h3 style="margin-top:16px">📦 Baús</h3>
     <div class="legend-row">
-      <span class="legend-sprite legend-tileart"><img src="assets/blocos_unicos/bau_madeira.png" alt="Baú"></span>
+      <span class="legend-sprite legend-tileart"><img src="assets/blocos_unicos/new/bau_madeira_new.png" alt="Baú"></span>
       <div><b>5 tiers, fixed HP + reward</b><div class="muted">Every chest shows an HP bar (🟢 healthy · 🟠 below 50% · 🔴 below 30%). Each bomb hit deals the Rango's ⛏️ rate as damage.<br>
       Madeira: ${CHEST_TIER_HP.MADEIRA} HP, ${CHEST_TIER_REWARD_RANGE.MADEIRA[0].toFixed(2)}–${CHEST_TIER_REWARD_RANGE.MADEIRA[1].toFixed(2)} Food Coins ·
       Ferro: ${CHEST_TIER_HP.FERRO} HP, ${CHEST_TIER_REWARD_RANGE.FERRO[0].toFixed(2)}–${CHEST_TIER_REWARD_RANGE.FERRO[1].toFixed(2)} ·
       Ouro: ${CHEST_TIER_HP.OURO} HP, ${CHEST_TIER_REWARD_RANGE.OURO[0].toFixed(2)}–${CHEST_TIER_REWARD_RANGE.OURO[1].toFixed(2)} ·
       Diamante: ${CHEST_TIER_HP.DIAMANTE} HP, ${CHEST_TIER_REWARD_RANGE.DIAMANTE[0].toFixed(2)}–${CHEST_TIER_REWARD_RANGE.DIAMANTE[1].toFixed(2)} ·
-      VIP: ${CHEST_TIER_HP.VIP} HP, ${CHEST_TIER_REWARD_RANGE.VIP[0].toFixed(2)}–${CHEST_TIER_REWARD_RANGE.VIP[1].toFixed(2)}.</div></div>
+      Especial: ${CHEST_TIER_HP.ESPECIAL} HP, ${CHEST_TIER_REWARD_RANGE.ESPECIAL[0].toFixed(2)}–${CHEST_TIER_REWARD_RANGE.ESPECIAL[1].toFixed(2)} (exclusivo do Mercado Noturno).</div></div>
     </div>
     <div class="legend-row">
       <span class="legend-sprite">🔒</span>

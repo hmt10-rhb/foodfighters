@@ -753,29 +753,45 @@ main {
    background-image: url('assets/crate.png') rule it fed were both provably
    unreachable. .tile-prop.chest's own rules are untouched. */
 /* Plain .tile-prop.chest is now just a fallback (every real chest also gets
-   a tier modifier class — chest-wood/iron/gold/diamond/special/vip — from
-   setTile(), which is what actually selects the bau_*.png art per tier).
-   Falls back to the wood look if a tier is ever somehow missing. */
-.tile-prop.chest { background-image: url('assets/blocos_unicos/bau_madeira.png'); }
-.tile-prop.chest.chest-madeira { background-image: url('assets/blocos_unicos/bau_madeira.png'); }
-.tile-prop.chest.chest-ferro { background-image: url('assets/blocos_unicos/bau_ferro.png'); }
-.tile-prop.chest.chest-ouro { background-image: url('assets/blocos_unicos/bau_ouro.png'); }
-.tile-prop.chest.chest-diamante { background-image: url('assets/blocos_unicos/bau_diamante.png'); }
-.tile-prop.chest.chest-vip { background-image: url('assets/blocos_unicos/bau_vip.png'); }
-/* No art was provided for jail blocks — simple CSS + emoji treatment, same
-   spirit as how crate/chest looked before their PNGs arrived. Same damage
-   darken/desaturate filter and HP bar as every other destructible.
-   BUG FIX (2026-07-23, found while adding the Picante glow below): this was
+   a tier modifier class — chest-madeira/ferro/ouro/diamante/especial — from
+   setTile(), which is what actually selects the bau_*_new.png art per tier).
+   Falls back to the wood look if a tier is ever somehow missing.
+   ASSET PATH UPDATE (2026-07-23): the original flat assets/blocos_unicos/
+   bau_*.png files were removed from disk (moved to blocos_unicos/old/ with
+   an _old suffix, kept only for reference — not referenced from code) and
+   replaced by a new art pass in assets/blocos_unicos/new/, each filename
+   _new-suffixed. Every URL below repointed accordingly; chest-vip renamed
+   to chest-especial (see game.js's VIP->ESPECIAL rename, same date) and now
+   points at the new bau_especial_new.png (there is no bau_vip_new.png —
+   the old VIP art is retired along with the old tier name). */
+.tile-prop.chest { background-image: url('assets/blocos_unicos/new/bau_madeira_new.png'); }
+.tile-prop.chest.chest-madeira { background-image: url('assets/blocos_unicos/new/bau_madeira_new.png'); }
+.tile-prop.chest.chest-ferro { background-image: url('assets/blocos_unicos/new/bau_ferro_new.png'); }
+.tile-prop.chest.chest-ouro { background-image: url('assets/blocos_unicos/new/bau_ouro_new.png'); }
+.tile-prop.chest.chest-diamante { background-image: url('assets/blocos_unicos/new/bau_diamante_new.png'); }
+.tile-prop.chest.chest-especial { background-image: url('assets/blocos_unicos/new/bau_especial_new.png'); }
+/* BUG FIX (2026-07-23, found while adding the Picante glow below): this was
    `.tile-prop.jail` (English), but classNameForProp()/tileClassFor() in
    game.js has only ever emitted the Portuguese `jaula` class — the exact
    same class of bug as the earlier chest-tier English/Portuguese mismatch
-   (see FF - Historico de Bugs e Decisoes item 23). This selector has never
+   (see FF - Historico de Bugs e Decisoes item 23). This selector had never
    matched a single Jaula tile in the game: every Jaula rendered as a bare,
    unstyled overlay with no lock icon, no gradient, nothing but its HP bar.
-   Renamed to the class that's actually emitted. */
+   Renamed to the class that's actually emitted.
+   REAL ART ADDED (2026-07-23, same asset pass as the chests above): Jaula
+   never had any art before this — just a flat CSS gradient background plus
+   a 🔒 emoji overlay standing in for real art, same spirit as how chests
+   looked before their own PNGs first arrived. Now that jaula_new.png
+   exists, the gradient background and the emoji overlay (both pure
+   placeholders that only existed for lack of real art) are REMOVED and
+   replaced by the real image below. The pulsing Picante box-shadow glow is
+   KEPT as-is: it's a separate visual signal (every Jaula guarantees a
+   Picante reward, see the Jaula section in game.js) orthogonal to whether
+   the tile has real artwork, so it stays layered on top of the new image
+   exactly like it was layered on top of the old gradient. */
 .tile-prop.jaula {
   /* position/inset already come from the base .tile-prop rule above */
-  background: linear-gradient(#2b2b30, #16161a);
+  background-image: url('assets/blocos_unicos/new/jaula_new.png');
   border-radius: 4px;
   filter: saturate(calc(1 - 0.45 * var(--dmg, 0))) brightness(calc(1 - 0.3 * var(--dmg, 0)));
   transition: filter 0.25s ease;
@@ -796,16 +812,6 @@ main {
     0 0 20px 6px rgba(255, 60, 0, 0.35);
   animation: jaula-picante-glow 1.6s ease-in-out infinite;
   z-index: 1;
-}
-.tile-prop.jaula::before {
-  content: '🔒';
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(var(--ts, 44px) * 0.48);
-  line-height: 1;
 }
 @keyframes jaula-picante-glow {
   0%, 100% {

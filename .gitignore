@@ -2,3 +2,6 @@ serve_out.txt
 .env
 .vercel
 node_modules/
+
+.vercel
+.env*
