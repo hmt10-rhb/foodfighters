@@ -178,9 +178,6 @@
       <div class="panel-head"><h2>Rango Packs</h2>
         <p class="muted">Bigger packs give you more rolls — every roll uses the exact same rarity odds regardless of pack size.</p></div>
       <div id="pack-grid" class="card-grid packs"></div>
-      <div class="panel-head"><h2>Houses</h2>
-        <p class="muted">Each house permanently speeds up energy recovery for all resting Rangos.</p></div>
-      <div id="house-grid" class="card-grid packs"></div>
     </section>
 
     <section id="tab-fusion" class="tab-panel">
@@ -261,22 +258,25 @@
       </div>
     </section>
 
-    <section id="tab-prestige" class="tab-panel">
+    <!-- Despensa (2026-07-23): replaces the old Prestige tab entirely — that
+         system was removed from the game per explicit user request (see
+         game.js's meta-progression constants comment). This is now the
+         dedicated home for Houses (moved out of the Shop), which used to
+         just be a currency-recovery upgrade but is meant to grow into "where
+         you store your most important Rangos" — mechanic not designed yet,
+         so purchase is disabled for now and only the showcase/browsing UI
+         ships. Layout: .panel-head stays pinned top-left (its own default
+         block flow); .despensa-showcase centers the card cluster in the
+         remaining space instead of letting it stretch full-width like the
+         Shop's grids do. -->
+    <section id="tab-despensa" class="tab-panel">
       <div class="panel-head">
-        <h2>🌌 Prestige</h2>
-        <p class="muted">Permanent meta-progression: burn your current run for a lasting boost.</p>
+        <h2>🥫 Despensa</h2>
+        <p class="muted">Onde você vai guardar os Rangos mais importantes — em construção. Por enquanto, conheça as Casas que vão morar aqui (compra temporariamente desativada).</p>
       </div>
-
-      <div class="lab-box">
-        <h3>✨ Prestige Reset</h3>
-        <p class="muted">Resets your wave back to 1 and your Food Coins/Chef Gems to starting amounts. Your hero roster is <b>never</b> touched. In exchange you gain a permanent, stacking mineRate multiplier based on how far you got — with diminishing returns per prestige, so resetting repeatedly at a low wave isn't worth it.</p>
-        <div id="prestige-preview" class="stat-row"></div>
-        <button id="prestige-btn" class="btn btn-danger">Prestige now</button>
+      <div class="despensa-showcase">
+        <div id="house-grid" class="card-grid despensa-grid"></div>
       </div>
-
-      <div class="panel-head"><h2>⛏️ Global Upgrade Tree</h2>
-        <p class="muted">Permanent, uncapped Chef Gems sink — every level applies to every hero you own, forever, stacking with everything else.</p></div>
-      <div id="upgrade-grid" class="card-grid packs"></div>
     </section>
 
     <section id="tab-ranking" class="tab-panel">
@@ -360,8 +360,8 @@
 <nav id="bottom-nav">
   <div id="bottom-nav-tabs">
     <button class="tab-btn bottom-nav-btn" data-tab="hunt"><span class="bottom-nav-ico">🍳</span><span class="bottom-nav-label">Cozinha</span></button>
-    <button class="tab-btn bottom-nav-btn" data-tab="inventory"><span class="bottom-nav-ico">🎒</span><span class="bottom-nav-label">Bolsa</span></button>
-    <button class="tab-btn bottom-nav-btn" data-tab="prestige"><span class="bottom-nav-ico">🏠</span><span class="bottom-nav-label">Casa</span></button>
+    <button class="tab-btn bottom-nav-btn" data-tab="inventory"><span class="bottom-nav-ico">🗄️</span><span class="bottom-nav-label">Armário</span></button>
+    <button class="tab-btn bottom-nav-btn" data-tab="despensa"><span class="bottom-nav-ico">🥫</span><span class="bottom-nav-label">Despensa</span></button>
     <button class="tab-btn bottom-nav-btn" data-tab="shop"><span class="bottom-nav-ico">🛒</span><span class="bottom-nav-label">Loja</span></button>
     <button class="tab-btn bottom-nav-btn" data-tab="ranking"><span class="bottom-nav-ico">🏆</span><span class="bottom-nav-label">Ranking</span></button>
     <button id="chefs-btn" class="bottom-nav-btn" title="Chefs — coming soon"><span class="bottom-nav-ico">👨‍🍳</span><span class="bottom-nav-label">Chefs</span></button>

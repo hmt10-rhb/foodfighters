@@ -307,17 +307,22 @@ const MAX_LEVEL = 10;
 
 // ---- Etapa 2: meta-progression constants ----
 //
-// Balance note (rebalance pass): globalMineMult() multiplies the tech tree's
-// mining bonus by prestigeMult(), and mineRate() then ALSO multiplies that by
-// each hero's own ascendMult() plus effectivePower() (inflated by Sacrifice's
-// bonusPower) — four independently-"reasonable-looking" permanent-progression
-// axes that all stack MULTIPLICATIVELY. Every constant below was retuned
-// together (not in isolation) so that even a dedicated player maxing all four
-// only reaches a bounded combined multiplier over a realistic timeframe —
-// see the "combined systems" test for the concrete numeric ceiling.
+// Balance note (rebalance pass): mineRate() multiplies globalMineMult()
+// (the tech tree's mining bonus) by each hero's own ascendMult() plus
+// effectivePower() (inflated by Sacrifice's bonusPower) — independently-
+// "reasonable-looking" permanent-progression axes that stack
+// MULTIPLICATIVELY. Every constant below was retuned together (not in
+// isolation) so that even a dedicated player maxing all of them only
+// reaches a bounded combined multiplier over a realistic timeframe — see
+// the "combined systems" test for the concrete numeric ceiling. Prestige
+// used to be a 4th axis here (prestigeMult()) — removed entirely 2026-07-23
+// per explicit user request ("pode excluir tudo sobre prestígio"), game and
+// Obsidian both. The Global Upgrade Tree (UPGRADE_DEFS/buyUpgrade() below)
+// stays fully working in code — state.upgrades.*, globalMineMult(),
+// blastRadius(), cooldownTicks() all still read it — it's only the shop UI
+// for IT that's been taken out (#upgrade-grid render call removed), pending
+// a better home for it later.
 const SLEEP_MODE_MULT = 0.15;       // offline earn rate while Sleep Mode is on
-const PRESTIGE_POINT_VALUE = 0.01;  // permanent mineRate mult per prestige point (was 0.05 — 5x down)
-const PRESTIGE_DECAY = 0.2;         // each successive prestige contributes less (was 0.15)
 const REROLL_BASE_COST = 50, REROLL_COST_GROWTH = 3, REROLL_LEVEL_STEP = 0.15; // unchanged — doesn't compound like the others
 const UPGRADE_DEFS = {
   mining: { name: 'Mining Boost', desc: '+1% mineRate for every hero, per level', baseCost: 6000, icon: '⛏️' },
@@ -365,8 +370,6 @@ function defaultState() {
     nextHeroId: 1,
     lastSeen: Date.now(),
     sleepMode: false,
-    prestigeCount: 0,
-    prestigePoints: 0,
     upgrades: { mining: 0, blast: 0, haste: 0 },
     skillShards: 0,
     breeds: 0,
@@ -649,11 +652,7 @@ function ascendMult(h) {
 }
 
 function globalMineMult() {
-  return (1 + (state.upgrades.mining || 0) * 0.01) * prestigeMult();
-}
-
-function prestigeMult() {
-  return 1 + (state.prestigePoints || 0) * PRESTIGE_POINT_VALUE;
+  return 1 + (state.upgrades.mining || 0) * 0.01;
 }
 
 // Generic weighted-random rarity roll — reused for BOTH the shop
@@ -689,7 +688,7 @@ const LEVEL_POWER_BONUS_PER_LEVEL = 0.10;
 // mining-rate multiplier that made buying Mining Boost or Ascending a hero
 // actually DO anything. Retiring mineRate() as a damage source in favor of
 // combatPower()/squadDamagePerSecond() silently dropped both of them —
-// Prestige/Lab/Ascension are explicitly "don't touch/break" systems, and a
+// Lab/Ascension are explicitly "don't touch/break" systems, and a
 // live Mining Boost upgrade that does nothing counts as broken even though
 // nothing crashes. Folding both back in here (not into effectivePower(),
 // same reasoning as the leveling bonus above — keep Sacrifice's dust-yield
@@ -1475,8 +1474,8 @@ function genLayout() {
   // map gets a fresh unique identity, persisted alongside gridTiles/tileHp/
   // wave in both the local save and the cloud `saves` row (see
   // saveSnapshot()) — this is the single point where a genuinely NEW map is
-  // ever rolled (new game, old/invalid save fallback, a real wave-clear,
-  // Prestige's reset), so stamping it here (rather than at each call site)
+  // ever rolled (new game, old/invalid save fallback, a real wave-clear),
+  // so stamping it here (rather than at each call site)
   // guarantees it always travels with the grid it actually belongs to.
   // Restoring a persisted grid (restoreOrGenerateGrid()) does NOT call this
   // — it carries the OLD seed through unchanged, since it's still the same
@@ -2436,7 +2435,7 @@ function buyHouse(id) {
   save();
   toast(`${house.emoji} ${house.name} built! Recovery is now ${recoveryRate().toFixed(2)} energy/s.`);
   renderHeader();
-  renderShop();
+  renderDespensa();
 }
 
 function exchange() {
@@ -2610,40 +2609,6 @@ function claimTask(id) {
 }
 
 /* ============ Etapa 2: meta-progression ============ */
-
-// ---- Prestige ----
-
-function prestigeContribution(waveAtReset, prestigeIndex) {
-  return Math.sqrt(Math.max(1, waveAtReset)) / (1 + prestigeIndex * PRESTIGE_DECAY);
-}
-
-function prestigePreview() {
-  const gain = prestigeContribution(state.wave, state.prestigeCount);
-  const curMult = prestigeMult();
-  const nextMult = 1 + (state.prestigePoints + gain) * PRESTIGE_POINT_VALUE;
-  return { gain, curMult, nextMult };
-}
-
-function doPrestige() {
-  if (state.wave < 2) {
-    toast('Reach at least wave 2 before prestiging.');
-    return false;
-  }
-  const { gain, nextMult } = prestigePreview();
-  state.prestigePoints += gain;
-  state.prestigeCount++;
-  state.wave = 1;
-  state.starCore = 0;
-  state.bcoin = defaultState().bcoin;
-  state.heroes.forEach(h => { h.mode = 'rest'; });
-  syncActors();
-  genLayout();
-  applyTileClasses();
-  save();
-  renderAll();
-  toast(`✨ Prestige #${state.prestigeCount}! Permanent mineRate multiplier is now ×${nextMult.toFixed(2)}.`);
-  return true;
-}
 
 // ---- Stat re-roll ----
 
@@ -2971,7 +2936,7 @@ function renderHunt() {
           </div>
         </div>`;
       }).join('')
-    : '<div class="bombers-empty muted">No Rangos on the field.<br>Open 🎒 Bolsa and send some to work.</div>';
+    : '<div class="bombers-empty muted">No Rangos on the field.<br>Open 🗄️ Armário and send some to work.</div>';
 }
 
 function sortedHeroes() {
@@ -3220,14 +3185,21 @@ function renderShop() {
       <div class="price">${fmtCurrency(p.cost)} Chef Gems</div>
       <button class="btn" data-pack="${i}" ${state.bcoin < p.cost ? 'disabled' : ''}>Buy pack</button>
     </div>`).join('');
+}
 
+// Despensa (2026-07-23, was the Shop's "Houses" section — moved into its own
+// dedicated tab per user request, replacing what used to be tab-prestige).
+// Purchase is deliberately disabled unconditionally (not currency-gated like
+// packs) — "onde guarda os rangos mais importantes" is a future mechanic not
+// built yet, this only ships the browsing/showcase UI for now.
+function renderDespensa() {
   document.getElementById('house-grid').innerHTML = HOUSES.map(h => `
     <div class="house-card">
       <h3>${h.emoji} ${h.name}</h3>
       <div class="muted">+${h.recovery.toFixed(1)} energy/s recovery</div>
       <div class="owned">Owned: ${state.houses[h.id]}</div>
       <div class="price">${fmtCurrency(h.cost)} Chef Gems</div>
-      <button class="btn" data-house="${h.id}" ${state.bcoin < h.cost ? 'disabled' : ''}>Build</button>
+      <button class="btn" data-house="${h.id}" disabled title="Em breve">Build</button>
     </div>`).join('');
 }
 
@@ -3236,9 +3208,6 @@ function renderShop() {
 function updateShopButtons() {
   document.querySelectorAll('[data-pack]').forEach(b => {
     b.disabled = state.bcoin < PACKS[Number(b.dataset.pack)].cost;
-  });
-  document.querySelectorAll('[data-house]').forEach(b => {
-    b.disabled = state.bcoin < HOUSES.find(h => h.id === b.dataset.house).cost;
   });
 }
 
@@ -3328,12 +3297,12 @@ function renderAll() {
   renderShop();
   renderFusion();
   renderLab();
-  renderPrestige();
+  renderDespensa();
   renderRanking();
   renderTasks();
 }
 
-/* ============ Lab / Prestige rendering ============ */
+/* ============ Lab rendering ============ */
 
 function heroOptionLabel(h) {
   return `${h.emoji} ${h.name} (${rTag(h.rarity)} Lv${h.level})`;
@@ -3449,17 +3418,13 @@ function updateAscendPreview() {
   document.getElementById('ascend-preview').textContent = `${checked} / ${ASCEND_SACRIFICE_COUNT} selected`;
 }
 
-function renderPrestige() {
-  const { gain, curMult, nextMult } = prestigePreview();
-  document.getElementById('prestige-preview').innerHTML = `
-    <div class="stat-box"><div class="label">Current wave</div><div class="value">${state.wave}</div></div>
-    <div class="stat-box"><div class="label">Current mult</div><div class="value">×${curMult.toFixed(2)}</div></div>
-    <div class="stat-box"><div class="label">Gain if you prestige now</div><div class="value">+${gain.toFixed(2)} pts</div></div>
-    <div class="stat-box"><div class="label">Mult after</div><div class="value">×${nextMult.toFixed(2)}</div></div>
-    <div class="stat-box"><div class="label">Prestiges so far</div><div class="value">${state.prestigeCount}</div></div>
-  `;
-  document.getElementById('prestige-btn').disabled = state.wave < 2;
-
+// Global Upgrade Tree's shop UI is out of the game for now (2026-07-23,
+// pending a better home for it) — this used to be part of renderPrestige()
+// (deleted along with the rest of Prestige). Deliberately left uncalled
+// rather than deleted: state.upgrades/UPGRADE_DEFS/buyUpgrade() are all
+// still fully wired into the real economy (globalMineMult()/blastRadius()/
+// cooldownTicks()), only the shop card grid to SPEND into it is gone.
+function renderUpgradeGrid() {
   document.getElementById('upgrade-grid').innerHTML = Object.keys(UPGRADE_DEFS).map(key => {
     const def = UPGRADE_DEFS[key];
     const lvl = state.upgrades[key] || 0;
@@ -3473,20 +3438,6 @@ function renderPrestige() {
       <button class="btn btn-small" data-upgrade="${key}" ${state.bcoin < cost ? 'disabled' : ''}>Upgrade</button>
     </div>`;
   }).join('');
-}
-
-function showPrestigeConfirm() {
-  if (state.wave < 2) { toast('Reach at least wave 2 before prestiging.'); return; }
-  const { gain, curMult, nextMult } = prestigePreview();
-  document.getElementById('modal-body').innerHTML = `
-    <h3>✨ Confirm Prestige</h3>
-    <p class="muted">This resets your wave to 1 and your Food Coins/Chef Gems to starting amounts. Your ${state.heroes.length} heroes are <b>not</b> touched.</p>
-    <div class="stat-row">
-      <div class="stat-box"><div class="label">Mult now</div><div class="value">×${curMult.toFixed(2)}</div></div>
-      <div class="stat-box"><div class="label">Mult after</div><div class="value">×${nextMult.toFixed(2)}</div></div>
-    </div>
-    <button class="btn btn-danger" id="prestige-confirm-btn" style="margin-top:14px">Confirm Prestige</button>`;
-  document.getElementById('modal-backdrop').classList.remove('hidden');
 }
 
 /* ============ Modal / Toast ============ */
@@ -3839,11 +3790,6 @@ function bindEvents() {
   document.getElementById('modal-body').addEventListener('click', e => {
     if (e.target.closest('#reveal-next')) { advanceReveal(); return; }
     if (e.target.closest('#reveal-speed')) { toggleRevealSpeed(); return; }
-    if (e.target.closest('#prestige-confirm-btn')) {
-      doPrestige();
-      document.getElementById('modal-backdrop').classList.add('hidden');
-      return;
-    }
     if (e.target.closest('#reveal-card')) advanceReveal();
   });
 
@@ -3893,12 +3839,6 @@ function bindEvents() {
     if (fodderIds.length !== ASCEND_SACRIFICE_COUNT) { toast(`Select exactly ${ASCEND_SACRIFICE_COUNT} same-rarity heroes to consume.`); return; }
     ascendHero(heroId, fodderIds);
     renderLab();
-  });
-
-  document.getElementById('prestige-btn').addEventListener('click', showPrestigeConfirm);
-  document.getElementById('upgrade-grid').addEventListener('click', e => {
-    const b = e.target.closest('[data-upgrade]');
-    if (b) { buyUpgrade(b.dataset.upgrade); renderPrestige(); }
   });
 
   document.getElementById('ref-copy').addEventListener('click', () => {

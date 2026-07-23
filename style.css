@@ -365,6 +365,21 @@ main {
 .panel-head p { width: 100%; }
 .muted { color: var(--muted); font-size: 0.88rem; }
 
+/* Despensa (2026-07-23): text (.panel-head) stays pinned top-left via its
+   own normal block flow (unchanged) — only the card cluster below it needs
+   to center, both horizontally AND vertically, in whatever space is left,
+   instead of stretching full-width like the Shop's card-grid does. */
+#tab-despensa.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.despensa-showcase { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow-y: auto; }
+/* NOT CSS Grid here on purpose — repeat(auto-fit/auto-fill, minmax(...))
+   needs a definite container width to decide column count, but this grid
+   sits inside a centered flex item with no definite width of its own, so
+   auto-fit was collapsing to a single column instead of a row. Flexbox with
+   wrap sidesteps that entirely: cards just lay out left-to-right and wrap
+   based on the REAL available width, no special-case needed. */
+.despensa-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; max-width: 900px; }
+.despensa-grid .house-card { width: 220px; }
+
 /* ===== Treasure Hunt HUD ===== */
 
 #hud-top {
@@ -1062,7 +1077,7 @@ select {
 .legend-row .legend-tileart img { width: 2rem; height: 2rem; object-fit: contain; }
 .legend-row .muted { line-height: 1.5; }
 
-/* ===== Lab / Prestige ===== */
+/* ===== Lab ===== */
 
 .lab-box {
   background: var(--card);
@@ -1479,7 +1494,7 @@ body:not(.ff-authed) #bottom-nav { display: none; }
 /* =====================================================================
    Food Fighters: Bite Brawl — Inventory tab re-skin
    Scoped entirely under .ff-scope (#tab-inventory) so the rest of the app
-   (Treasure Hunt, Shop, Fusion, Lab, Prestige, Ranking, Tasks, Extras, the
+   (Treasure Hunt, Shop, Fusion, Lab, Despensa, Ranking, Tasks, Extras, the
    shell/nav) is completely unaffected. Values below are read directly from
    the food-fighters-inventory prototype's global.css / component CSS, not
    guessed — palette, border widths, hard-shadow offsets, radii, fonts.
