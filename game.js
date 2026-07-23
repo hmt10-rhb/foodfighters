@@ -388,6 +388,15 @@ function save() {
   localStorage.setItem(SAVE_KEY, JSON.stringify(snapshot));
 }
 
+// Factored out of load()'s brand-new-game branch so the reset button can
+// reuse the exact same bootstrap (see reset-btn handler in bindEvents).
+function newGameState() {
+  state = defaultState();
+  for (let i = 0; i < 3; i++) state.heroes.push(makeHero('CASEIRO'));
+  genLayout(); // brand-new game: no persisted grid to restore, roll one
+  waveRegen = false;
+}
+
 function load() {
   // One-time brand-rename migration (2026-07-22): if the new key is empty
   // but the OLD key still holds real player data, adopt it under the new
@@ -403,10 +412,7 @@ function load() {
   let raw = null;
   try { raw = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) { raw = null; }
   if (!raw || !Array.isArray(raw.heroes)) {
-    state = defaultState();
-    for (let i = 0; i < 3; i++) state.heroes.push(makeHero('CASEIRO'));
-    genLayout(); // brand-new game: no persisted grid to restore, roll one
-    waveRegen = false;
+    newGameState();
     save();
     return;
   }
@@ -3609,11 +3615,39 @@ function bindEvents() {
     toast('Automine package set (cosmetic only in this MVP).');
   });
 
-  document.getElementById('reset-btn').addEventListener('click', () => {
-    if (confirm('Wipe all Food Fighters progress?')) {
-      localStorage.removeItem(SAVE_KEY);
-      location.reload();
+  document.getElementById('reset-btn').addEventListener('click', async () => {
+    if (!confirm('Wipe all Food Fighters progress?')) return;
+    // BUG FIX (2026-07-23): this button never actually worked. Two bugs
+    // stacked:
+    // 1) It only did `localStorage.removeItem(SAVE_KEY); location.reload();`
+    //    — but location.reload() fires 'beforeunload' synchronously BEFORE
+    //    navigating, and this file has a `beforeunload` listener that calls
+    //    save(), which re-serializes whatever is STILL in the in-memory
+    //    `state` object (i.e. the old, un-reset progress) right back into
+    //    localStorage before the page actually unloads. The removeItem()
+    //    was always overwritten a moment later, every single time.
+    // 2) For a logged-in cloud player, even a successful local wipe would
+    //    get pulled straight back down from the cloud on that same reload.
+    // Fix: build the fresh state in memory FIRST (same bootstrap load() uses
+    // for a brand-new game, via newGameState()) and save() it immediately —
+    // so any beforeunload autosave just re-persists the already-wiped state,
+    // a harmless no-op instead of a silent revert. Then, if signed in,
+    // delete the player's own cloud rows (allowed by the owner-can-delete
+    // policies in supabase/schema.sql) so there's nothing stale left for a
+    // cloud pull to restore on reload either.
+    if (cloudSignedIn()) {
+      const [savesRes, leaderboardRes] = await Promise.all([
+        sb.from('saves').delete().eq('user_id', cloudSession.user.id),
+        sb.from('leaderboard').delete().eq('user_id', cloudSession.user.id),
+      ]);
+      if (savesRes.error || leaderboardRes.error) {
+        toast('Falha ao limpar a nuvem — tente de novo.');
+        return;
+      }
     }
+    newGameState();
+    save();
+    location.reload();
   });
 
   window.addEventListener('beforeunload', save);
