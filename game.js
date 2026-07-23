@@ -2762,7 +2762,10 @@ function setMichelinBuyQty(qty) {
   michelinBuyQty = Math.max(1, Math.min(99999, Math.round(qty) || 1));
   renderMichelinBuyModal();
 }
-const MICHELIN_QTY_PRESETS = [5, 10, 20, 50, 100, 300];
+// Presets are the 6 real price tiers, not arbitrary round numbers (2026-07-23,
+// user-flagged) — each button jumps straight to that tier's minimum
+// quantity (the cheapest entry point into that price), labeled with the
+// tier's own range so the presets and the calc box below always agree.
 function renderMichelinBuyModal() {
   const qty = michelinBuyQty;
   const tier = michelinTierFor(qty);
@@ -2771,7 +2774,10 @@ function renderMichelinBuyModal() {
     <h3>🌟 Comprar Estrela Michelin</h3>
     <p class="muted">Escolha a quantidade — quanto mais compra de uma vez, menor o preço por unidade.</p>
     <div class="michelin-presets">
-      ${MICHELIN_QTY_PRESETS.map(p => `<button type="button" class="btn btn-small${p === qty ? ' michelin-preset-active' : ''}" data-michelin-qty="${p}">${p}</button>`).join('')}
+      ${MICHELIN_PRICE_TIERS.map(t => {
+        const label = t.max === Infinity ? `${t.min}+` : `${t.min}–${t.max}`;
+        return `<button type="button" class="btn btn-small${t === tier ? ' michelin-preset-active' : ''}" data-michelin-qty="${t.min}">${label}</button>`;
+      }).join('')}
     </div>
     <div class="michelin-stepper">
       <button type="button" id="michelin-qty-minus" class="btn btn-small btn-ghost">−</button>
@@ -2785,9 +2791,94 @@ function renderMichelinBuyModal() {
       <div class="michelin-calc-row michelin-calc-total"><span>Total</span><b>${fmtBRL(total)}</b></div>
     </div>
     <button type="button" id="michelin-generate-pix" class="btn" style="width:100%;margin-top:10px;">Gerar PIX</button>
-    <p class="muted" style="margin-top:8px;font-size:0.78rem">⚠️ Pagamento real ainda não configurado — este botão é um placeholder até a integração com o gateway de pagamento ser concluída.</p>
     ${(state.michelinCoin || 0) >= MICHELIN_EXCHANGE_RATE ? `
     <button type="button" id="michelin-convert-link" class="btn btn-ghost btn-small" style="margin-top:10px;">Converter saldo atual (${fmtCurrency(state.michelinCoin)} 🌟) em Chef Gems</button>` : ''}
+  `;
+}
+
+// Live Realtime watch on ONE specific order row (2026-07-23) — same
+// postgres_changes pattern subscribeLeaderboardRealtime() already uses,
+// scoped to a single row via a filter instead of watching the whole table.
+// Cleaned up (unsubscribed) whenever the QR screen closes/succeeds/a new
+// order starts, so a stale channel never lingers past its own popup.
+let michelinOrderChannel = null;
+function unsubscribeMichelinOrder() {
+  if (michelinOrderChannel) {
+    sb.removeChannel(michelinOrderChannel);
+    michelinOrderChannel = null;
+  }
+}
+function subscribeMichelinOrder(orderId, quantity) {
+  unsubscribeMichelinOrder();
+  if (!sb) return;
+  michelinOrderChannel = sb
+    .channel('michelin-order-' + orderId)
+    .on('postgres_changes', {
+      event: 'UPDATE', schema: 'public', table: 'michelin_orders', filter: `id=eq.${orderId}`,
+    }, payload => {
+      if (payload.new && payload.new.status === 'approved') onMichelinOrderApproved(quantity);
+    })
+    .subscribe();
+}
+// BUG AVOIDED (2026-07-23, caught before shipping, not from a live report):
+// this used to call pullCloudSave() to "pick up" the webhook's server-side
+// credit — but pullCloudSave() decides cloud-vs-local by comparing
+// timestamps (data.updated_at vs state.lastSeen), and the player's own
+// periodic pushCloudSave() (every 30s while online) could easily have run
+// AFTER the webhook's credit but land with a similar-enough timestamp for
+// "local wins" to be picked — which would then PUSH the stale local state
+// (without the new Michelin) right back over the server's freshly-credited
+// row, silently erasing a real payment's credit. Since this function
+// already knows exactly how much was just approved (the same `quantity`
+// the webhook credited, straight from create-pix-order's own response),
+// crediting it directly client-side and pushing is both simpler and
+// race-free — no merge decision needed at all.
+function onMichelinOrderApproved(quantity) {
+  unsubscribeMichelinOrder();
+  state.michelinCoin = (state.michelinCoin || 0) + quantity;
+  save();
+  pushCloudSave();
+  renderHeader();
+  renderExtras();
+  document.getElementById('modal-body').innerHTML = `
+    <h3>✅ Pagamento confirmado!</h3>
+    <p class="muted">+${quantity} 🌟 Estrela Michelin creditado(s) na sua conta.</p>
+    <button type="button" class="btn" id="modal-close-inline" style="width:100%;margin-top:10px;">Fechar</button>
+  `;
+}
+
+// Calls the real create-pix-order Edge Function (2026-07-23) — price is
+// computed SERVER-SIDE from the same tier table (never trusts a
+// client-supplied amount, see that function's own comment), so this only
+// ever sends the chosen quantity.
+async function generatePixOrder() {
+  if (!sb || !cloudSignedIn()) {
+    toast('Entre na sua conta pra comprar Estrela Michelin.');
+    return;
+  }
+  const btn = document.getElementById('michelin-generate-pix');
+  if (btn) { btn.disabled = true; btn.textContent = 'Gerando PIX...'; }
+  const { data, error } = await sb.functions.invoke('create-pix-order', {
+    body: { quantity: michelinBuyQty },
+  });
+  if (error || (data && data.error)) {
+    toast('Erro ao gerar PIX: ' + (data?.error || error.message || 'falha desconhecida'));
+    if (btn) { btn.disabled = false; btn.textContent = 'Gerar PIX'; }
+    return;
+  }
+  renderPixQrScreen(data);
+  subscribeMichelinOrder(data.orderId, data.quantity);
+}
+
+function renderPixQrScreen(order) {
+  document.getElementById('modal-body').innerHTML = `
+    <h3>🌟 Pague com PIX</h3>
+    <p class="muted">${order.quantity} 🌟 Estrela Michelin — ${fmtBRL(order.amountBRL)}</p>
+    <img src="data:image/png;base64,${order.qrCodeBase64}" alt="QR Code PIX" style="display:block;width:220px;height:220px;margin:14px auto;border-radius:8px;background:#fff;padding:8px;">
+    <p class="muted" style="text-align:center;font-size:0.8rem">Escaneie com o app do seu banco, ou copie o código abaixo:</p>
+    <textarea id="michelin-pix-copiapaste" readonly style="width:100%;height:70px;margin-top:8px;font-family:monospace;font-size:0.72rem;background:#141009;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px;resize:none;">${order.qrCode}</textarea>
+    <button type="button" id="michelin-pix-copy-btn" class="btn btn-ghost btn-small" style="width:100%;margin-top:6px;">📋 Copiar código</button>
+    <p class="muted" id="michelin-pix-waiting" style="text-align:center;margin-top:12px;">⏳ Aguardando confirmação do pagamento...</p>
   `;
 }
 
@@ -5084,11 +5175,13 @@ function bindEvents() {
 
   document.getElementById('modal-close').addEventListener('click', () => {
     cancelReveal();
+    unsubscribeMichelinOrder(); // no-op if no PIX QR was showing
     document.getElementById('modal-backdrop').classList.add('hidden');
   });
   document.getElementById('modal-backdrop').addEventListener('click', e => {
     if (e.target.id === 'modal-backdrop') {
       cancelReveal();
+      unsubscribeMichelinOrder();
       e.target.classList.add('hidden');
     }
   });
@@ -5133,12 +5226,24 @@ function bindEvents() {
     if (preset) { setMichelinBuyQty(Number(preset.dataset.michelinQty)); return; }
     if (e.target.closest('#michelin-qty-minus')) { setMichelinBuyQty(michelinBuyQty - 1); return; }
     if (e.target.closest('#michelin-qty-plus')) { setMichelinBuyQty(michelinBuyQty + 1); return; }
-    if (e.target.closest('#michelin-generate-pix')) {
-      toast('Pagamento por PIX ainda não está configurado — em breve!');
-      return;
-    }
+    if (e.target.closest('#michelin-generate-pix')) { generatePixOrder(); return; }
     if (e.target.closest('#michelin-convert-link')) {
       michelinExchange();
+      document.getElementById('modal-backdrop').classList.add('hidden');
+      return;
+    }
+    if (e.target.closest('#michelin-pix-copy-btn')) {
+      const ta = document.getElementById('michelin-pix-copiapaste');
+      if (ta) {
+        ta.select();
+        navigator.clipboard?.writeText(ta.value).then(
+          () => toast('Código copiado!'),
+          () => document.execCommand('copy') // older-browser fallback
+        );
+      }
+      return;
+    }
+    if (e.target.closest('#modal-close-inline')) {
       document.getElementById('modal-backdrop').classList.add('hidden');
       return;
     }

@@ -69,6 +69,45 @@ begin
   end if;
 end $$;
 
+-- ============ Estrela Michelin PIX orders (2026-07-23) ============
+-- Tracks every purchase attempt end to end: created by create-pix-order
+-- (status starts 'pending', then 'awaiting_payment' once Mercado Pago
+-- confirms the charge was created), flipped to 'approved' by
+-- mercadopago-webhook ONLY after re-verifying the payment directly against
+-- Mercado Pago's own API (never trusting the webhook body alone) — see that
+-- function's own comments. Regular players can read their own rows (so the
+-- frontend can watch a specific order via Realtime while a QR code is
+-- showing) but can never write here directly; only the two Edge Functions
+-- (service role) do, which is what actually prevents a player from just
+-- INSERTing their own fake "approved" row as a free-currency exploit.
+create table if not exists public.michelin_orders (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  quantity integer not null check (quantity > 0),
+  amount_brl numeric not null check (amount_brl > 0),
+  mp_order_id text,
+  status text not null default 'pending',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.michelin_orders enable row level security;
+
+create policy "michelin_orders: owner can read" on public.michelin_orders
+  for select using (auth.uid() = user_id);
+-- Deliberately NO insert/update/delete policy for regular users — see the
+-- table comment above.
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'michelin_orders'
+  ) then
+    alter publication supabase_realtime add table public.michelin_orders;
+  end if;
+end $$;
+
 -- ============ Anti-cheat guard ============
 -- Basic sanity check, not a full server-authoritative simulation: scores can
 -- only move forward, and a single sync can't leap an implausible number of
