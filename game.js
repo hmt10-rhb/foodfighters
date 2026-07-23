@@ -4475,7 +4475,7 @@ async function pullCloudSave() {
 
 async function pushCloudSave() {
   if (!sb || !cloudSession) return;
-  await sb.from('saves').upsert({
+  const savesRes = await sb.from('saves').upsert({
     user_id: cloudSession.user.id,
     // FIX (2026-07-23, master spec #1/#5): used to push the bare `state`
     // object, which never carried gridTiles/tileHp/cratesLeft/cratesTotal/
@@ -4486,7 +4486,14 @@ async function pushCloudSave() {
     state: saveSnapshot(),
     updated_at: new Date().toISOString(),
   });
-  await sb.from('leaderboard').upsert({
+  // ERROR LOGGING (2026-07-23): these upserts used to be fire-and-forget —
+  // any failure (RLS, schema mismatch, network) was completely invisible.
+  // That's exactly how the leaderboard bigint/fractional mismatch below hid
+  // for so long: the write failed on every push for any player with cents
+  // in their total, and nothing ever surfaced it. Logging here doesn't fix
+  // failures, but it means the next one won't be silent.
+  if (savesRes.error) console.error('pushCloudSave: saves upsert failed', savesRes.error);
+  const leaderboardRes = await sb.from('leaderboard').upsert({
     user_id: cloudSession.user.id,
     username: cloudUsername || 'Miner',
     wave: state.wave,
@@ -4497,6 +4504,7 @@ async function pushCloudSave() {
     // genuinely accumulating. Round to 2 decimals instead of flooring.
     total_mined: Math.round(state.totalMined * 100) / 100,
   });
+  if (leaderboardRes.error) console.error('pushCloudSave: leaderboard upsert failed', leaderboardRes.error);
 }
 
 async function refreshLeaderboard() {
@@ -4628,6 +4636,15 @@ function enterGame() {
   setInterval(economyTick, 1000);
   setInterval(aiTick, AI_MS);
   subscribeLeaderboardRealtime();
+  // POLLING FALLBACK (2026-07-23): the Realtime subscription above requires
+  // the `leaderboard` table to be added to Supabase's `supabase_realtime`
+  // publication (a dashboard/SQL setting, not something this file controls)
+  // — if that was never done, or the websocket drops, postgres_changes
+  // silently never fires again and the ranking view freezes at whatever it
+  // was on login, forever, with no error anywhere. This interval is
+  // independent of Realtime entirely, so the ranking still catches up
+  // periodically even if the push channel is broken.
+  setInterval(refreshLeaderboard, 20000);
   setInterval(() => { if (cloudSignedIn()) pushCloudSave(); }, 30000);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden' && cloudSignedIn()) pushCloudSave();

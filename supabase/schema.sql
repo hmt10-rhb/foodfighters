@@ -24,9 +24,23 @@ create table if not exists public.leaderboard (
   user_id uuid primary key references auth.users(id) on delete cascade,
   username text not null,
   wave integer not null default 1,
-  total_mined bigint not null default 0,
+  -- NOTE: must be numeric, not bigint/integer. The economy is entirely
+  -- fractional (chest rewards 0.01-3.00), and game.js writes
+  -- total_mined rounded to 2 decimals — a bigint column silently rejects
+  -- that ("invalid input syntax for type bigint") on every write that
+  -- isn't a whole number, which is nearly always. See migration below for
+  -- fixing an existing table created before this was caught (2026-07-23).
+  total_mined numeric not null default 0,
   updated_at timestamptz not null default now()
 );
+
+-- MIGRATION (2026-07-23): the table above already existed in production
+-- with total_mined as bigint (created before the economy went fractional).
+-- `create table if not exists` above is a no-op against that existing
+-- table, so the column type never actually got fixed just by re-running
+-- this file — this ALTER is what does it. Safe/idempotent to re-run: a
+-- numeric->numeric cast is a no-op.
+alter table public.leaderboard alter column total_mined type numeric using total_mined::numeric;
 
 alter table public.leaderboard enable row level security;
 
@@ -38,6 +52,22 @@ create policy "leaderboard: owner can update" on public.leaderboard
   for update using (auth.uid() = user_id);
 create policy "leaderboard: owner can delete" on public.leaderboard
   for delete using (auth.uid() = user_id);
+
+-- Realtime: a table is NOT broadcast over postgres_changes just because RLS
+-- allows reading it — it must also be added to the supabase_realtime
+-- publication. Without this, every client's Realtime subscription in
+-- game.js silently receives nothing, forever, with no error anywhere: the
+-- ranking view just freezes at whatever it showed on login. This is
+-- idempotent-safe to re-run (skips if already a member).
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'leaderboard'
+  ) then
+    alter publication supabase_realtime add table public.leaderboard;
+  end if;
+end $$;
 
 -- ============ Anti-cheat guard ============
 -- Basic sanity check, not a full server-authoritative simulation: scores can
