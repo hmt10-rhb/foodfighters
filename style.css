@@ -359,6 +359,15 @@ main {
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
 #tab-hunt.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* BUG FIX (2026-07-23): #tab-inventory never got this same treatment, so it
+   had no real bounded height — .ff-inventory-main's `height: calc(100% -
+   8px)` was resolving against an auto-height ancestor, which (per the CSS
+   spec) computes as auto too, so it just grew with content instead of being
+   capped. Once heroes filled more than one screen's worth of grid rows, the
+   whole TAB grew and `main`'s own overflow-y:auto scrolled the entire page
+   (header, right panel, everything) instead of #ff-grid's own overflow-y:
+   auto scrolling just the card grid internally like it was designed to. */
+#tab-inventory.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 
 .panel-head { margin-bottom: 16px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; }
 .panel-head h2 { color: var(--accent2); font-size: 1.25rem; width: 100%; }
@@ -1666,7 +1675,12 @@ body:not(.ff-authed) #bottom-nav { display: none; }
   min-height: 0;
   overflow-y: auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  /* fixed 5-per-row (2026-07-23, explicit request) — was auto-fill with a
+     120px minimum, which let the column count vary with viewport width.
+     Cards now always land 5 to a row; they get proportionally narrower on
+     small screens instead of the row shrinking to 4/3/etc. */
+  grid-template-columns: repeat(5, 1fr);
+  grid-auto-rows: min-content;
   gap: clamp(8px, 1vw, 14px);
   align-content: start;
 }
@@ -1700,6 +1714,26 @@ body:not(.ff-authed) #bottom-nav { display: none; }
   background: var(--ff-petrol-700);
   padding: 6px;
   aspect-ratio: 3 / 4;
+  /* Belt-and-suspenders (2026-07-23, explicit "never expand downward, under
+     no circumstance" request): aspect-ratio already keeps every card the
+     same fixed size regardless of content — .ff-card-image-wrap's flex:1 1
+     auto + min-height:0 is what actually absorbs any extra content (e.g. a
+     skill row wrapping to 2 lines) by shrinking the portrait, not by
+     growing the card. overflow:hidden is the hard guarantee on top: nothing
+     inside can ever visually push the card taller than its aspect-ratio box,
+     even in an edge case the flex-shrink logic doesn't anticipate.
+     BUG FIX (2026-07-23, "cards overlapping/misaligned rows"): grid (and
+     flex) items get an implicit min-height/min-width:auto by default, which
+     is based on CONTENT size and can silently override aspect-ratio's
+     preferred size — a card with more content (4 skill icons, a longer
+     name, the Picante badge) could demand a taller min-content height than
+     a plainer neighbor, making its GRID ROW auto-size taller than the row
+     above/below it even though every column is the same width. min-height/
+     min-width:0 here removes that implicit floor, so aspect-ratio is what
+     actually wins for every card, in every row, unconditionally. */
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   border: var(--ff-border-w) solid var(--ff-ink);
   box-shadow: 0 0 0 3px var(--ff-petrol-500) inset, var(--ff-shadow-hard);
   border-radius: var(--ff-radius-md);
@@ -1761,9 +1795,17 @@ body:not(.ff-authed) #bottom-nav { display: none; }
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: clamp(38px, 7vw, 80px);
 }
-.ff-card-image-wrap .sprite { width: 0.9em; height: 0.9em; }
+/* BUG FIX (2026-07-23, "size depends on browser zoom"): was `width:0.9em`
+   against a `font-size: clamp(38px, 7vw, 80px)` on the wrap above — a
+   VIEWPORT-relative (7vw) size for a box whose actual rendered width comes
+   from the grid column (a % split of #tab-inventory's own width), a
+   completely different reference frame. The two drift out of sync at
+   different zoom levels/viewport widths since they're computed from
+   unrelated inputs. Percentage sizing ties the sprite directly to its real
+   parent box instead, so it always scales exactly with the card, at any
+   zoom. */
+.ff-card-image-wrap .sprite { width: 90%; height: 90%; }
 
 .ff-rarity-badge {
   position: absolute;
