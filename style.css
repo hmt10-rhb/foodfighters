@@ -698,13 +698,17 @@ main {
   background-image: url('assets/blocos_unicos/mesa_variavel.png');
   border-radius: 0;
 }
-.tile-prop.crate, .tile-prop.chest {
+.tile-prop.chest {
   /* damage darkens/desaturates the artwork instead of swapping a CSS shape —
      --dmg is set per-prop from JS (0 = full HP, 1 = about to break) */
   filter: saturate(calc(1 - 0.45 * var(--dmg, 0))) brightness(calc(1 - 0.3 * var(--dmg, 0)));
   transition: filter 0.25s ease;
 }
-.tile-prop.crate { background-image: url('assets/crate.png'); }
+/* .tile-prop.crate rules removed (2026-07-23 cleanup): tileClassFor() in
+   game.js never returns 'crate' anymore (T_CRATE is dead — see game.js's own
+   T_CRATE cleanup comments), so this selector and the standalone
+   background-image: url('assets/crate.png') rule it fed were both provably
+   unreachable. .tile-prop.chest's own rules are untouched. */
 /* Plain .tile-prop.chest is now just a fallback (every real chest also gets
    a tier modifier class — chest-wood/iron/gold/diamond/special/vip — from
    setTile(), which is what actually selects the bau_*.png art per tier).

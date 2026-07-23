@@ -1152,27 +1152,56 @@ function randomBetween(min, max) { return min + Math.random() * (max - min); }
 // Wave-gating from an earlier round stays removed — every tier is eligible
 // from wave 1, governed purely by rarityLimits' min/max RNG below.
 
+// Balance pass (2026-07-23): both configs below reworked to the final
+// numbers worked out with the user across several messages, using
+// expected-value economy math to confirm balance. Data-only change — no
+// generation/distribution logic touched (see getChestLimits()/
+// rollChestTierCounts() below, both unmodified). Feasibility re-verified for
+// both configs at the new scale: for normalMapSpawnConfig,
+// sum(rarityLimits.min) = 12+6+3+0+0 = 21 <= chests.absoluteMin (26), so
+// rollChestTierCounts() can always satisfy every tier's minimum even at the
+// smallest realistic chest count; sum(rarityLimits.max) = 36+21+21+6+3 = 87
+// comfortably exceeds chests.absoluteMax (61). Same check for
+// nightKitchenSpawnConfig below its own definition.
 const normalMapSpawnConfig = {
-  variableTables: { min: 28, max: 50 },
-  chests: { probability: 0.40, proportionalMin: 0.30, proportionalMax: 0.45, absoluteMin: 8, absoluteMax: 20 },
+  variableTables: { min: 85, max: 135 },
+  chests: { probability: 0.40, proportionalMin: 0.30, proportionalMax: 0.45, absoluteMin: 26, absoluteMax: 61 },
   rarityLimits: {
-    MADEIRA: { min: 4, max: 12 },
-    FERRO: { min: 2, max: 7 },
-    OURO: { min: 1, max: 7 },
-    DIAMANTE: { min: 0, max: 2 },
-    VIP: { min: 0, max: 1 },
+    MADEIRA: { min: 12, max: 36 },
+    FERRO: { min: 6, max: 21 },
+    OURO: { min: 3, max: 21 },
+    DIAMANTE: { min: 0, max: 6 },
+    VIP: { min: 0, max: 3 },
   },
 };
 // Mercado Noturno's per-wave variable-generation density config (richer than
 // the normal map) — now concretely wired to the Mercado Noturno theme (see
 // activeSpawnConfig()/syncActiveSpawnConfig() below), resolving the earlier
 // open question of when this should ever activate (master spec #9).
+// Balance pass (2026-07-23): variableTables is now a FIXED value (min===max
+// ===100), not a real range — kept as a {min,max} object anyway since
+// getChestLimits()/other call sites read .min/.max generically, and a fixed
+// value is just the degenerate case of a range. With variableTables fixed at
+// 100 and chests.probability/proportionalMin/proportionalMax all 0.70,
+// getChestLimits(100) resolves to min=max(65, ceil(100*0.70))=70 and
+// max=min(75, floor(100*0.70))=70 — every Mercado Noturno map lands on
+// EXACTLY 70 chests. The 65-75 absoluteMin/absoluteMax band is therefore a
+// no-op safety margin (never actually the binding constraint at this fixed
+// variableTables value), not a real source of variance — intentional, not a
+// bug. Feasibility: sum(rarityLimits.min) = 10+8+6+1+0 = 25 <=
+// chests.absoluteMin (65) and well under the real chestCount of 70, so every
+// tier's minimum is always satisfiable; sum(rarityLimits.max) =
+// 30+26+28+8+3 = 95 comfortably exceeds both chests.absoluteMax (75) and the
+// real chestCount (70).
 const nightKitchenSpawnConfig = {
-  variableTables: { min: 30, max: 50 },
-  chests: { probability: 0.40, proportionalMin: 0.35, proportionalMax: 0.48, absoluteMin: 12, absoluteMax: 22 },
+  variableTables: { min: 100, max: 100 },
+  chests: { probability: 0.70, proportionalMin: 0.70, proportionalMax: 0.70, absoluteMin: 65, absoluteMax: 75 },
   rarityLimits: {
-    MADEIRA: { min: 3, max: 10 }, FERRO: { min: 2, max: 7 }, OURO: { min: 1, max: 7 },
-    DIAMANTE: { min: 0, max: 2 }, VIP: { min: 0, max: 1 },
+    MADEIRA: { min: 10, max: 30 },
+    FERRO: { min: 8, max: 26 },
+    OURO: { min: 6, max: 28 },
+    DIAMANTE: { min: 1, max: 8 },
+    VIP: { min: 0, max: 3 },
   },
 };
 // live/default config for every wave; kept in sync with the active theme by
