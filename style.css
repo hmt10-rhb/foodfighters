@@ -1375,7 +1375,10 @@ body.shaking { animation: bodyShake 0.5s ease-in-out 2; }
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 50;
+  /* BUG FIX (2026-07-23): must render above #login-screen (z-index: 100) —
+     the signup modal opened from the login screen's "Cadastro" button used
+     to render behind it at z-index 50, fully invisible and unclickable. */
+  z-index: 150;
   padding: 20px;
 }
 #modal-backdrop.hidden { display: none; }
