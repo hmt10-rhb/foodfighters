@@ -2102,7 +2102,20 @@ function aiTick() {
     // Stamina/energy purely decorative once drained. Auto-rest here instead
     // — this is where energy is actually spent now, so it's the right place
     // to enforce the same "can't work at 0 energy" rule the old code had.
-    if (h.energy <= 0) { h.mode = 'rest'; removeActor(id); continue; }
+    //
+    // BUG FIX (2026-07-23, "Rangos stuck forever at displayed 0 energy,
+    // never resting"): the gate used to be `h.energy <= 0`, but resting
+    // recovery (recoveryRateFor(), ticked every 1s in economyTick()) grants
+    // FRACTIONAL energy, so a hero can land on e.g. 0.4 — the header rounds
+    // that down to "0" for display, but 0.4 is not <= 0, so this gate never
+    // fired. A hero at 0.4 energy that isn't currently standing next to a
+    // plantable target never gets another chance to spend it down to a real
+    // 0 either (plantBomb() only floors on an ACTUAL plant), so it just sat
+    // there forever: still "work" mode, still occupying a slot, never
+    // resting, never regenerating. bombEnergyCost()'s non-Sustância cost is
+    // always exactly 1, so `< 1` is the real "can't afford another bomb"
+    // threshold, not just literal zero.
+    if (h.energy < 1) { h.mode = 'rest'; removeActor(id); continue; }
     const a = actors[id];
     if (a.cd > 0) a.cd--;
 
@@ -3036,22 +3049,38 @@ function renderHeader() {
 
 // HUD skeleton is static in index.html; per-tick we only fill value slots,
 // so the bulk buttons in the HUD are never rebuilt under the cursor
+// Top-bar simplification (2026-07-23, user-flagged): "Wave" -> "Mapas" label
+// (see index.html), the ×N reward-multiplier suffix removed entirely (its
+// own hud-mult element is gone from index.html too — waveMult() itself is
+// untouched, still permanently 1, just no longer surfaced in the HUD).
+// "Crates" -> "Baús" label. DMG RATE/RECOVERY stats removed from the top bar
+// — mineRate()/recoveryRate() themselves are completely untouched (still
+// real gameplay mechanics other code depends on, e.g. destroyTile()'s
+// payout formula and economyTick()'s resting-energy recovery), only these
+// two HUD readouts and the now-unused totalRate aggregate here are gone.
 function renderHunt() {
   const working = state.heroes.filter(h => h.mode === 'work');
-  const totalRate = working.reduce((s, h) => s + mineRate(h), 0);
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   set('hud-wave', state.wave);
-  set('hud-mult', '×' + waveMult().toFixed(2));
   set('hud-crates', `${cratesLeft} / ${cratesTotal}`);
   set('hud-workers', `${working.length} / ${MAX_WORKERS}`);
-  set('hud-rate', totalRate.toFixed(2) + ' dmg/s');
-  set('hud-recovery', recoveryRate().toFixed(2) + ' ⚡/s');
+  // Sidebar row simplification (2026-07-23, user-flagged): each row used to
+  // show blast radius/bomb cycle/damage rate (+ a conditional Ascension
+  // badge) and a skill-icon row on top of name+rarity+energy bar. All of
+  // that extra per-row detail is gone now — ONLY name, rarity, and a
+  // bigger/clearer energy bar remain, per the explicit "keep ONLY the
+  // energy bar" ask. blastRadius()/mineRate()/cooldownTicks()/ascendMult()
+  // are all real game-mechanic functions, completely untouched, still used
+  // elsewhere. skillBadgesHtml() specifically has NO remaining call site
+  // after this edit (this row was its only caller) — left declared-but-
+  // unused rather than deleted, same "when in doubt, don't delete" call as
+  // this file's other dead-but-harmless helpers, partly because existing
+  // tests already assert its exact per-skill output shape. Only these display
+  // call sites in this one row template are gone.
   document.getElementById('bombers').innerHTML = working.length
     ? working.map(h => {
         const maxE = maxEnergyFor(h);
         const pct = Math.round((h.energy / maxE) * 100);
-        const cycle = ((cooldownTicks(h) + FUSE_TICKS) * AI_MS / 1000).toFixed(1);
-        const badges = skillBadgesHtml(h);
         return `
         <div class="bomber-item r-${h.rarity}">
           <span class="bomber-sprite">${spriteHtml(h)}</span>
@@ -3060,13 +3089,6 @@ function renderHunt() {
               <span class="bomber-name">${h.name}</span>
               <span class="rarity-badge rarity-${h.rarity} bomber-badge">${rTag(h.rarity)}</span>
             </div>
-            <div class="bomber-stats">
-              <span title="Blast radius">💥 ${blastRadius(h)}</span>
-              <span title="Bomb cycle (fuse + cooldown)">⏱️ ${cycle}s</span>
-              <span title="Damage rate">⛏️ ${mineRate(h).toFixed(1)} dmg/s</span>
-              ${h.ascendCount > 0 ? `<span class="bomber-ascend" title="Ascension #${h.ascendCount} — permanent damage multiplier">🌌 ×${ascendMult(h).toFixed(2)}</span>` : ''}
-            </div>
-            ${badges ? `<div class="bomber-skills">${badges}</div>` : ''}
             <div class="energy-bar"><div class="fill ${pct < 25 ? 'low' : ''}" style="width:${pct}%"></div></div>
             <div class="bomber-energy-label">⚡ ${Math.floor(h.energy)} / ${maxE}</div>
           </div>
