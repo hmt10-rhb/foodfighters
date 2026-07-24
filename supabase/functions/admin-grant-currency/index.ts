@@ -51,6 +51,7 @@ interface GrantRequestBody {
   targetUsername?: unknown;
   currency?: unknown;
   amount?: unknown;
+  action?: unknown;
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -103,6 +104,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const targetUsername = typeof body.targetUsername === 'string' ? body.targetUsername.trim() : '';
   const currency = body.currency as GrantCurrency;
   const amount = Number(body.amount);
+  // action (2026-07-24): 'grant' (default, back-compat with callers that
+  // never send this field) adds; 'remove' subtracts. Kept as a separate
+  // field rather than trusting a client-supplied signed amount so the sign
+  // is always decided here, server-side, from a fixed 2-value enum.
+  const action = body.action === 'remove' ? 'remove' : 'grant';
 
   if (!targetUsername) {
     return json({ error: 'targetUsername is required' }, 400);
@@ -159,7 +165,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const currentState = (saveRow.state && typeof saveRow.state === 'object') ? saveRow.state as Record<string, unknown> : {};
   const currentAmount = Number(currentState[currency]) || 0;
-  const newAmount = currentAmount + amount;
+  // Clamped at 0 — a removal can never push a balance negative, regardless
+  // of how much was requested (e.g. removing 500 from a balance of 300
+  // just zeroes it out rather than erroring or going negative).
+  const newAmount = action === 'remove' ? Math.max(0, currentAmount - amount) : currentAmount + amount;
   const newState = { ...currentState, [currency]: newAmount };
 
   const { error: updateError } = await adminClient
@@ -171,21 +180,20 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return json({ error: 'Update failed: ' + updateError.message }, 500);
   }
 
-  // NOTE (worth knowing, not fixed here — outside this function's scope):
-  // if the target player is ONLINE right now, their own client keeps
-  // pushing its in-memory (un-granted) state every ~30s regardless of what
-  // changed server-side in the meantime (see game.js's pushCloudSave()
-  // interval) — there's no live pull-side reconciliation while already
-  // logged in. This grant durably sticks the next time their client does a
-  // fresh pullCloudSave() (on their next login/reload, whose updated_at
-  // comparison will correctly favor this newer write) — but a target who is
-  // actively mid-session right now could have their own next periodic push
-  // race with/overwrite it until then.
+  // FIXED (2026-07-24): a target player who was ONLINE right now used to be
+  // able to silently lose this grant/removal — their own client kept
+  // pushing its in-memory (unaware) state every ~30s, overwriting this
+  // write before they ever reloaded (confirmed happening for real). Fixed
+  // client-side: pushCloudSave() now reconciles against the cloud's current
+  // currency values right before every periodic push (see
+  // reconcileExternalCurrency() in game.js) — this write reaches an already-
+  // connected player within one push cycle, not just on their next login.
   return json({
     success: true,
     targetUsername: resolvedUsername,
     currency,
-    granted: amount,
+    action,
+    delta: action === 'remove' ? -amount : amount,
     newBalance: newAmount,
   });
 });

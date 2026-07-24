@@ -5784,22 +5784,27 @@ function updateAdminVisibility() {
 
 function showAdminModal() {
   document.getElementById('modal-body').innerHTML = `
-    <h3>🛠️ Admin — conceder moeda</h3>
+    <h3>🛠️ Admin — conceder/remover moeda</h3>
     <p class="muted">Isso chama a Edge Function admin-grant-currency, que reverifica sua identidade no servidor — este painel é só conveniência de UI.</p>
     <input id="admin-target-username" type="text" placeholder="Nome de usuário do jogador" style="width:100%;margin-bottom:6px;">
+    <select id="admin-action" style="width:100%;margin-bottom:6px;">
+      <option value="grant">Conceder (adicionar)</option>
+      <option value="remove">Remover (subtrair)</option>
+    </select>
     <select id="admin-currency" style="width:100%;margin-bottom:6px;">
       <option value="starCore">Food Coins</option>
       <option value="bcoin">Chef Gems</option>
       <option value="michelinCoin">Estrela Michelin</option>
     </select>
     <input id="admin-amount" type="number" min="0" step="0.01" placeholder="Quantidade" style="width:100%;margin-bottom:10px;">
-    <button id="admin-grant-btn" class="btn">Conceder</button>`;
+    <button id="admin-grant-btn" class="btn">Confirmar</button>`;
   document.getElementById('modal-backdrop').classList.remove('hidden');
 }
 
 async function grantCurrency() {
   if (!sb) { toast('Sincronização não configurada neste build.'); return; }
   const targetUsername = document.getElementById('admin-target-username').value.trim();
+  const action = document.getElementById('admin-action').value; // 'grant' or 'remove' (2026-07-24)
   const currency = document.getElementById('admin-currency').value;
   const amount = Number(document.getElementById('admin-amount').value);
   if (!targetUsername) { toast('Informe o nome de usuário do jogador.'); return; }
@@ -5808,12 +5813,13 @@ async function grantCurrency() {
   // sb.functions.invoke() — no manual header wiring needed, and no client
   // value here is trusted server-side anyway (see the Edge Function itself)
   const { data, error } = await sb.functions.invoke('admin-grant-currency', {
-    body: { targetUsername, currency, amount },
+    body: { targetUsername, currency, amount, action },
   });
   if (error) { toast('Erro: ' + (error.message || 'falha ao conceder')); return; }
   if (data && data.error) { toast('Erro: ' + data.error); return; }
   const currencyLabel = { starCore: 'Food Coins', bcoin: 'Chef Gems', michelinCoin: 'Estrela Michelin' }[currency] || currency;
-  toast(`✅ ${fmtCurrency(amount)} ${currencyLabel} concedido(s) a ${data.targetUsername} — novo saldo: ${fmtCurrency(data.newBalance)}`);
+  const verb = action === 'remove' ? 'removido(s) de' : 'concedido(s) a';
+  toast(`✅ ${fmtCurrency(amount)} ${currencyLabel} ${verb} ${data.targetUsername} — novo saldo: ${fmtCurrency(data.newBalance)}`);
 }
 
 /* ============ Cloud Sync (Supabase) ============ */
@@ -6020,13 +6026,16 @@ async function pullCloudSave() {
 // before every push and comparing each one against
 // state.lastKnownCloudCurrency — the last cloud value THIS client actually
 // knew about (updated after every pull/push, see those functions' own
-// comments). Only a POSITIVE difference (cloudVal > lastKnown) is treated
-// as an external credit and folded into local state; this deliberately does
-// NOT just take max(cloud, local), which would incorrectly undo a
-// legitimate local spend (buying a pack, VIP, exchange) that happened after
-// the last sync but hasn't reached the cloud yet — spending only ever
-// lowers state[k] below what THIS client already knew the cloud to hold, so
-// externalDelta comes out <= 0 for that case and nothing is touched.
+// comments). ANY difference (positive = admin grant/Pix credit, negative =
+// admin removal) is folded into local state — this deliberately does NOT
+// compare against LOCAL state (e.g. a naive max(cloud, local) or min() for
+// removals), which would incorrectly undo a legitimate local spend/earn
+// (buying a pack, grinding chests) that happened after the last sync but
+// hasn't reached the cloud yet. A local spend/earn never touches the cloud
+// row by itself — only THIS function's own pull/push updates
+// lastKnownCloudCurrency in lockstep — so cloudVal can only ever differ from
+// knownVal because of something that happened OUTSIDE this client (admin
+// action, Pix webhook), regardless of what local currently holds.
 async function reconcileExternalCurrency() {
   if (!sb || !cloudSession) return;
   try {
@@ -6038,10 +6047,10 @@ async function reconcileExternalCurrency() {
       const cloudVal = Number(data.state[k]) || 0;
       const knownVal = Number(state.lastKnownCloudCurrency[k]) || 0;
       const externalDelta = cloudVal - knownVal;
-      if (externalDelta > 0) {
-        state[k] = (Number(state[k]) || 0) + externalDelta;
-        toast(`Você recebeu ${fmtCurrency(externalDelta)} ${labels[k]}!`);
-      }
+      if (externalDelta === 0) return;
+      state[k] = Math.max(0, (Number(state[k]) || 0) + externalDelta);
+      if (externalDelta > 0) toast(`Você recebeu ${fmtCurrency(externalDelta)} ${labels[k]}!`);
+      else toast(`${fmtCurrency(-externalDelta)} ${labels[k]} foram removidos da sua conta.`);
     });
   } catch (e) { /* best-effort — a failed reconciliation read must never block the save itself */ }
 }
