@@ -613,6 +613,14 @@ function defaultState() {
     // own; it just rides along inside the free-spin's 24h window.
     wheelLastClaim: 0,
     wheelPaidSpinUsed: false,
+    // One-time hard reset for regular players (2026-07-24) — see reset-btn's
+    // handler in bindEvents() and updateAdminVisibility() below. Defaults to
+    // false for every save, old or new (Object.assign(defaultState(), raw)
+    // in load()/pullCloudSave() means an existing player's save that never
+    // had this field just gets false here, i.e. their one use is still
+    // available) — admin is exempt via the isAdmin check alongside this, not
+    // by ever setting this true for that account.
+    hardResetUsed: false,
   };
 }
 
@@ -5651,7 +5659,19 @@ function bindEvents() {
   document.getElementById('vip-reroll-btn').addEventListener('click', vipReroll);
 
   document.getElementById('reset-btn').addEventListener('click', async () => {
-    if (!confirm('Wipe all Food Fighters progress?')) return;
+    // One-time for regular players (2026-07-24) — admin keeps unlimited
+    // access (see updateAdminVisibility()'s isAdmin check, which is what
+    // actually gates this button being visible/clickable at all past the
+    // first use for anyone else). This guard is a second, redundant check
+    // right at the click itself, in case the button is still on-screen from
+    // before a state change (e.g. a stale render) — belt and suspenders,
+    // not the only thing standing between a player and a second reset.
+    const isAdminClick = !!(cloudSession && cloudSession.user && cloudSession.user.email === ADMIN_EMAIL);
+    if (state.hardResetUsed && !isAdminClick) {
+      toast('Você já usou seu reset único.');
+      return;
+    }
+    if (!confirm('Isso apaga TODO o seu progresso pra sempre — Rangos, moedas, tudo. Você só pode fazer isso UMA VEZ. Confirmar?')) return;
     // BUG FIX (2026-07-23): this button never actually worked. Two separate
     // bugs stacked:
     // 1) It only did `localStorage.removeItem(SAVE_KEY); location.reload();`
@@ -5683,6 +5703,11 @@ function bindEvents() {
       }
     }
     newGameState();
+    // Stamp the one-time flag onto the FRESH state newGameState() just
+    // built (defaultState() always sets this false, so it has to be set
+    // again here, after) — admin never gets this set, keeping their button
+    // available indefinitely.
+    if (!isAdminClick) state.hardResetUsed = true;
     save();
     location.reload();
   });
@@ -5714,10 +5739,13 @@ function updateAdminVisibility() {
   const box = document.getElementById('admin-box');
   const isAdmin = !!(cloudSession && cloudSession.user && cloudSession.user.email === ADMIN_EMAIL);
   if (box) box.hidden = !isAdmin;
-  // Self-reset removed for regular players (2026-07-23), ahead of a planned
-  // hard wipe of all existing accounts — only admin keeps the button.
+  // Reset re-opened to every player, one time each (2026-07-24) — was
+  // admin-only (2026-07-23) in the run-up to the mass account wipe; now that
+  // the wipe is done, every player gets exactly one self-reset, tracked by
+  // state.hardResetUsed (set in reset-btn's own handler, never cleared).
+  // Admin is exempt from the used-up check, same as before.
   const resetBox = document.getElementById('reset-box');
-  if (resetBox) resetBox.hidden = !isAdmin;
+  if (resetBox) resetBox.hidden = !isAdmin && !!state.hardResetUsed;
 }
 
 function showAdminModal() {
