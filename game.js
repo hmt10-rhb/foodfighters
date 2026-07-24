@@ -556,7 +556,10 @@ function defaultState() {
     // successful pull or push — never meant to be read/written anywhere
     // else. hardResetCount rides along here too (2026-07-24) — an admin
     // grant/removal of Hard Reset uses is exposed to the exact same race.
-    lastKnownCloudCurrency: { starCore: 0, bcoin: 0, michelinCoin: 0, hardResetCount: 0 },
+    // wheelLastClaim/wheelPaidSpinUsed also ride along (2026-07-24) — a
+    // bulk/admin reset of the Roda da Sorte cooldown hits the exact same
+    // race for anyone online when it runs.
+    lastKnownCloudCurrency: { starCore: 0, bcoin: 0, michelinCoin: 0, hardResetCount: 0, wheelLastClaim: 0, wheelPaidSpinUsed: false },
     totalMined: 0,
     // Food Coins earned on the CURRENT map specifically (2026-07-23) — unlike
     // totalMined (lifetime, never resets), this resets to 0 at every genuine
@@ -6014,7 +6017,7 @@ async function pullCloudSave() {
     // Reset the reconciliation baseline to what we just pulled — this IS the
     // authoritative cloud value now, from this client's point of view (see
     // pushCloudSave()'s own comment on lastKnownCloudCurrency).
-    state.lastKnownCloudCurrency = { starCore: state.starCore, bcoin: state.bcoin, michelinCoin: state.michelinCoin, hardResetCount: state.hardResetCount };
+    state.lastKnownCloudCurrency = { starCore: state.starCore, bcoin: state.bcoin, michelinCoin: state.michelinCoin, hardResetCount: state.hardResetCount, wheelLastClaim: state.wheelLastClaim, wheelPaidSpinUsed: state.wheelPaidSpinUsed };
     // gridTiles/tileHp/cratesLeft/cratesTotal travel inside data.state the
     // same way they travel inside the local save blob (see saveSnapshot()) —
     // strip them back off state itself, mirroring load()'s own handling
@@ -6060,7 +6063,7 @@ async function reconcileExternalCurrency() {
   try {
     const { data } = await sb.from('saves').select('state').eq('user_id', cloudSession.user.id).maybeSingle();
     if (!data || !data.state) return;
-    if (!state.lastKnownCloudCurrency) state.lastKnownCloudCurrency = { starCore: 0, bcoin: 0, michelinCoin: 0, hardResetCount: 0 };
+    if (!state.lastKnownCloudCurrency) state.lastKnownCloudCurrency = { starCore: 0, bcoin: 0, michelinCoin: 0, hardResetCount: 0, wheelLastClaim: 0, wheelPaidSpinUsed: false };
     const labels = { starCore: 'Food Coins', bcoin: 'Chef Gems', michelinCoin: 'Estrela Michelin' };
     ['starCore', 'bcoin', 'michelinCoin'].forEach(k => {
       const cloudVal = Number(data.state[k]) || 0;
@@ -6091,6 +6094,26 @@ async function reconcileExternalCurrency() {
         updateAdminVisibility();
       }
     }
+    // Roda da Sorte cooldown (2026-07-24) — wheelLastClaim is an absolute
+    // TIMESTAMP, not an accumulator, so this deliberately does NOT reuse the
+    // delta-add pattern above (adding a raw ms delta to a timestamp would
+    // produce a nonsense value). Instead: adopt the cloud's value directly
+    // whenever it differs from the known baseline. This is safe specifically
+    // BECAUSE reconcileExternalCurrency() always runs immediately before the
+    // upsert in the SAME pushCloudSave() call, and pushing is the only way a
+    // local change (a real spin) ever reaches the cloud — so local can never
+    // legitimately get ahead of an external reset it hasn't reconciled yet;
+    // the baseline and local only ever diverge from an external write.
+    if (Number(data.state.wheelLastClaim) !== Number(state.lastKnownCloudCurrency.wheelLastClaim)) {
+      state.wheelLastClaim = Number(data.state.wheelLastClaim) || 0;
+      state.lastKnownCloudCurrency.wheelLastClaim = state.wheelLastClaim;
+      refreshWheelPanelLive();
+    }
+    if (!!data.state.wheelPaidSpinUsed !== !!state.lastKnownCloudCurrency.wheelPaidSpinUsed) {
+      state.wheelPaidSpinUsed = !!data.state.wheelPaidSpinUsed;
+      state.lastKnownCloudCurrency.wheelPaidSpinUsed = state.wheelPaidSpinUsed;
+      refreshWheelPanelLive();
+    }
   } catch (e) { /* best-effort — a failed reconciliation read must never block the save itself */ }
 }
 
@@ -6120,7 +6143,7 @@ async function pushCloudSave() {
     // update the reconciliation baseline so the NEXT push's diff (see
     // reconcileExternalCurrency()) only ever measures credits that land
     // after this point, not what we ourselves just wrote.
-    state.lastKnownCloudCurrency = { starCore: state.starCore, bcoin: state.bcoin, michelinCoin: state.michelinCoin, hardResetCount: state.hardResetCount };
+    state.lastKnownCloudCurrency = { starCore: state.starCore, bcoin: state.bcoin, michelinCoin: state.michelinCoin, hardResetCount: state.hardResetCount, wheelLastClaim: state.wheelLastClaim, wheelPaidSpinUsed: state.wheelPaidSpinUsed };
   }
   const leaderboardRes = await sb.from('leaderboard').upsert({
     user_id: cloudSession.user.id,
