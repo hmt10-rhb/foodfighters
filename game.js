@@ -545,6 +545,15 @@ function defaultState() {
     // starter grant, unlike bcoin.
     michelinCoin: 0,
     starCore: 0,
+    // Reconciliation baseline for pushCloudSave()'s currency merge
+    // (2026-07-24, real bug fix — see that function's own comment for the
+    // full story: an admin currency grant landed in the `saves` row
+    // server-side while the recipient was mid-session, and their own
+    // periodic autosave silently overwrote it a few seconds later,
+    // permanently erasing the grant). Tracks what this client last KNEW to
+    // be in the cloud for each currency, updated after every successful
+    // pull or push — never meant to be read/written anywhere else.
+    lastKnownCloudCurrency: { starCore: 0, bcoin: 0, michelinCoin: 0 },
     totalMined: 0,
     // Food Coins earned on the CURRENT map specifically (2026-07-23) — unlike
     // totalMined (lifetime, never resets), this resets to 0 at every genuine
@@ -5977,6 +5986,10 @@ async function pullCloudSave() {
     state.upgrades = Object.assign({ mining: 0, blast: 0, haste: 0 }, data.state.upgrades);
     state.vip = Object.assign({ expiresAt: 0, autoWorkPct: 100, lastRerollAt: 0 }, data.state.vip);
     state.picanteBoost = Object.assign({ expiresAt: 0 }, data.state.picanteBoost);
+    // Reset the reconciliation baseline to what we just pulled — this IS the
+    // authoritative cloud value now, from this client's point of view (see
+    // pushCloudSave()'s own comment on lastKnownCloudCurrency).
+    state.lastKnownCloudCurrency = { starCore: state.starCore, bcoin: state.bcoin, michelinCoin: state.michelinCoin };
     // gridTiles/tileHp/cratesLeft/cratesTotal travel inside data.state the
     // same way they travel inside the local save blob (see saveSnapshot()) —
     // strip them back off state itself, mirroring load()'s own handling
@@ -5994,8 +6007,48 @@ async function pullCloudSave() {
   }
 }
 
+// CURRENCY RECONCILIATION (2026-07-24, real bug fix): an admin currency
+// grant (admin-grant-currency Edge Function) or a Pix credit
+// (mercadopago-webhook) writes straight into this player's `saves.state`
+// row server-side, completely independent of whatever this client
+// currently has in memory. If the player is online when that happens, this
+// function's own periodic call (every 30s, see enterGame()) used to blindly
+// overwrite the WHOLE state blob with the client's stale in-memory numbers,
+// silently erasing the external credit for good — confirmed happening for
+// real (an admin-granted Estrela Michelin vanished for a player who was
+// mid-session). Fixed by reading the cloud's CURRENT currency values right
+// before every push and comparing each one against
+// state.lastKnownCloudCurrency — the last cloud value THIS client actually
+// knew about (updated after every pull/push, see those functions' own
+// comments). Only a POSITIVE difference (cloudVal > lastKnown) is treated
+// as an external credit and folded into local state; this deliberately does
+// NOT just take max(cloud, local), which would incorrectly undo a
+// legitimate local spend (buying a pack, VIP, exchange) that happened after
+// the last sync but hasn't reached the cloud yet — spending only ever
+// lowers state[k] below what THIS client already knew the cloud to hold, so
+// externalDelta comes out <= 0 for that case and nothing is touched.
+async function reconcileExternalCurrency() {
+  if (!sb || !cloudSession) return;
+  try {
+    const { data } = await sb.from('saves').select('state').eq('user_id', cloudSession.user.id).maybeSingle();
+    if (!data || !data.state) return;
+    if (!state.lastKnownCloudCurrency) state.lastKnownCloudCurrency = { starCore: 0, bcoin: 0, michelinCoin: 0 };
+    const labels = { starCore: 'Food Coins', bcoin: 'Chef Gems', michelinCoin: 'Estrela Michelin' };
+    ['starCore', 'bcoin', 'michelinCoin'].forEach(k => {
+      const cloudVal = Number(data.state[k]) || 0;
+      const knownVal = Number(state.lastKnownCloudCurrency[k]) || 0;
+      const externalDelta = cloudVal - knownVal;
+      if (externalDelta > 0) {
+        state[k] = (Number(state[k]) || 0) + externalDelta;
+        toast(`Você recebeu ${fmtCurrency(externalDelta)} ${labels[k]}!`);
+      }
+    });
+  } catch (e) { /* best-effort — a failed reconciliation read must never block the save itself */ }
+}
+
 async function pushCloudSave() {
   if (!sb || !cloudSession) return;
+  await reconcileExternalCurrency();
   const savesRes = await sb.from('saves').upsert({
     user_id: cloudSession.user.id,
     // FIX (2026-07-23, master spec #1/#5): used to push the bare `state`
@@ -6014,6 +6067,13 @@ async function pushCloudSave() {
   // in their total, and nothing ever surfaced it. Logging here doesn't fix
   // failures, but it means the next one won't be silent.
   if (savesRes.error) console.error('pushCloudSave: saves upsert failed', savesRes.error);
+  else {
+    // Whatever we just pushed IS the new cloud value for these fields —
+    // update the reconciliation baseline so the NEXT push's diff (see
+    // reconcileExternalCurrency()) only ever measures credits that land
+    // after this point, not what we ourselves just wrote.
+    state.lastKnownCloudCurrency = { starCore: state.starCore, bcoin: state.bcoin, michelinCoin: state.michelinCoin };
+  }
   const leaderboardRes = await sb.from('leaderboard').upsert({
     user_id: cloudSession.user.id,
     username: cloudUsername || 'Miner',
