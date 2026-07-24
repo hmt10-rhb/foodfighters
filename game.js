@@ -357,8 +357,9 @@ const WHEEL_SLOTS = [
 // slots (pack at index 2, 7.00 coins at index 5) get their own distinct
 // colors so they visually stand out from the 6 ordinary coin slices.
 const WHEEL_SLICE_COLORS = ['#f4c95d', '#f1b93f', '#e94b3c', '#f4c95d', '#f1b93f', '#4caf6e', '#f4c95d', '#f1b93f'];
-const WHEEL_COOLDOWN_MS = 24 * 60 * 60 * 1000; // free spin: once every 24 REAL hours from the exact last-claim timestamp, not a calendar-day reset
-const WHEEL_PAID_SPIN_COST = 2; // Chef Gems, one extra spin per 24h cycle, only after the free spin is claimed
+const WHEEL_COOLDOWN_MS = 24 * 60 * 60 * 1000; // free player: once every 24 REAL hours from the exact last-claim timestamp, not a calendar-day reset
+const WHEEL_COOLDOWN_MS_VIP = 12 * 60 * 60 * 1000; // VIP perk (2026-07-24): free spin every 12h instead of 24h — see wheelCooldownMs()
+const WHEEL_PAID_SPIN_COST = 2; // Chef Gems, one extra spin per free-spin cycle (24h, or 12h under VIP — see wheelCooldownMs()), only after the free spin is claimed
 const WHEEL_SPIN_ANIM_MS = 3200; // matches .wheel-canvas's CSS transition duration in style.css exactly — keep these two in sync if either changes
 
 const HOUSES = [
@@ -3153,16 +3154,25 @@ function buyHouse(id) {
    the economy/state logic: when is a spin allowed, what does landing on
    each slot actually grant. */
 
+// VIP perk (2026-07-24): the free spin's cooldown itself is shorter while
+// VIP is active — 12h instead of 24h. Read live at the moment it's needed
+// (never cached/stamped onto state), so a VIP subscription expiring
+// mid-cycle correctly falls back to the 24h gate on its own, no separate
+// bookkeeping required.
+function wheelCooldownMs() {
+  return isVipActive() ? WHEEL_COOLDOWN_MS_VIP : WHEEL_COOLDOWN_MS;
+}
 // true whenever a free spin can be claimed right now — a real elapsed-time
-// gate (Date.now() - last claim >= 24h), NOT a calendar-day reset, exactly
-// per spec. wheelLastClaim=0 (never claimed) always satisfies this.
+// gate (Date.now() - last claim >= wheelCooldownMs()), NOT a calendar-day
+// reset, exactly per spec. wheelLastClaim=0 (never claimed) always
+// satisfies this.
 function wheelFreeAvailable() {
-  return Date.now() - (state.wheelLastClaim || 0) >= WHEEL_COOLDOWN_MS;
+  return Date.now() - (state.wheelLastClaim || 0) >= wheelCooldownMs();
 }
 // epoch ms of the next moment a free spin reopens — only meaningful while
 // wheelFreeAvailable() is false; used purely for the countdown display.
 function wheelNextFreeAt() {
-  return (state.wheelLastClaim || 0) + WHEEL_COOLDOWN_MS;
+  return (state.wheelLastClaim || 0) + wheelCooldownMs();
 }
 // the ONE optional paid extra spin: only offered after the free spin for
 // THIS cycle has already been claimed, and only until it's used once —
@@ -4278,7 +4288,7 @@ function renderExtras() {
   const vipStatus = document.getElementById('vip-status');
   if (vipStatus) {
     vipStatus.textContent = isVipActive()
-      ? `👑 VIP ativo — expira em ${fmtCountdown(state.vip.expiresAt - Date.now())}. +1 slot, reroll de fase, auto work/rest.`
+      ? `👑 VIP ativo — expira em ${fmtCountdown(state.vip.expiresAt - Date.now())}. +1 slot, reroll de fase, auto work/rest, giro grátis da Roda da Sorte a cada 12h.`
       : 'Nenhum VIP ativo.';
   }
   const autoworkSelect = document.getElementById('vip-autowork-pct');
@@ -4682,7 +4692,7 @@ function wheelPanelHtml() {
   return `
     <button id="wheel-panel-close" class="wheel-panel-close" title="Fechar">✕</button>
     <h3>🍕 Roda da Sorte</h3>
-    <p class="muted" style="margin-bottom:10px">Um giro grátis a cada 24h — 8 fatias, prêmios em Food Coins ou um Rango de graça.</p>
+    <p class="muted" style="margin-bottom:10px">Um giro grátis a cada ${isVipActive() ? '12h (VIP)' : '24h'} — 8 fatias, prêmios em Food Coins ou um Rango de graça.</p>
     <div class="wheel-frame">
       <div class="wheel-pointer">▼</div>
       <div class="wheel-canvas" id="wheel-canvas" style="background: ${wheelConicGradient()};">
