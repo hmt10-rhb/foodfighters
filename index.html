@@ -487,6 +487,21 @@
 
 <div id="toast" class="hidden"></div>
 
+<!-- Force-reload on new deploy (2026-07-24) — see checkForUpdate()/
+     showForceReloadOverlay() in game.js. Deliberately NOT built on the
+     shared #modal-backdrop system: no close button, no click-outside
+     handler, and a z-index above everything else on the page (including
+     #login-screen and #modal-backdrop) — the ONLY way this ever goes away
+     is a real page reload, whether via the button below or the player's
+     own Ctrl+R/F5. -->
+<div id="update-required-overlay" class="hidden">
+  <div class="update-required-card">
+    <h2>🔄 Nova versão disponível</h2>
+    <p>O jogo foi atualizado. Recarregue a página pra continuar jogando.</p>
+    <button id="update-required-reload-btn" class="btn">Recarregar agora</button>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="config.js"></script>
 <script src="game.js"></script>

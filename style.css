@@ -1840,6 +1840,32 @@ body.shaking { animation: bodyShake 0.5s ease-in-out 2; }
   padding: 20px;
 }
 #modal-backdrop.hidden { display: none; }
+/* Force-reload overlay (2026-07-24) — see #update-required-overlay's own
+   comment in index.html. Above literally everything else on the page
+   (#modal-backdrop's own 150 included), on purpose: a stale tab must never
+   be able to keep playing hidden behind/under any other UI. */
+#update-required-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.88);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 99999;
+  padding: 20px;
+}
+#update-required-overlay.hidden { display: none; }
+.update-required-card {
+  background: var(--panel);
+  border: 2px solid var(--accent2);
+  border-radius: 14px;
+  padding: 28px;
+  max-width: 420px;
+  width: 100%;
+  text-align: center;
+}
+.update-required-card h2 { color: var(--accent2); margin-bottom: 12px; }
+.update-required-card p { color: var(--muted); margin-bottom: 18px; }
 /* Hidden during a pack reveal (2026-07-23) — see startPackReveal()/
    cancelReveal() in game.js: no escape hatch while the fixed-timing reveal
    is running, same convention as every other .hidden toggle in this file. */

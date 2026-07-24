@@ -6461,3 +6461,47 @@ bindEvents(); // safe to bind immediately — login-screen/modal buttons are ine
 document.getElementById('login-btn').addEventListener('click', cloudSignIn);
 document.getElementById('show-signup-btn').addEventListener('click', showSignupModal);
 document.getElementById('continue-btn').addEventListener('click', continueRestoredSession);
+
+// ============ Force-reload on new deploy (2026-07-24) ============
+// Every push to main redeploys game.js with new content — Vercel computes a
+// fresh ETag (a content hash) automatically for it on every deploy, with no
+// manual versioning needed anywhere in this codebase. A tab that was
+// already open BEFORE a new deploy keeps running the old JS in memory
+// indefinitely otherwise (nothing forces a real browser reload on its
+// own) — this polls game.js's own ETag periodically and, the moment it
+// differs from whatever this tab loaded with, shows an overlay with no
+// close button and no click-outside handler. The ONLY way it goes away is
+// an actual page reload (the button here, or the player's own Ctrl+R/F5) —
+// which then serves the NEW game.js, whose own boot-time capture matches
+// its own current ETag, so the check is silent again from that point on.
+// Runs unconditionally from page load, independent of login state, so even
+// someone sitting on the login screen with a stale tab gets caught.
+let bootGameJsVersion = null;
+
+async function captureBootVersion() {
+  try {
+    const res = await fetch('game.js', { method: 'HEAD', cache: 'no-store' });
+    bootGameJsVersion = res.headers.get('etag') || res.headers.get('last-modified');
+  } catch (e) { /* offline/blocked at boot — no baseline to compare against, checkForUpdate() just no-ops until a later check succeeds */ }
+}
+
+async function checkForUpdate() {
+  if (!bootGameJsVersion) return;
+  try {
+    const res = await fetch('game.js', { method: 'HEAD', cache: 'no-store' });
+    const current = res.headers.get('etag') || res.headers.get('last-modified');
+    if (current && current !== bootGameJsVersion) showForceReloadOverlay();
+  } catch (e) { /* a network blip just means try again next interval — never false-positive on a transient failure */ }
+}
+
+function showForceReloadOverlay() {
+  const overlay = document.getElementById('update-required-overlay');
+  if (overlay) overlay.classList.remove('hidden');
+}
+
+captureBootVersion();
+setInterval(checkForUpdate, 60000);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') checkForUpdate();
+});
+document.getElementById('update-required-reload-btn').addEventListener('click', () => location.reload());
