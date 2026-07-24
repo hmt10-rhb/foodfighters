@@ -869,6 +869,11 @@ function load(userId) {
   // advance state.wave — that's the signal that decides restore-vs-regenerate.
   const waveAtSave = state.wave;
 
+  // Offline resting energy recovery (2026-07-24) — see
+  // applyOfflineRestRecovery()'s own comment. Always runs, independent of
+  // Sleep Mode below (which only ever affects the wider mining simulation).
+  applyOfflineRestRecovery(Math.max((Date.now() - state.lastSeen) / 1000, 0));
+
   // Sleep Mode gates offline catch-up entirely: OFF means elapsed time is
   // simply discarded (lastSeen still moves forward via save()), ON runs the
   // same HP-gated simulate() at a reduced trickle rate (see SLEEP_MODE_MULT)
@@ -1064,6 +1069,30 @@ function recoveryRate() {
 // segundo"). Applied on top of the shared house-driven recoveryRate().
 function recoveryRateFor(h) {
   return recoveryRate() + (hasCafeinado(h) ? 1 : 0);
+}
+
+// Offline resting energy recovery (2026-07-24, explicit user request):
+// unlike Sleep Mode's wider mining/combat catch-up below (kept gated
+// behind state.sleepMode, which has no UI to ever enable it anymore —
+// effectively permanently off), resting Rangos now recover energy for the
+// REAL elapsed wall-clock time regardless of whether the tab was closed,
+// minimized, or the PC was off — no opt-in needed. Uses the exact same
+// per-second rate (recoveryRateFor()) the live 1s economyTick() tick
+// already applies, just caught up over the real gap instead of one tick at
+// a time. No OFFLINE_CAP_S ceiling needed here unlike the mining
+// simulation — energy is already self-limiting (Math.min against
+// maxEnergyFor()), so the worst case for however long someone was away is
+// just "every resting Rango is fully topped up", never runaway growth.
+// Called from BOTH load() (local save) and pullCloudSave()'s cloud-wins
+// branch, each with elapsed time measured against whichever save's own
+// timestamp is actually being adopted.
+function applyOfflineRestRecovery(elapsedSeconds) {
+  if (!(elapsedSeconds > 0)) return;
+  for (const h of state.heroes) {
+    if (h.mode !== 'work') {
+      h.energy = Math.min(maxEnergyFor(h), h.energy + recoveryRateFor(h) * elapsedSeconds);
+    }
+  }
 }
 
 function levelCost(h) {
@@ -6088,6 +6117,12 @@ async function pullCloudSave() {
     // authoritative cloud value now, from this client's point of view (see
     // pushCloudSave()'s own comment on lastKnownCloudCurrency).
     state.lastKnownCloudCurrency = { starCore: state.starCore, bcoin: state.bcoin, michelinCoin: state.michelinCoin, hardResetCount: state.hardResetCount, wheelLastClaim: state.wheelLastClaim, wheelPaidSpinUsed: state.wheelPaidSpinUsed };
+    // Offline resting energy recovery (2026-07-24) — see
+    // applyOfflineRestRecovery()'s own comment. Measured against the CLOUD
+    // row's own updated_at here (not local state.lastSeen, which belongs to
+    // a different, losing save) — this is the timestamp of whatever this
+    // client is actually adopting as current.
+    applyOfflineRestRecovery(Math.max((Date.now() - new Date(data.updated_at).getTime()) / 1000, 0));
     // gridTiles/tileHp/cratesLeft/cratesTotal travel inside data.state the
     // same way they travel inside the local save blob (see saveSnapshot()) —
     // strip them back off state itself, mirroring load()'s own handling
