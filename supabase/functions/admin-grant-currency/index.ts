@@ -45,7 +45,7 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-type GrantCurrency = 'starCore' | 'bcoin';
+type GrantCurrency = 'starCore' | 'bcoin' | 'michelinCoin';
 
 interface GrantRequestBody {
   targetUsername?: unknown;
@@ -107,8 +107,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
   if (!targetUsername) {
     return json({ error: 'targetUsername is required' }, 400);
   }
-  if (currency !== 'starCore' && currency !== 'bcoin') {
-    return json({ error: 'currency must be "starCore" (Food Coins) or "bcoin" (Chef Gems)' }, 400);
+  if (currency !== 'starCore' && currency !== 'bcoin' && currency !== 'michelinCoin') {
+    return json({ error: 'currency must be "starCore" (Food Coins), "bcoin" (Chef Gems), or "michelinCoin" (Estrela Michelin)' }, 400);
   }
   if (!Number.isFinite(amount) || amount <= 0) {
     return json({ error: 'amount must be a positive number' }, 400);

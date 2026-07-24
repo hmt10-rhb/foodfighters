@@ -5781,6 +5781,7 @@ function showAdminModal() {
     <select id="admin-currency" style="width:100%;margin-bottom:6px;">
       <option value="starCore">Food Coins</option>
       <option value="bcoin">Chef Gems</option>
+      <option value="michelinCoin">Estrela Michelin</option>
     </select>
     <input id="admin-amount" type="number" min="0" step="0.01" placeholder="Quantidade" style="width:100%;margin-bottom:10px;">
     <button id="admin-grant-btn" class="btn">Conceder</button>`;
@@ -5802,7 +5803,8 @@ async function grantCurrency() {
   });
   if (error) { toast('Erro: ' + (error.message || 'falha ao conceder')); return; }
   if (data && data.error) { toast('Erro: ' + data.error); return; }
-  toast(`✅ ${fmtCurrency(amount)} ${currency === 'starCore' ? 'Food Coins' : 'Chef Gems'} concedido(s) a ${data.targetUsername} — novo saldo: ${fmtCurrency(data.newBalance)}`);
+  const currencyLabel = { starCore: 'Food Coins', bcoin: 'Chef Gems', michelinCoin: 'Estrela Michelin' }[currency] || currency;
+  toast(`✅ ${fmtCurrency(amount)} ${currencyLabel} concedido(s) a ${data.targetUsername} — novo saldo: ${fmtCurrency(data.newBalance)}`);
 }
 
 /* ============ Cloud Sync (Supabase) ============ */
