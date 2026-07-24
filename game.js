@@ -5090,6 +5090,7 @@ function advanceReveal() {
   if (reveal.idx >= reveal.heroes.length) { finishReveal(); return; }
   const h = reveal.heroes[reveal.idx];
   renderRevealCard(h);
+  playPackOpenSound();
   if (isCelebrated(h)) playCelebration(h);
   if (h.isSpicy) playPicanteCelebration(h);
   reveal.timer = setTimeout(advanceReveal, revealDelay(h));
@@ -5227,6 +5228,22 @@ function playPicanteCelebration(h) {
     setTimeout(() => p.remove(), 1400);
   }
   playPicanteSound();
+}
+
+// Real audio file (2026-07-23, user-provided asset) — unlike every other
+// sound in this file (synthesized via Web Audio, no external files), this
+// one plays assets/sfx/pack_open.mp3 directly via a plain <audio> element.
+// A fresh Audio() per call (instead of one shared/reused element) is
+// deliberate: advanceReveal() calls this once per Rango in a multi-pack
+// reveal (x5/x10/x15), often faster than one clip finishes, so overlapping
+// instances need to be able to play concurrently rather than the next call
+// cutting the previous one off.
+function playPackOpenSound() {
+  try {
+    const audio = new Audio('assets/sfx/pack_open.mp3');
+    audio.volume = 0.6;
+    audio.play().catch(() => {});
+  } catch (e) {}
 }
 
 // synthesized sizzle — a short filtered-noise burst (the "hiss") plus a
