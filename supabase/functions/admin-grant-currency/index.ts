@@ -45,7 +45,14 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-type GrantCurrency = 'starCore' | 'bcoin' | 'michelinCoin';
+// 'hardResetCount' (2026-07-24) isn't a currency — it's the per-player USES
+// SPENT counter behind the one-time self-reset button (see HARD_RESET_LIMIT/
+// state.hardResetCount in game.js). Reusing this same grant/remove
+// mechanism for it anyway since the shape (target player + a field on their
+// `saves.state` + up/down) is identical — see the INVERTED sign handling
+// below, since "granting" a reset means DECREASING this count (more uses
+// available), the opposite of every real currency.
+type GrantCurrency = 'starCore' | 'bcoin' | 'michelinCoin' | 'hardResetCount';
 
 interface GrantRequestBody {
   targetUsername?: unknown;
@@ -103,7 +110,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const targetUsername = typeof body.targetUsername === 'string' ? body.targetUsername.trim() : '';
   const currency = body.currency as GrantCurrency;
-  const amount = Number(body.amount);
+  // hardResetCount is a whole-number use-count, not a fractional currency —
+  // round away any stray decimal (e.g. a typo like "1.5") rather than
+  // leaving the player with a fractional used-count.
+  const amount = currency === 'hardResetCount' ? Math.round(Number(body.amount)) : Number(body.amount);
   // action (2026-07-24): 'grant' (default, back-compat with callers that
   // never send this field) adds; 'remove' subtracts. Kept as a separate
   // field rather than trusting a client-supplied signed amount so the sign
@@ -113,8 +123,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
   if (!targetUsername) {
     return json({ error: 'targetUsername is required' }, 400);
   }
-  if (currency !== 'starCore' && currency !== 'bcoin' && currency !== 'michelinCoin') {
-    return json({ error: 'currency must be "starCore" (Food Coins), "bcoin" (Chef Gems), or "michelinCoin" (Estrela Michelin)' }, 400);
+  if (currency !== 'starCore' && currency !== 'bcoin' && currency !== 'michelinCoin' && currency !== 'hardResetCount') {
+    return json({ error: 'currency must be "starCore" (Food Coins), "bcoin" (Chef Gems), "michelinCoin" (Estrela Michelin), or "hardResetCount" (usos de Hard Reset)' }, 400);
   }
   if (!Number.isFinite(amount) || amount <= 0) {
     return json({ error: 'amount must be a positive number' }, 400);
@@ -165,10 +175,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const currentState = (saveRow.state && typeof saveRow.state === 'object') ? saveRow.state as Record<string, unknown> : {};
   const currentAmount = Number(currentState[currency]) || 0;
-  // Clamped at 0 — a removal can never push a balance negative, regardless
-  // of how much was requested (e.g. removing 500 from a balance of 300
-  // just zeroes it out rather than erroring or going negative).
-  const newAmount = action === 'remove' ? Math.max(0, currentAmount - amount) : currentAmount + amount;
+  // hardResetCount is USES SPENT, not a balance — "grant" a reset means
+  // DECREASING it (more uses become available again), "remove" a reset
+  // means INCREASING it (uses up one preemptively, without the player ever
+  // clicking the button). Every real currency works the other way around
+  // (grant adds, remove subtracts). Either way, always clamped at 0 — a
+  // balance/used-count can never go negative.
+  const signedDelta = currency === 'hardResetCount'
+    ? (action === 'remove' ? amount : -amount)
+    : (action === 'remove' ? -amount : amount);
+  const newAmount = Math.max(0, currentAmount + signedDelta);
   const newState = { ...currentState, [currency]: newAmount };
 
   const { error: updateError } = await adminClient
@@ -193,7 +209,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     targetUsername: resolvedUsername,
     currency,
     action,
-    delta: action === 'remove' ? -amount : amount,
+    delta: signedDelta,
     newBalance: newAmount,
   });
 });

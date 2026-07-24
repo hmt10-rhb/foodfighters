@@ -551,9 +551,11 @@ function defaultState() {
     // server-side while the recipient was mid-session, and their own
     // periodic autosave silently overwrote it a few seconds later,
     // permanently erasing the grant). Tracks what this client last KNEW to
-    // be in the cloud for each currency, updated after every successful
-    // pull or push — never meant to be read/written anywhere else.
-    lastKnownCloudCurrency: { starCore: 0, bcoin: 0, michelinCoin: 0 },
+    // be in the cloud for each of these fields, updated after every
+    // successful pull or push — never meant to be read/written anywhere
+    // else. hardResetCount rides along here too (2026-07-24) — an admin
+    // grant/removal of Hard Reset uses is exposed to the exact same race.
+    lastKnownCloudCurrency: { starCore: 0, bcoin: 0, michelinCoin: 0, hardResetCount: 0 },
     totalMined: 0,
     // Food Coins earned on the CURRENT map specifically (2026-07-23) — unlike
     // totalMined (lifetime, never resets), this resets to 0 at every genuine
@@ -5784,7 +5786,7 @@ function updateAdminVisibility() {
 
 function showAdminModal() {
   document.getElementById('modal-body').innerHTML = `
-    <h3>🛠️ Admin — conceder/remover moeda</h3>
+    <h3>🛠️ Admin — conceder/remover moeda ou Hard Reset</h3>
     <p class="muted">Isso chama a Edge Function admin-grant-currency, que reverifica sua identidade no servidor — este painel é só conveniência de UI.</p>
     <input id="admin-target-username" type="text" placeholder="Nome de usuário do jogador" style="width:100%;margin-bottom:6px;">
     <select id="admin-action" style="width:100%;margin-bottom:6px;">
@@ -5795,6 +5797,7 @@ function showAdminModal() {
       <option value="starCore">Food Coins</option>
       <option value="bcoin">Chef Gems</option>
       <option value="michelinCoin">Estrela Michelin</option>
+      <option value="hardResetCount">Hard Reset (usos)</option>
     </select>
     <input id="admin-amount" type="number" min="0" step="0.01" placeholder="Quantidade" style="width:100%;margin-bottom:10px;">
     <button id="admin-grant-btn" class="btn">Confirmar</button>`;
@@ -5817,9 +5820,15 @@ async function grantCurrency() {
   });
   if (error) { toast('Erro: ' + (error.message || 'falha ao conceder')); return; }
   if (data && data.error) { toast('Erro: ' + data.error); return; }
-  const currencyLabel = { starCore: 'Food Coins', bcoin: 'Chef Gems', michelinCoin: 'Estrela Michelin' }[currency] || currency;
+  // hardResetCount (2026-07-24) is a whole-number use-count, not a
+  // fractional currency — fmtCurrency() always shows 2 decimals (e.g.
+  // "1.00"), which reads oddly for "1.00 uso(s)"; plain integers instead.
+  const isResetCount = currency === 'hardResetCount';
+  const currencyLabel = { starCore: 'Food Coins', bcoin: 'Chef Gems', michelinCoin: 'Estrela Michelin', hardResetCount: 'uso(s) de Hard Reset' }[currency] || currency;
   const verb = action === 'remove' ? 'removido(s) de' : 'concedido(s) a';
-  toast(`✅ ${fmtCurrency(amount)} ${currencyLabel} ${verb} ${data.targetUsername} — novo saldo: ${fmtCurrency(data.newBalance)}`);
+  const amountText = isResetCount ? Math.round(amount) : fmtCurrency(amount);
+  const balanceText = isResetCount ? Math.round(data.newBalance) : fmtCurrency(data.newBalance);
+  toast(`✅ ${amountText} ${currencyLabel} ${verb} ${data.targetUsername} — novo saldo: ${balanceText}`);
 }
 
 /* ============ Cloud Sync (Supabase) ============ */
@@ -5995,7 +6004,7 @@ async function pullCloudSave() {
     // Reset the reconciliation baseline to what we just pulled — this IS the
     // authoritative cloud value now, from this client's point of view (see
     // pushCloudSave()'s own comment on lastKnownCloudCurrency).
-    state.lastKnownCloudCurrency = { starCore: state.starCore, bcoin: state.bcoin, michelinCoin: state.michelinCoin };
+    state.lastKnownCloudCurrency = { starCore: state.starCore, bcoin: state.bcoin, michelinCoin: state.michelinCoin, hardResetCount: state.hardResetCount };
     // gridTiles/tileHp/cratesLeft/cratesTotal travel inside data.state the
     // same way they travel inside the local save blob (see saveSnapshot()) —
     // strip them back off state itself, mirroring load()'s own handling
@@ -6041,7 +6050,7 @@ async function reconcileExternalCurrency() {
   try {
     const { data } = await sb.from('saves').select('state').eq('user_id', cloudSession.user.id).maybeSingle();
     if (!data || !data.state) return;
-    if (!state.lastKnownCloudCurrency) state.lastKnownCloudCurrency = { starCore: 0, bcoin: 0, michelinCoin: 0 };
+    if (!state.lastKnownCloudCurrency) state.lastKnownCloudCurrency = { starCore: 0, bcoin: 0, michelinCoin: 0, hardResetCount: 0 };
     const labels = { starCore: 'Food Coins', bcoin: 'Chef Gems', michelinCoin: 'Estrela Michelin' };
     ['starCore', 'bcoin', 'michelinCoin'].forEach(k => {
       const cloudVal = Number(data.state[k]) || 0;
@@ -6052,6 +6061,26 @@ async function reconcileExternalCurrency() {
       if (externalDelta > 0) toast(`Você recebeu ${fmtCurrency(externalDelta)} ${labels[k]}!`);
       else toast(`${fmtCurrency(-externalDelta)} ${labels[k]} foram removidos da sua conta.`);
     });
+    // hardResetCount (2026-07-24) is USES SPENT, not a balance — a positive
+    // delta here means an admin used one up on the player's behalf (fewer
+    // resets left), the OPPOSITE direction from every real currency above,
+    // so the toast wording is deliberately flipped instead of reusing
+    // labels/phrasing meant for "you received X".
+    {
+      const cloudVal = Number(data.state.hardResetCount) || 0;
+      const knownVal = Number(state.lastKnownCloudCurrency.hardResetCount) || 0;
+      const externalDelta = cloudVal - knownVal;
+      if (externalDelta !== 0) {
+        state.hardResetCount = Math.max(0, (Number(state.hardResetCount) || 0) + externalDelta);
+        if (externalDelta < 0) toast('Você ganhou um Hard Reset extra!');
+        else toast('Um dos seus usos de Hard Reset foi removido.');
+        // Refresh the reset button's visibility right away in case Extras
+        // is the tab currently open — every other trigger for this
+        // function is login/logout, none of which apply to a live
+        // reconciliation landing mid-session.
+        updateAdminVisibility();
+      }
+    }
   } catch (e) { /* best-effort — a failed reconciliation read must never block the save itself */ }
 }
 
@@ -6081,7 +6110,7 @@ async function pushCloudSave() {
     // update the reconciliation baseline so the NEXT push's diff (see
     // reconcileExternalCurrency()) only ever measures credits that land
     // after this point, not what we ourselves just wrote.
-    state.lastKnownCloudCurrency = { starCore: state.starCore, bcoin: state.bcoin, michelinCoin: state.michelinCoin };
+    state.lastKnownCloudCurrency = { starCore: state.starCore, bcoin: state.bcoin, michelinCoin: state.michelinCoin, hardResetCount: state.hardResetCount };
   }
   const leaderboardRes = await sb.from('leaderboard').upsert({
     user_id: cloudSession.user.id,
