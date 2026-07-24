@@ -4211,14 +4211,17 @@ function updateInventoryLive() {
 //    there's no second "always exists" pack image to fall back to — falling
 //    back to the ORIGINAL emoji-title look instead, exactly as suggested).
 // 2) The rarity-odds list moved off the card face entirely, behind a small
-//    "❓" corner button — reuses showLegendModal() verbatim (the exact same
-//    modal the header's own #legend-btn already opens, which documents each
-//    rarity's SHOP_RARITY_WEIGHTS odds as part of its fuller rarity guide)
-//    rather than building a new redundant popover. Click-to-open, not a
-//    hover tooltip: #legend-btn is this game's own established convention
-//    for "small ❓ icon reveals more info", already click-based, so this
-//    matches it instead of introducing a second, inconsistent "info"
-//    interaction style.
+//    "❓" corner button. Click-to-open, not a hover tooltip: #legend-btn is
+//    this game's own established convention for "small ❓ icon reveals more
+//    info", already click-based, so this matches it instead of introducing a
+//    second, inconsistent "info" interaction style.
+//    CORRECTION (2026-07-23): this originally reused showLegendModal()
+//    verbatim (the header's own full rarity guide — sprites, stat ranges,
+//    Picante/Baú info, etc.), but that's far more than the user actually
+//    wanted here — just a plain Raridade/Chance table. showPackOddsModal()
+//    (below) is a separate, deliberately minimal modal built for this one
+//    purpose; the header's own #legend-btn keeps opening showLegendModal()
+//    exactly as before, completely untouched.
 // 3) The buy button shows just the Chef Gems cost — the SAME cur-icon/
 //    chef_coin.png image the header currency pill already uses, followed
 //    by the plain number, no other words at all (SIMPLIFIED 2026-07-23,
@@ -4228,6 +4231,30 @@ function updateInventoryLive() {
 //    currency on the very first click — see confirmBuyPack()/
 //    showConfirmModal() above; the CONFIRM MODAL's own wording (which pack,
 //    which price) is untouched, only this button label got simplified.
+// Pack "?" odds modal (2026-07-23 correction) — deliberately minimal: just
+// the Raridade/Chance table, nothing else. A separate function from
+// showLegendModal() on purpose (that one stays exactly as-is for the
+// header's own #legend-btn) — this reuses the same shared #modal-backdrop/
+// #modal-body every other modal in the game uses, but renders only this one
+// table. Percentages are derived live from SHOP_RARITY_WEIGHTS via fmtPct()
+// (the same helper RARITY_INFO/showLegendModal() already use for this exact
+// data) — never hardcoded — so it can never drift from the real live odds.
+function showPackOddsModal() {
+  document.getElementById('modal-body').innerHTML = `
+    <h3>❓ Chances de cada raridade</h3>
+    <table class="pack-odds-table">
+      <thead><tr><th>Raridade</th><th>Chance</th></tr></thead>
+      <tbody>
+        ${RARITIES.map(r => `
+        <tr>
+          <td><span class="rarity-badge rarity-${r}">${rLabel(r)}</span></td>
+          <td>${fmtPct(SHOP_RARITY_WEIGHTS[r])}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+
 function renderShop() {
   document.getElementById('pack-grid').innerHTML = PACKS.map((p, i) => `
     <div class="pack-card">
@@ -5471,13 +5498,14 @@ function bindEvents() {
   });
 
   document.getElementById('pack-grid').addEventListener('click', e => {
-    // "❓" corner button (2026-07-23): reuses showLegendModal() verbatim —
-    // no separate pack-specific odds popover was built, per its own comment
-    // in renderShop(). Checked before [data-pack] since a naive :contains
-    // check on the wrong attribute could otherwise misfire; these are two
-    // distinct attribute names so there's no real collision risk, but the
-    // explicit `return` keeps the two branches unambiguous regardless.
-    if (e.target.closest('[data-pack-info]')) { showLegendModal(); return; }
+    // "❓" corner button: opens showPackOddsModal() (2026-07-23 correction —
+    // was showLegendModal() verbatim, judged too much for this spot; the
+    // header's own #legend-btn still opens the full showLegendModal()
+    // unchanged). Checked before [data-pack] since a naive :contains check
+    // on the wrong attribute could otherwise misfire; these are two distinct
+    // attribute names so there's no real collision risk, but the explicit
+    // `return` keeps the two branches unambiguous regardless.
+    if (e.target.closest('[data-pack-info]')) { showPackOddsModal(); return; }
     const b = e.target.closest('[data-pack]');
     if (b) confirmBuyPack(Number(b.dataset.pack));
   });

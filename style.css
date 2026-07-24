@@ -1370,6 +1370,16 @@ main {
 .confirm-message { margin-bottom: 16px; font-size: 1rem; line-height: 1.5; }
 .confirm-actions { display: flex; gap: 10px; justify-content: center; }
 
+/* Pack odds table (2026-07-23 correction) — see showPackOddsModal() in
+   game.js. Deliberately plain: just 2 columns, no sprites/icons, reusing
+   .rarity-badge as-is (same badge every rarity-labeled row already uses
+   elsewhere) for the Raridade column so it visually matches the rest of the
+   game rather than introducing a new label style just for this table. */
+.pack-odds-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.pack-odds-table th, .pack-odds-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+.pack-odds-table th { color: var(--muted); font-size: 0.82rem; font-weight: 700; text-transform: uppercase; }
+.pack-odds-table td:last-child, .pack-odds-table th:last-child { text-align: right; }
+
 select {
   background: var(--card);
   color: var(--text);
