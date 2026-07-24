@@ -1421,11 +1421,20 @@ const AI_MS = 500, FUSE_TICKS = 7;
 // declaration), so this constant was never actually read by any live code
 // path either.
 const CHEST_WORTH_S = 10;
-// Folhado de Ouro skims +50% Food Coins on anything its bombs break (same
-// bonus as the old Midas); Temperamental chains each blast to 5 extra random
-// valid targets at NORMAL hit damage (UP from the old Cataclysm's 3, per
-// master spec #4) — bounded fan-out, not striking the whole board.
-const FOLHADO_DE_OURO_BONUS = 1.5;
+// Folhado de Ouro's Food Coins bonus is NEUTERED to 1x (2026-07-23 balance
+// fix — was 1.5/+50%, judged too strong). This is a deliberate no-op
+// multiplier, not a placeholder: the skill's roll odds, whether new Rangos
+// can still get it, and every visual (grid card badge, detail panel, skill
+// list, legend, etc. — anywhere hasFolhadoDeOuro() drives an icon/label) are
+// ALL left completely untouched on purpose, so already-crafted and future
+// Rangos keep displaying the skill exactly as before; only the gameplay
+// payout effect itself stops applying. Kept as a named constant (not
+// deleted/inlined) specifically so it stays a one-line flip back to 1.5 if
+// this ever gets re-enabled later. Temperamental chains each blast to 5
+// extra random valid targets at NORMAL hit damage (UP from the old
+// Cataclysm's 3, per master spec #4) — bounded fan-out, not striking the
+// whole board; unrelated to and unaffected by this change.
+const FOLHADO_DE_OURO_BONUS = 1;
 const TEMPERAMENTAL_CHAIN = 5;
 // Core-loop RNG: both are EV-neutral by construction, added for feel/variance
 // rather than to quietly re-buff the rebalanced power curve.
