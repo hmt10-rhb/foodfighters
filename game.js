@@ -409,6 +409,14 @@ const TASKS = [
 ];
 const TASKS_UNLOCK_HEROES = 15;
 
+// One-time-per-player self reset (2026-07-24), refactored from a plain
+// boolean to a limit + counter so a FUTURE "give everyone one more reset"
+// is a single-number bump here, not a logic change — see reset-btn's
+// handler and updateAdminVisibility() in bindEvents(). Bumped from an
+// implicit 0 to 1 on 2026-07-24 (the mechanism's first release); counts
+// only resets used from this point on, per player (state.hardResetCount).
+const HARD_RESET_LIMIT = 1;
+
 // Snapshots the baseline exactly once, the FIRST time the player ever
 // crosses the unlock threshold (never re-snapshots on a later dip-below/
 // cross-again, e.g. from Sacrifice — that would let progress be reset
@@ -613,14 +621,14 @@ function defaultState() {
     // own; it just rides along inside the free-spin's 24h window.
     wheelLastClaim: 0,
     wheelPaidSpinUsed: false,
-    // One-time hard reset for regular players (2026-07-24) — see reset-btn's
-    // handler in bindEvents() and updateAdminVisibility() below. Defaults to
-    // false for every save, old or new (Object.assign(defaultState(), raw)
-    // in load()/pullCloudSave() means an existing player's save that never
-    // had this field just gets false here, i.e. their one use is still
-    // available) — admin is exempt via the isAdmin check alongside this, not
-    // by ever setting this true for that account.
-    hardResetUsed: false,
+    // Hard reset uses spent so far, checked against HARD_RESET_LIMIT (see
+    // that constant's own comment) — see reset-btn's handler in
+    // bindEvents() and updateAdminVisibility() below. Defaults to 0 for
+    // every save, old or new (Object.assign(defaultState(), raw) in
+    // load()/pullCloudSave() means an existing player's save that never had
+    // this field just gets 0 here) — admin is exempt via the isAdmin check
+    // alongside this, never counted against the limit.
+    hardResetCount: 0,
   };
 }
 
@@ -5668,19 +5676,25 @@ function bindEvents() {
   document.getElementById('vip-reroll-btn').addEventListener('click', vipReroll);
 
   document.getElementById('reset-btn').addEventListener('click', async () => {
-    // One-time for regular players (2026-07-24) — admin keeps unlimited
-    // access (see updateAdminVisibility()'s isAdmin check, which is what
-    // actually gates this button being visible/clickable at all past the
-    // first use for anyone else). This guard is a second, redundant check
-    // right at the click itself, in case the button is still on-screen from
-    // before a state change (e.g. a stale render) — belt and suspenders,
-    // not the only thing standing between a player and a second reset.
+    // Limited uses for regular players (2026-07-24, see HARD_RESET_LIMIT's
+    // own comment) — admin keeps unlimited access (see
+    // updateAdminVisibility()'s isAdmin check, which is what actually gates
+    // this button being visible/clickable at all past the limit for anyone
+    // else). This guard is a second, redundant check right at the click
+    // itself, in case the button is still on-screen from before a state
+    // change (e.g. a stale render) — belt and suspenders, not the only
+    // thing standing between a player and an extra reset.
     const isAdminClick = !!(cloudSession && cloudSession.user && cloudSession.user.email === ADMIN_EMAIL);
-    if (state.hardResetUsed && !isAdminClick) {
-      toast('Você já usou seu reset único.');
+    const usesSoFar = state.hardResetCount || 0;
+    if (usesSoFar >= HARD_RESET_LIMIT && !isAdminClick) {
+      toast('Você já usou todos os seus resets disponíveis.');
       return;
     }
-    if (!confirm('Isso apaga TODO o seu progresso pra sempre — Rangos, moedas, tudo. Você só pode fazer isso UMA VEZ. Confirmar?')) return;
+    const usesLeftAfterThis = HARD_RESET_LIMIT - usesSoFar - 1;
+    const leftMsg = usesLeftAfterThis > 0
+      ? `Depois deste, sobra${usesLeftAfterThis === 1 ? '' : 'm'} mais ${usesLeftAfterThis} reset${usesLeftAfterThis === 1 ? '' : 's'}.`
+      : 'Depois deste, não sobra nenhum reset — a opção some da sua conta.';
+    if (!confirm(`Isso apaga TODO o seu progresso pra sempre — Rangos, moedas, tudo. ${leftMsg} Confirmar?`)) return;
     // BUG FIX (2026-07-23): this button never actually worked. Two separate
     // bugs stacked:
     // 1) It only did `localStorage.removeItem(SAVE_KEY); location.reload();`
@@ -5712,11 +5726,12 @@ function bindEvents() {
       }
     }
     newGameState();
-    // Stamp the one-time flag onto the FRESH state newGameState() just
-    // built (defaultState() always sets this false, so it has to be set
-    // again here, after) — admin never gets this set, keeping their button
-    // available indefinitely.
-    if (!isAdminClick) state.hardResetUsed = true;
+    // Stamp the incremented count onto the FRESH state newGameState() just
+    // built (defaultState() always resets this to 0, so it has to be
+    // restored — using usesSoFar captured BEFORE the wipe, not the now-reset
+    // state.hardResetCount) — admin never gets this incremented, keeping
+    // their button available indefinitely.
+    if (!isAdminClick) state.hardResetCount = usesSoFar + 1;
     save();
     location.reload();
   });
@@ -5748,13 +5763,14 @@ function updateAdminVisibility() {
   const box = document.getElementById('admin-box');
   const isAdmin = !!(cloudSession && cloudSession.user && cloudSession.user.email === ADMIN_EMAIL);
   if (box) box.hidden = !isAdmin;
-  // Reset re-opened to every player, one time each (2026-07-24) — was
+  // Reset re-opened to every player, limited uses each (2026-07-24) — was
   // admin-only (2026-07-23) in the run-up to the mass account wipe; now that
-  // the wipe is done, every player gets exactly one self-reset, tracked by
-  // state.hardResetUsed (set in reset-btn's own handler, never cleared).
-  // Admin is exempt from the used-up check, same as before.
+  // the wipe is done, every player gets HARD_RESET_LIMIT self-resets,
+  // tracked by state.hardResetCount (incremented in reset-btn's own
+  // handler, never decremented). Admin is exempt from the used-up check,
+  // same as before.
   const resetBox = document.getElementById('reset-box');
-  if (resetBox) resetBox.hidden = !isAdmin && !!state.hardResetUsed;
+  if (resetBox) resetBox.hidden = !isAdmin && (state.hardResetCount || 0) >= HARD_RESET_LIMIT;
 }
 
 function showAdminModal() {

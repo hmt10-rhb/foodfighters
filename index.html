@@ -409,15 +409,15 @@
         <button id="admin-btn" class="btn btn-small">Abrir painel admin</button>
       </div>
 
-      <!-- Reopened to every player, one time each (2026-07-24) — was
-           admin-only (2026-07-23) ahead of the mass account wipe. Visibility
-           (isAdmin OR !state.hardResetUsed) handled entirely in
+      <!-- Reopened to every player, HARD_RESET_LIMIT uses each (2026-07-24)
+           — was admin-only (2026-07-23) ahead of the mass account wipe.
+           Visibility (isAdmin OR uses left > 0) handled entirely in
            updateAdminVisibility() in game.js; this box's default "hidden"
            attribute is just the safe starting point before that JS check
            runs, same pattern as #admin-box just above. -->
       <div class="extra-box danger" id="reset-box" hidden>
         <h3>♻️ Reset save</h3>
-        <p class="muted">Apaga todo o seu progresso pra sempre. Só pode ser usado uma vez por conta.</p>
+        <p class="muted">Apaga todo o seu progresso pra sempre. Uso limitado por conta.</p>
         <button id="reset-btn" class="btn btn-small btn-danger">Reset everything</button>
       </div>
 
