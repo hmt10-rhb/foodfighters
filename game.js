@@ -5403,8 +5403,15 @@ function bindEvents() {
   });
 
   document.getElementById('pack-grid').addEventListener('click', e => {
+    // "❓" corner button (2026-07-23): reuses showLegendModal() verbatim —
+    // no separate pack-specific odds popover was built, per its own comment
+    // in renderShop(). Checked before [data-pack] since a naive :contains
+    // check on the wrong attribute could otherwise misfire; these are two
+    // distinct attribute names so there's no real collision risk, but the
+    // explicit `return` keeps the two branches unambiguous regardless.
+    if (e.target.closest('[data-pack-info]')) { showLegendModal(); return; }
     const b = e.target.closest('[data-pack]');
-    if (b) buyPack(Number(b.dataset.pack));
+    if (b) confirmBuyPack(Number(b.dataset.pack));
   });
 
   document.getElementById('house-grid').addEventListener('click', e => {
@@ -5465,6 +5472,26 @@ function bindEvents() {
   // #modal-close button already does for every other modal.
   document.getElementById('modal-body').addEventListener('click', e => {
     if (e.target.closest('#wheel-reveal-continue')) {
+      document.getElementById('modal-backdrop').classList.add('hidden');
+    }
+  });
+
+  // Generic confirm-modal (2026-07-23) — see showConfirmModal()'s own
+  // comment. #confirm-modal-yes runs whatever pendingConfirmAction was set
+  // to (e.g. confirmBuyPack()'s actual buyPack() call) THEN closes; #confirm-
+  // modal-no just closes without running anything. Either way
+  // pendingConfirmAction is cleared immediately, so a stray leftover
+  // reference can never fire twice or fire for the wrong confirmation.
+  document.getElementById('modal-body').addEventListener('click', e => {
+    if (e.target.closest('#confirm-modal-yes')) {
+      const action = pendingConfirmAction;
+      pendingConfirmAction = null;
+      document.getElementById('modal-backdrop').classList.add('hidden');
+      if (action) action();
+      return;
+    }
+    if (e.target.closest('#confirm-modal-no')) {
+      pendingConfirmAction = null;
       document.getElementById('modal-backdrop').classList.add('hidden');
     }
   });

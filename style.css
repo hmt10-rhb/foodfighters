@@ -471,6 +471,12 @@ main {
    (header, right panel, everything) instead of #ff-grid's own overflow-y:
    auto scrolling just the card grid internally like it was designed to. */
 #tab-inventory.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* Shop (2026-07-23, "2 rows of 2, centered horizontally AND vertically"):
+   same stretch-to-fill-available-height treatment #tab-hunt/#tab-inventory/
+   #tab-despensa already get, for the same reason — .card-grid.packs (below)
+   needs real "available space" to vertically center its 2x2 group WITHIN,
+   which an auto-height .tab-panel.active (the default) never has to give it. */
+#tab-shop.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 
 .panel-head { margin-bottom: 16px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; }
 .panel-head h2 { color: var(--accent2); font-size: 1.25rem; width: 100%; }
@@ -795,6 +801,22 @@ main {
 @media (max-width: 760px) {
   #hunt-main { flex-direction: column; }
   #bombers-panel { width: auto; max-height: 220px; }
+  /* RE-CHECKED again for the "no scroll" follow-up (2026-07-23, card width
+     dropped 340px->300px, gap 24px->16px, to fit both rows within a normal
+     viewport HEIGHT without scrolling — see .card-grid.packs/.pack-img-wrap
+     above): the fixed 2x300px+16px-gap group needs ~616px of WIDTH — even
+     more comfortably under this 760px breakpoint than the previous 340px
+     version was, so this still only kicks in on genuinely narrow (phone-
+     width) viewports where even 2 columns of 300px wouldn't fit. Falls back
+     to the original auto-fill/wrap
+     behavior (any number of narrower, flexible columns) instead of
+     clipping/overflowing horizontally. align-content:center/flex:1/
+     min-height:0/overflow-y:auto (see the base rule above) are left ACTIVE
+     here on purpose, not reset — vertical + horizontal centering in
+     whatever space is available is equally desirable at any viewport
+     width, mobile included; only the column COUNT/WIDTH strategy needs to
+     change on a narrow screen, not whether the group centers itself. */
+  .card-grid.packs { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); justify-content: initial; }
 }
 
 /* ===== Arena tiles & actors (sized by --ts, set from JS) ===== */
@@ -1071,7 +1093,55 @@ main {
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 14px;
 }
-.card-grid.packs { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+/* 2 ROWS OF 2, bigger, centered BOTH ways (2026-07-23, follow-up — was a
+   single centered row of 4 at 280px, now a 2x2 group at 340px, per explicit
+   revised request). Still fixed-count/fixed-width columns, not auto-fill/
+   1fr, for the same reason as before: auto-fill/1fr STRETCHES columns to
+   fill the row edge-to-edge, which fights being "centered as a group" no
+   matter how it's justified.
+   - justify-content:center centers the 2 COLUMNS as a group horizontally
+     (unchanged mechanism from the 1x4 version).
+   - align-content:center is the NEW half — centers the 2 ROWS as a group
+     VERTICALLY within whatever height .card-grid.packs itself ends up with.
+     That only does something because #tab-shop.active (above) now stretches
+     to fill main's remaining height AND this rule sets flex:1;min-height:0
+     on itself (valid at once: this element is simultaneously a flex ITEM of
+     #tab-shop.active for those two properties, and a grid CONTAINER for its
+     own children via display:grid/align-content/justify-content) — without
+     that stretched height, "vertical centering" would have no extra space
+     to center within (the grid would just be exactly as tall as its own
+     content, identical to top-aligned).
+   - overflow-y:auto is a safety net (same role .despensa-showcase's own
+     already established) in case a future 5th+ pack ever made 2 rows not
+     fit — currently a no-op at any real viewport height. */
+.card-grid.packs {
+  /* 340px->300px (2026-07-23, "no scroll" follow-up): 340px cards were
+     measured (via Playwright) to need ~660px of real content height for 2
+     full rows, which only just barely fit (or didn't) at an unusually TALL
+     900px-tall viewport — at a normal ~768-800px real browser viewport
+     (header+bottom-nav+panel-head alone eat a fixed ~244px, unrelated to
+     this grid and shared by every tab, so not something to trim here) that
+     overflowed enough to force an internal scrollbar with the bottom row
+     visibly cut off, exactly the bug flagged. 300px is still noticeably
+     bigger than the ORIGINAL 1-row-of-4 card width (280px) that existed
+     before any of this 2x2 work. */
+  grid-template-columns: repeat(2, 300px);
+  /* `safe center`: kept as a safety net even though the sizing below is
+     chosen specifically so this box should never actually need to fall
+     back — see the sizing comments on .pack-card/.pack-img-wrap/gap below
+     for the real fix. Degrades to start-aligned instead of double-clipped
+     in the (now much less likely) case a future change makes it overflow
+     again — well-supported in this game's stated Chromium target. */
+  justify-content: safe center;
+  align-content: safe center;
+  /* 24px->16px (2026-07-23, "no scroll" follow-up): a modest gap trim,
+     freeing a little more of the fixed vertical budget for the pack art
+     itself instead of the space between cards. */
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
 
 .hero-card {
   background: var(--card);
@@ -1202,9 +1272,103 @@ main {
   padding: 16px;
 }
 .pack-card h3, .house-card h3 { margin-bottom: 6px; color: var(--accent2); }
-.pack-card .odds { font-size: 0.78rem; color: var(--muted); line-height: 1.7; margin: 8px 0; }
-.pack-card .price, .house-card .price { font-weight: 700; margin: 8px 0; }
+.house-card .price { font-weight: 700; margin: 8px 0; }
 .house-card .owned { font-size: 0.82rem; color: var(--green); margin: 4px 0; }
+
+/* Pack-card redesign (2026-07-23, user-requested): real product art
+   (assets/packs/pack_${size}.png) is the new centerpiece — see
+   renderShop()'s own comment in game.js for the onerror-fallback shape
+   (falls back to the original emoji-title look via .pack-img-fallback if
+   the art 404s, same "graceful degrade, no broken-image icon" spirit
+   spriteHtml() already established for Picante art). The rarity-odds list
+   moved off the card face entirely, behind .pack-info-btn (a small corner
+   "❓" that reuses showLegendModal() verbatim — no new odds popover was
+   built). The buy button now carries the price on its own label and goes
+   through a confirm-modal step (see .confirm-modal further below) instead
+   of spending on the very first click. */
+/* padding 16px->12px (2026-07-23, "no scroll" follow-up): a modest trim,
+   freeing a little more of the fixed per-card vertical budget for the pack
+   art itself — see .card-grid.packs/.pack-img-wrap for the fuller story on
+   why 2 rows need this budget trimmed at all, unlike the earlier 1-row
+   version. */
+.pack-card { position: relative; text-align: center; padding: 12px; }
+.pack-info-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 1;
+}
+.pack-info-btn:hover { color: var(--accent2); border-color: var(--accent); }
+.pack-img-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  /* 230px->175px (2026-07-23, "no scroll" follow-up — the 900px-tall test
+     that justified 230px was itself flagged as unusually tall; a real,
+     normal ~768-800px browser viewport only has ~244px of TOTAL budget left
+     for the grid after the fixed header/bottom-nav/panel-head chrome, which
+     2 full rows must now split — something a single row never had to do.
+     175px is the largest size (given .pack-card's 12px padding, this wrap's
+     own trimmed margin below, and .card-grid.packs' 16px gap) that reliably
+     fits both rows + buy buttons with zero scrollbar at a normal ~768px
+     viewport (measured via Playwright), while still being bigger than the
+     very first 160px baseline this game shipped with before ANY of this
+     pack-card work started. It IS smaller than the immediately-prior 1-row
+     iteration's 220px — that trade-off is unavoidable given 2 rows now
+     split a vertical budget 1 row used to have entirely to itself, and the
+     244px of surrounding chrome is shared by every tab, not something to
+     trim just for the shop. Flagged explicitly in the task report rather
+     than silently landing short of "bigger than the immediately-prior
+     version" on this one axis. */
+  max-height: 175px;
+  /* 12px->8px bottom margin (2026-07-23, "no scroll" follow-up): same
+     "free up a little more of the fixed vertical budget" reasoning as
+     .pack-card's own padding trim above. */
+  margin: 4px 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--bg);
+}
+.pack-img { width: 100%; height: 100%; object-fit: contain; }
+/* starts display:none INLINE (see renderShop()) so it's invisible unless
+   the real art 404s and the <img>'s onerror handler flips both elements'
+   display — this class only supplies the layout for THAT shown state. */
+.pack-img-fallback { width: 100%; height: 100%; align-items: center; justify-content: center; }
+.pack-img-fallback h3 { margin: 0; }
+/* Buy button SIMPLIFIED (2026-07-23, user follow-up): was "Comprar — X
+   Chef Gems" text; now just the currency icon + the plain number, nothing
+   else — reuses the EXACT cur-icon/chef_coin.png image the header currency
+   pill already shows (see index.html), just re-sized for this button
+   instead of the pill's own 22px (that sizing is scoped to
+   .ff-currency-pill img.cur-icon specifically, so it doesn't leak here). */
+.pack-buy-btn {
+  width: 100%;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.pack-buy-icon { width: 20px; height: 20px; object-fit: contain; }
+
+/* Generic confirm-modal (2026-07-23) — see showConfirmModal() in game.js.
+   Renders inside the same shared #modal-body every other modal uses. */
+.confirm-modal { text-align: center; }
+.confirm-message { margin-bottom: 16px; font-size: 1rem; line-height: 1.5; }
+.confirm-actions { display: flex; gap: 10px; justify-content: center; }
 
 select {
   background: var(--card);
