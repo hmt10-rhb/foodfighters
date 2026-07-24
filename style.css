@@ -1667,33 +1667,33 @@ select {
 
 .reveal-wrap { text-align: center; }
 .reveal-count { color: var(--muted); font-size: 0.85rem; margin-bottom: 10px; }
+/* Pack-reveal card redesign (2026-07-23, user-requested): the card itself is
+   now rendered via ffFullCardHtml() and carries the .ff-details class
+   alongside .reveal-card, so background/border/padding/the rarity ring/chip
+   colors/stat rows all come from the SAME rules the armário detail panel
+   uses (see .ff-details and friends further down this file) — nothing
+   reveal-specific to duplicate here anymore. This rule only adds what's
+   unique to the reveal context: a fixed centered width (the armário panel
+   normally stretches to fill its grid column, which doesn't exist here) and
+   the entrance animation. No cursor:pointer anymore either — the card is a
+   still, non-clickable frame now that Next/Skip/Speed are gone (fixed timing
+   only, see REVEAL_MS/REVEAL_MEGA_MS in game.js). */
 .reveal-card {
   position: relative;
-  width: 256px;
+  width: min(420px, 92vw);
   margin: 0 auto;
-  padding: 26px 20px;
-  background: var(--card);
-  border: 2px solid var(--border);
-  border-radius: 16px;
-  cursor: pointer;
   animation: cardIn 0.3s ease;
 }
-.reveal-card.r-CASEIRO { border-color: var(--c-common); }
-.reveal-card.r-TEMPERADO { border-color: var(--c-rare); }
-.reveal-card.r-GOURMET { border-color: var(--c-epic); }
-.reveal-card.r-ESPECIALIDADE_DA_CASA { border-color: var(--c-legendary); }
-.reveal-card.r-COMIDA_DE_BUTECO { border-color: var(--c-buteco); animation: butecoShine 1.4s ease-in-out infinite; }
-/* RECEITA_DE_VO: covered by the combined shinyBorder animation selector. */
+/* RECEITA_DE_VO/COMIDA_DE_BUTECO's animated rings and every other rarity's
+   static ring now come from .ff-details.r-* (further down this file) —
+   the old per-rarity .reveal-card.r-* border-color rules this replaced are
+   gone, so there's only ever ONE rarity signal on the card, not two
+   competing ones. */
 @keyframes cardIn {
   from { transform: scale(0.5) rotateY(120deg); opacity: 0; }
   to { transform: scale(1) rotateY(0); opacity: 1; }
 }
-.reveal-sprite { font-size: 92px; display: inline-block; margin-bottom: 10px; }
-.reveal-name { font-weight: 700; font-size: 1.05rem; margin: 6px 0; }
-.reveal-stats { color: var(--muted); font-size: 0.85rem; margin-top: 10px; line-height: 1.7; }
-.reveal-skills { margin-top: 8px; color: var(--accent2); font-size: 0.9rem; font-weight: 700; }
 .reveal-controls { display: flex; justify-content: center; gap: 10px; margin-top: 16px; }
-#reveal-speed.speed-on { border-color: var(--accent); color: var(--accent2); background: var(--card); }
 
 .reveal-card.celebrate { animation: cardIn 0.3s ease, celebrateGlow 1.4s ease 0.15s; }
 .reveal-card.celebrate::after {
@@ -1830,6 +1830,10 @@ body.shaking { animation: bodyShake 0.5s ease-in-out 2; }
   padding: 20px;
 }
 #modal-backdrop.hidden { display: none; }
+/* Hidden during a pack reveal (2026-07-23) — see startPackReveal()/
+   cancelReveal() in game.js: no escape hatch while the fixed-timing reveal
+   is running, same convention as every other .hidden toggle in this file. */
+#modal-close.hidden { display: none; }
 #modal {
   background: var(--panel);
   border: 1px solid var(--accent);

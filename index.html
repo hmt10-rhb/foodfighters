@@ -469,8 +469,15 @@
      browsing UI). -->
 <div id="wheel-panel" class="wheel-panel hidden"></div>
 
+<!-- ff-scope (2026-07-23): the pack-reveal card and the post-reveal summary
+     grid both now reuse the armário tab's .ff-* card markup verbatim, which
+     depends on the --ff-* custom properties declared by .ff-scope (see
+     style.css) — normally only present on #tab-inventory. Added here too so
+     those vars resolve inside the modal; pure custom-property declarations,
+     no visible effect on the OTHER modals (legend/shop/wheel/etc.) that
+     don't reference any --ff-* var. -->
 <div id="modal-backdrop" class="hidden">
-  <div id="modal">
+  <div id="modal" class="ff-scope">
     <div id="modal-body"></div>
     <button id="modal-close" class="btn">Close</button>
   </div>

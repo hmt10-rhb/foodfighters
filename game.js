@@ -3975,6 +3975,40 @@ function ffSkillCards(h) {
   return skills.map(s => `<div class="ff-skill-card" title="${s.name}: ${s.text}"><span class="ff-skill-icon">${s.icon}</span></div>`).join('');
 }
 
+// Shared "full card" markup — the scene (portrait, rarity/level/energy
+// chips) plus the 5-row stats panel. Used by BOTH the armário detail panel
+// (renderInventoryDetails()) and the pack-reveal card below, so a fresh pull
+// renders pixel-identical to how that same hero looks once owned, per
+// explicit user request (2026-07-23) — no separate "reveal-only" visual
+// language, no drift between the two over time.
+function ffFullCardHtml(h) {
+  const maxE = maxEnergyFor(h);
+  return `
+    <div class="ff-scene">
+      <div class="ff-sky"></div>
+      ${h.isSpicy ? `<span class="ff-scene-picante" title="${PICANTE_VISUAL_PLACEHOLDER}">🌶️</span>` : ''}
+      <div class="ff-scene-skills">${ffSkillCards(h)}</div>
+      <div class="ff-char-wrap">${spriteHtml(h, { showSkillIcons: false })}</div>
+      <div class="ff-ground"></div>
+      <div class="ff-info-block">
+        <h2 class="ff-hero-name">${h.name}</h2>
+        <div class="ff-meta-row">
+          <span class="ff-chip ff-chip-rarity rarity-${h.rarity}">${rLabel(h.rarity).toUpperCase()}</span>
+          <span class="ff-chip ff-chip-level">Level ${h.level}</span>
+          <span class="ff-chip ff-chip-energy" id="ff-energy-chip">⚡ ${Math.floor(h.energy)}/${maxE}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="ff-stats-panel">
+      <div class="ff-stat-row"><span class="ff-stat-icon">💪</span><span class="ff-stat-label">Poder</span><span class="ff-stat-dots"></span><span class="ff-stat-value${h.isSpicy ? ' ff-stat-picante' : ''}">${h.power}</span></div>
+      <div class="ff-stat-row"><span class="ff-stat-icon">👟</span><span class="ff-stat-label">Speed</span><span class="ff-stat-dots"></span><span class="ff-stat-value${h.isSpicy ? ' ff-stat-picante' : ''}">${h.speed}</span></div>
+      <div class="ff-stat-row"><span class="ff-stat-icon">📏</span><span class="ff-stat-label">Tamanho</span><span class="ff-stat-dots"></span><span class="ff-stat-value">${h.range}</span></div>
+      <div class="ff-stat-row"><span class="ff-stat-icon">💣</span><span class="ff-stat-label">Bombas</span><span class="ff-stat-dots"></span><span class="ff-stat-value">${h.bombCapacity}</span></div>
+      <div class="ff-stat-row"><span class="ff-stat-icon">⚡</span><span class="ff-stat-label">Stamina</span><span class="ff-stat-dots"></span><span class="ff-stat-value${h.isSpicy ? ' ff-stat-picante' : ''}">${h.stamina}</span></div>
+    </div>`;
+}
+
 function selectInventoryHero(id) {
   selectedInventoryHeroId = id;
   renderInventory();
@@ -4032,7 +4066,6 @@ function renderInventoryDetails() {
     </div>`;
     return;
   }
-  const maxE = maxEnergyFor(h);
   const atMax = h.level >= MAX_LEVEL;
   const cost = atMax ? 0 : levelCost(h);
   const xpPct = atMax ? 100 : Math.min(100, Math.round((state.starCore / cost) * 100));
@@ -4044,29 +4077,7 @@ function renderInventoryDetails() {
   // hero's rarity on every render.
   panel.className = 'ff-details r-' + h.rarity;
   panel.innerHTML = `
-    <div class="ff-scene">
-      <div class="ff-sky"></div>
-      ${h.isSpicy ? `<span class="ff-scene-picante" title="${PICANTE_VISUAL_PLACEHOLDER}">🌶️</span>` : ''}
-      <div class="ff-scene-skills">${ffSkillCards(h)}</div>
-      <div class="ff-char-wrap">${spriteHtml(h, { showSkillIcons: false })}</div>
-      <div class="ff-ground"></div>
-      <div class="ff-info-block">
-        <h2 class="ff-hero-name">${h.name}</h2>
-        <div class="ff-meta-row">
-          <span class="ff-chip ff-chip-rarity rarity-${h.rarity}">${rLabel(h.rarity).toUpperCase()}</span>
-          <span class="ff-chip ff-chip-level">Level ${h.level}</span>
-          <span class="ff-chip ff-chip-energy" id="ff-energy-chip">⚡ ${Math.floor(h.energy)}/${maxE}</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="ff-stats-panel">
-      <div class="ff-stat-row"><span class="ff-stat-icon">💪</span><span class="ff-stat-label">Poder</span><span class="ff-stat-dots"></span><span class="ff-stat-value${h.isSpicy ? ' ff-stat-picante' : ''}">${h.power}</span></div>
-      <div class="ff-stat-row"><span class="ff-stat-icon">👟</span><span class="ff-stat-label">Speed</span><span class="ff-stat-dots"></span><span class="ff-stat-value${h.isSpicy ? ' ff-stat-picante' : ''}">${h.speed}</span></div>
-      <div class="ff-stat-row"><span class="ff-stat-icon">📏</span><span class="ff-stat-label">Tamanho</span><span class="ff-stat-dots"></span><span class="ff-stat-value">${h.range}</span></div>
-      <div class="ff-stat-row"><span class="ff-stat-icon">💣</span><span class="ff-stat-label">Bombas</span><span class="ff-stat-dots"></span><span class="ff-stat-value">${h.bombCapacity}</span></div>
-      <div class="ff-stat-row"><span class="ff-stat-icon">⚡</span><span class="ff-stat-label">Stamina</span><span class="ff-stat-dots"></span><span class="ff-stat-value${h.isSpicy ? ' ff-stat-picante' : ''}">${h.stamina}</span></div>
-    </div>
+    ${ffFullCardHtml(h)}
 
     <footer class="ff-footer">
       <div class="ff-xp-wrap">
@@ -5014,24 +5025,29 @@ function showPatchNotesModal() {
   document.getElementById('modal-backdrop').classList.remove('hidden');
 }
 
+// Post-reveal summary (2026-07-23, user-requested): mini cards, no numeric
+// stats — reuses ffHeroCardHtml() verbatim, the EXACT same card/markup/CSS
+// the armário grid renders, so rarity colors, skill icons and the 5-per-row
+// cap (.ff-grid's own grid-template-columns) all follow the native tab's
+// rules automatically instead of a separate summary-only style.
 function showPullModal(heroes, title) {
   document.getElementById('modal-body').innerHTML = `
     <h3>${title || '🎉 You recruited:'}</h3>
-    <div class="pull-list">
-      ${heroes.map(h => `
-        <div class="pull-item r-${h.rarity}">
-          <span class="hero-emoji" style="font-size:2.2rem">${spriteHtml(h)}</span>
-          <div><b>${h.name}</b></div>
-          <span class="rarity-badge rarity-${h.rarity}">${rLabel(h.rarity)}</span>
-          <div class="muted">💪 ${h.power}</div>
-        </div>`).join('')}
+    <div class="ff-grid pull-summary-grid">
+      ${heroes.map(h => ffHeroCardHtml(h)).join('')}
     </div>`;
   document.getElementById('modal-backdrop').classList.remove('hidden');
 }
 
 /* ============ Pack reveal ============ */
 
-const REVEAL_MS = 1700, REVEAL_FAST_MS = 160, REVEAL_MEGA_MS = 3400;
+// Fixed reveal timing (2026-07-23, user-requested): no Next/Skip, no Speed
+// toggle anymore — every pull holds the screen for exactly this long, then
+// auto-advances on its own. Bumped up from the old small-card values
+// (1700/3400ms) since the card now shows the full armário-style detail
+// (name, rarity/level/energy chips, 5 stats) instead of a compact one-liner,
+// so it needs a bit more time to actually read.
+const REVEAL_MS = 2200, REVEAL_MEGA_MS = 4200;
 
 let reveal = null;
 
@@ -5044,30 +5060,26 @@ function isCelebrated(h) {
   return RARITIES.indexOf(h.rarity) >= RARITIES.indexOf('ESPECIALIDADE_DA_CASA');
 }
 
-// speed mode never lets a celebrated card fly by: celebrated pulls always
-// hold the screen for the full (or mega) duration, then speed resumes.
-// Picante (2026-07-23) joins that exemption — independent of rarity, it's
-// the single most-wanted pull in the game per explicit design intent, so
-// Speed mode must never blur past one either.
-function revealDelay(h, speed) {
-  if (h.rarity === 'RECEITA_DE_VO') return REVEAL_MEGA_MS;
-  if (isCelebrated(h) || h.isSpicy) return REVEAL_MS;
-  return speed ? REVEAL_FAST_MS : REVEAL_MS;
+function revealDelay(h) {
+  return h.rarity === 'RECEITA_DE_VO' ? REVEAL_MEGA_MS : REVEAL_MS;
 }
 
 function startPackReveal(heroes, summaryTitle) {
   cancelReveal();
-  reveal = { heroes, idx: -1, speed: false, timer: null, summaryTitle };
+  reveal = { heroes, idx: -1, timer: null, summaryTitle };
   document.getElementById('modal-body').innerHTML = `
     <div class="reveal-wrap">
       <div class="reveal-count" id="reveal-count"></div>
       <div id="reveal-card-slot"></div>
-      <div class="reveal-controls">
-        <button class="btn btn-small" id="reveal-next">Next ▶</button>
-        <button class="btn btn-small btn-ghost" id="reveal-speed" title="Fast-forward — pauses automatically for Legendary+ pulls">⏩ Speed</button>
-      </div>
     </div>`;
   document.getElementById('modal-backdrop').classList.remove('hidden');
+  // No escape hatch during a reveal (2026-07-23, "não tem como... skipar"):
+  // the generic #modal-close button and click-outside-to-dismiss both
+  // normally close ANY modal early — hidden here so a reveal can only ever
+  // end by running its fixed timer out to the summary. Restored in
+  // cancelReveal(), which every reveal-ending path (finishReveal() included)
+  // already funnels through.
+  document.getElementById('modal-close').classList.add('hidden');
   advanceReveal();
 }
 
@@ -5080,36 +5092,25 @@ function advanceReveal() {
   renderRevealCard(h);
   if (isCelebrated(h)) playCelebration(h);
   if (h.isSpicy) playPicanteCelebration(h);
-  reveal.timer = setTimeout(advanceReveal, revealDelay(h, reveal.speed));
+  reveal.timer = setTimeout(advanceReveal, revealDelay(h));
 }
 
+// Full armário-style card (ffFullCardHtml() — same markup renderInventoryDetails()
+// uses) instead of the old compact one-liner, per explicit 2026-07-23 request:
+// a pull's reveal must look exactly like the card the hero will have once
+// owned, respecting its actual rarity colors/stats/skill icons, not a
+// separate simplified reveal-only look. No click-to-advance anymore either
+// (see the fixed-timing comment above) — the card is a still, non-interactive
+// frame this time, unlike the clickable "Click to continue" of the old design.
 function renderRevealCard(h) {
   const count = document.getElementById('reveal-count');
   if (count) count.textContent = `${reveal.idx + 1} / ${reveal.heroes.length}`;
   const slot = document.getElementById('reveal-card-slot');
   if (!slot) return;
   slot.innerHTML = `
-    <div class="reveal-card r-${h.rarity}${isCelebrated(h) ? ' celebrate' : ''}${h.isSpicy ? ' picante' : ''}" id="reveal-card" title="Click to continue">
-      <span class="reveal-sprite">${spriteHtml(h)}</span>
-      <div class="reveal-name">${h.name}</div>
-      <span class="rarity-badge rarity-${h.rarity}">${rLabel(h.rarity)}</span>
-      <div class="reveal-stats">
-        💪 ${h.power} &nbsp; 📏 ${h.range} &nbsp; 👟 ${h.speed} &nbsp; 💣 ${h.bombCapacity} &nbsp; ⚡ ${maxEnergyFor(h)}<br>
-        ⛏️ ${mineRate(h).toFixed(2)} dmg/s
-      </div>
-      ${skillText(h) ? `<div class="reveal-skills">✨ ${skillText(h)}</div>` : ''}
+    <div class="reveal-card ff-details r-${h.rarity}${isCelebrated(h) ? ' celebrate' : ''}${h.isSpicy ? ' picante' : ''}" id="reveal-card">
+      ${ffFullCardHtml(h)}
     </div>`;
-}
-
-function toggleRevealSpeed() {
-  if (!reveal) return;
-  reveal.speed = !reveal.speed;
-  const btn = document.getElementById('reveal-speed');
-  if (btn) btn.classList.toggle('speed-on', reveal.speed);
-  if (reveal.idx >= 0 && reveal.idx < reveal.heroes.length) {
-    clearTimeout(reveal.timer);
-    reveal.timer = setTimeout(advanceReveal, revealDelay(reveal.heroes[reveal.idx], reveal.speed));
-  }
 }
 
 function finishReveal() {
@@ -5158,6 +5159,7 @@ function startWheelCoinReveal(amount) {
 }
 
 function cancelReveal() {
+  document.getElementById('modal-close').classList.remove('hidden'); // restore the escape hatch startPackReveal() hid — harmless no-op if it wasn't hidden
   if (!reveal) return;
   clearTimeout(reveal.timer);
   reveal = null;
@@ -5434,22 +5436,18 @@ function bindEvents() {
   });
 
   document.getElementById('modal-close').addEventListener('click', () => {
+    if (reveal) return; // belt-and-suspenders: button is already hidden during a reveal, this just guarantees a stray click can't skip it
     cancelReveal();
     unsubscribeMichelinOrder(); // no-op if no PIX QR was showing
     document.getElementById('modal-backdrop').classList.add('hidden');
   });
   document.getElementById('modal-backdrop').addEventListener('click', e => {
+    if (reveal) return; // click-outside-to-dismiss is an escape hatch too — blocked for the same "no skip" reason as #modal-close above
     if (e.target.id === 'modal-backdrop') {
       cancelReveal();
       unsubscribeMichelinOrder();
       e.target.classList.add('hidden');
     }
-  });
-
-  document.getElementById('modal-body').addEventListener('click', e => {
-    if (e.target.closest('#reveal-next')) { advanceReveal(); return; }
-    if (e.target.closest('#reveal-speed')) { toggleRevealSpeed(); return; }
-    if (e.target.closest('#reveal-card')) advanceReveal();
   });
 
   // Roda da Sorte's spin button is dual-purpose (free/paid) — the button's
