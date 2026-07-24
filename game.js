@@ -3,14 +3,35 @@
 /* ============ Config ============ */
 
 const SAVE_KEY = 'foodfighters-save-v1';
-// Brand rename (2026-07-22): "Bombfodase"/"Bomb Heroes" -> "Food Fighters".
-// The OLD localStorage key below may still hold real player progress —
-// renaming SAVE_KEY outright would silently orphan every existing save.
-// One-time migration lives in load(): if the new key is empty but the old
-// key has data, that old data is read and immediately re-saved under the
-// new key (see load()'s very first lines). The old key is left in place
-// afterward (harmless leftover), never deleted.
-const OLD_SAVE_KEY = 'bombheroes-save-v1';
+// MULTI-ACCOUNT BUG FIX (2026-07-24, real data loss confirmed): SAVE_KEY
+// used to be read/written as a single flat localStorage key, shared by
+// EVERY Supabase account ever signed into on this browser — there was no
+// per-user namespacing at all. A player with 3 accounts on the same PC
+// would have all 3 fighting over the exact same local cache: whichever
+// account was played LAST left its roster sitting in that shared slot, and
+// the NEXT account to sign in (cloudSignIn()/restoreCloudSession()) used
+// that leftover data's `lastSeen` timestamp to decide "is my local save
+// newer than my cloud save?" — almost always answering "yes" (since it was
+// really some OTHER account's very recent play session), which made
+// pullCloudSave() PUSH that wrong account's roster up, silently overwriting
+// the real cloud save. cloudSignUp() was worse still — a brand-new account
+// pushed whatever was sitting in the shared slot immediately, with no
+// comparison at all. Repeated login-switching across 3 accounts converges
+// them all onto whichever roster was played most recently, exactly the
+// reported symptom. Fixed by namespacing the local cache per Supabase user
+// id (see saveKeyForUser()/usernameKeyForUser() below) and never touching
+// `state`/localStorage for ANY specific account until that account's id is
+// actually known (see load()'s new signature, and its call sites in
+// cloudSignIn()/restoreCloudSession()/cloudSignUp()). No automatic
+// migration of the old shared key into any of the new namespaced ones —
+// its contents can't be trusted to belong to any particular account after
+// this bug, so every account now starts clean locally and rebuilds purely
+// from its own real cloud save (the cloud data itself was never touched by
+// this fix — only whichever account got overwritten by this bug in the
+// past has already lost whatever was clobbered, which this fix cannot
+// retroactively recover).
+function saveKeyForUser(userId) { return SAVE_KEY + '__' + userId; }
+function usernameKeyForUser(userId) { return USERNAME_KEY + '__' + userId; }
 const EXCHANGE_RATE = 10;          // 10 Food Coins -> 1 Chef Gems
 const MICHELIN_EXCHANGE_RATE = 5;  // 1 Estrela Michelin -> 5 Chef Gems (one-way only, see michelinExchange())
 // ENERGY MODEL REWORK (2026-07-23): base rest recovery is now a fixed 1
@@ -666,7 +687,13 @@ function saveSnapshot() {
 
 function save() {
   state.lastSeen = Date.now();
-  localStorage.setItem(SAVE_KEY, JSON.stringify(saveSnapshot()));
+  // No account known yet (pre-login placeholder state, see the bottom of
+  // this file) — nothing meaningful to namespace the local cache under, and
+  // writing to a shared/un-namespaced key is exactly the bug this was fixed
+  // for (2026-07-24, see SAVE_KEY's own comment). Every real call site runs
+  // after login, when cloudSession is always set.
+  if (!cloudSession) return;
+  localStorage.setItem(saveKeyForUser(cloudSession.user.id), JSON.stringify(saveSnapshot()));
 }
 
 // Set true only inside load()'s brand-new-game branch (no valid local save
@@ -734,20 +761,20 @@ function newGameState() {
   localFreshOnBoot = true; // see this flag's own comment — pullCloudSave() needs to know this wasn't a real returning save
 }
 
-function load() {
-  // One-time brand-rename migration (2026-07-22): if the new key is empty
-  // but the OLD key still holds real player data, adopt it under the new
-  // key before anything else ever reads SAVE_KEY — same graceful-migration
-  // pattern used for every other save-shape change in this function. The
-  // old key is left in place afterward (harmless leftover), never deleted.
-  try {
-    if (localStorage.getItem(SAVE_KEY) === null) {
-      const oldRaw = localStorage.getItem(OLD_SAVE_KEY);
-      if (oldRaw !== null) localStorage.setItem(SAVE_KEY, oldRaw);
-    }
-  } catch (e) {}
+// Takes the SIGNED-IN account's user id explicitly (2026-07-24, see
+// SAVE_KEY's own comment for the full multi-account bug this fixes) —
+// deliberately no longer callable without knowing WHICH account's local
+// cache to read. Called from cloudSignIn()/restoreCloudSession() right
+// after cloudSession is set, before pullCloudSave() does its freshness
+// comparison, so that comparison is always this account's own local data
+// against this account's own cloud row — never a different account's
+// leftover. No migration from the old shared un-namespaced key on purpose:
+// its contents could belong to any of however many accounts have played on
+// this browser and can't be trusted to belong to the one signing in now.
+function load(userId) {
+  const key = saveKeyForUser(userId);
   let raw = null;
-  try { raw = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) { raw = null; }
+  try { raw = JSON.parse(localStorage.getItem(key)); } catch (e) { raw = null; }
   if (!raw || !Array.isArray(raw.heroes)) {
     newGameState();
     save();
@@ -5933,7 +5960,11 @@ async function restoreCloudSession() {
   const { data } = await sb.auth.getSession();
   cloudSession = data && data.session ? data.session : null;
   if (cloudSession) {
-    cloudUsername = localStorage.getItem(USERNAME_KEY) || cloudSession.user.email.split('@')[0];
+    cloudUsername = localStorage.getItem(usernameKeyForUser(cloudSession.user.id)) || cloudSession.user.email.split('@')[0];
+    // Load THIS account's own local cache before comparing against its own
+    // cloud row (2026-07-24, see SAVE_KEY's own comment) — must happen
+    // before pullCloudSave(), which is what actually does that comparison.
+    load(cloudSession.user.id);
     await pullCloudSave();
   }
   refreshLeaderboard();
@@ -5965,8 +5996,15 @@ async function cloudSignUp() {
   if (error) { toast('Erro ao criar conta: ' + error.message); return; }
   cloudSession = data.session;
   cloudUsername = username;
-  localStorage.setItem(USERNAME_KEY, username);
+  localStorage.setItem(usernameKeyForUser(data.user.id), username);
   if (cloudSession) {
+    // A brand-new account must start from a genuinely clean slate — never
+    // whatever `state` happened to be holding from a different account
+    // played earlier in this same browser (2026-07-24, see SAVE_KEY's own
+    // comment: this was the worst instance of that bug, pushing a
+    // stranger's roster onto a freshly created account with no comparison
+    // at all).
+    newGameState();
     await pushCloudSave();
     toast('Conta criada e sincronizada!');
     enterGame(); // mandatory login: signup with an immediate session goes straight into the game, not to the account modal
@@ -5993,7 +6031,11 @@ async function cloudSignIn() {
   const { data, error } = await sb.auth.signInWithPassword({ email, password: pw });
   if (error) { toast('Erro ao entrar: ' + error.message); return; }
   cloudSession = data.session;
-  cloudUsername = localStorage.getItem(USERNAME_KEY) || email.split('@')[0];
+  cloudUsername = localStorage.getItem(usernameKeyForUser(cloudSession.user.id)) || email.split('@')[0];
+  // Load THIS account's own local cache before comparing against its own
+  // cloud row (2026-07-24, see SAVE_KEY's own comment) — must happen
+  // before pullCloudSave(), which is what actually does that comparison.
+  load(cloudSession.user.id);
   await pullCloudSave();
   enterGame(); // mandatory login: this IS the entry point into the game now
   toast('Login feito — progresso sincronizado.');
@@ -6370,8 +6412,7 @@ function continueRestoredSession() {
 
 const UI_PREF_KEY = 'foodfighters-ui'; // brand rename (2026-07-22) — migrated from 'bombheroes-ui' just below, alongside SAVE_KEY/USERNAME_KEY
 
-// Brand rename (2026-07-22): same one-time-migration reasoning as
-// SAVE_KEY/OLD_SAVE_KEY above, applied to the other old "bombheroes-*"
+// Brand rename (2026-07-22): one-time migration from the old "bombheroes-*"
 // localStorage key for the returning player's cloud username. UI_PREF_KEY's
 // own migration line is now a harmless no-op — the bottom-nav collapse
 // feature it used to feed (loadUiPrefs()/setBottomNavCollapsed()) was
@@ -6388,15 +6429,15 @@ function migrateOldBrandKey(oldKey, newKey) {
 migrateOldBrandKey('bombheroes-username', USERNAME_KEY);
 migrateOldBrandKey('bombheroes-ui', UI_PREF_KEY);
 
-// load() itself now guarantees gridTiles/tileHp are populated — either
-// restored from the save (mid-wave resume) or freshly generated internally
-// (new game / old save / offline-wave-advance) — so no separate genLayout()
-// call is needed anywhere here; buildArena() (inside enterGame()) just
-// renders whatever load() left. load() itself is still unconditional and
-// synchronous (cheap, local-only, sets up `state` so pullCloudSave() below
-// has something to compare against) — it does NOT reveal anything by
-// itself; only enterGame() ever does that.
-load();
+// Pre-login placeholder ONLY (2026-07-24) — load() now requires a known
+// account id (see its own comment) and can't run until restoreCloudSession()
+// (below) finds out whether there's a session at all. newGameState() just
+// gives `state`/gridTiles/tileHp a safe, valid, empty shape so nothing
+// crashes if anything touches them before a real account is loaded — it
+// does NOT reveal anything by itself; only enterGame() ever does that, and
+// this placeholder is always replaced by the real per-account load() before
+// that's reachable (see cloudSignIn()/restoreCloudSession()/cloudSignUp()).
+newGameState();
 bindEvents(); // safe to bind immediately — login-screen/modal buttons are inert until clicked regardless of auth state
 
 // MANDATORY LOGIN (2026-07-23, HARDENED — explicit instruction: "PROIBIDO
