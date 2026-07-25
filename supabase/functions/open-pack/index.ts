@@ -64,13 +64,17 @@ const SHOP_RARITY_WEIGHTS: Record<string, number> = {
   ESPECIALIDADE_DA_CASA: 0.0104, COMIDA_DE_BUTECO: 0.0052, RECEITA_DE_VO: 0.0004,
 };
 
+// BALANCE PASS "Tabela A" (2026-07-25) — mirrors game.js's RARITY_CONF, see
+// that file's own comment on this same change for the full reasoning. Only
+// affects packs opened from now on; keep in sync by hand with game.js if
+// this changes again.
 const RARITY_CONF: Record<string, { power: [number, number]; speed: [number, number]; range: [number, number]; bombas: [number, number]; stamina: [number, number] }> = {
   CASEIRO:               { power: [1, 3],   speed: [1, 3],   range: [1, 1], bombas: [1, 1], stamina: [1, 3] },
   TEMPERADO:             { power: [3, 5],   speed: [1, 5],   range: [1, 2], bombas: [1, 2], stamina: [3, 5] },
   GOURMET:               { power: [4, 9],   speed: [5, 9],   range: [1, 2], bombas: [1, 2], stamina: [5, 9] },
-  ESPECIALIDADE_DA_CASA: { power: [6, 11],  speed: [6, 11],  range: [2, 3], bombas: [2, 3], stamina: [6, 11] },
-  COMIDA_DE_BUTECO:      { power: [9, 15],  speed: [10, 15], range: [4, 4], bombas: [4, 5], stamina: [10, 15] },
-  RECEITA_DE_VO:         { power: [14, 20], speed: [14, 20], range: [5, 6], bombas: [5, 6], stamina: [14, 20] },
+  ESPECIALIDADE_DA_CASA: { power: [6, 9],   speed: [6, 11],  range: [2, 3], bombas: [2, 3], stamina: [6, 11] },
+  COMIDA_DE_BUTECO:      { power: [9, 12],  speed: [10, 15], range: [3, 4], bombas: [3, 4], stamina: [10, 15] },
+  RECEITA_DE_VO:         { power: [14, 16], speed: [14, 20], range: [4, 5], bombas: [4, 5], stamina: [14, 20] },
 };
 
 const HERO_EMOJI = ['💣', '🧨', '🎇', '💥', '🔥', '⚡', '🌋', '☄️', '🎆', '🧯'];

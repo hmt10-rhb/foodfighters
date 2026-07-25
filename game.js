@@ -104,13 +104,26 @@ const RARITIES = ['CASEIRO', 'TEMPERADO', 'GOURMET', 'ESPECIALIDADE_DA_CASA', 'C
 // untouched) still re-rolls power/range/speed within these same bounds by
 // name — it simply never touches bombas/stamina, which is fine (not a
 // crash, just an untouched-per-instruction side effect).
+// BALANCE PASS "Tabela A" (2026-07-25, explicit request): Poder/Tamanho/
+// Bombas trimmed down for the top 3 rarities — the combined multiplier of
+// those 3 stats together (not any single one) was what let a lucky/rich
+// player farm dramatically faster than intended (flagged as a known
+// imbalance back when the flat-damage stat system first replaced the old
+// formula-based one, HP walls were never rebalanced against it). Speed/
+// Stamina deliberately UNCHANGED — they affect pacing/uptime, not the
+// farm-rate multiplication that was the actual problem. ONLY affects
+// heroes created from now on (makeHero() reads these live) — existing
+// heroes already on a save keep whatever they rolled under the old ranges,
+// standing project policy (rarity/stat systems never migrate existing
+// Rangos retroactively). MUST STAY IN SYNC BY HAND with the mirrored copy
+// in supabase/functions/open-pack/index.ts (shop packs roll server-side).
 const RARITY_CONF = {
   CASEIRO:          { label: 'Caseiro',          power: [1, 3],   speed: [1, 3],   range: [1, 1], bombas: [1, 1], stamina: [1, 3],   sigla: 'C' },
   TEMPERADO:        { label: 'Temperado',        power: [3, 5],   speed: [1, 5],   range: [1, 2], bombas: [1, 2], stamina: [3, 5],   sigla: 'T' },
   GOURMET:          { label: 'Gourmet',          power: [4, 9],   speed: [5, 9],   range: [1, 2], bombas: [1, 2], stamina: [5, 9],   sigla: 'G' },
-  ESPECIALIDADE_DA_CASA: { label: 'Especialidade da Casa', power: [6, 11],  speed: [6, 11],  range: [2, 3], bombas: [2, 3], stamina: [6, 11],  sigla: 'EC' },
-  COMIDA_DE_BUTECO:      { label: 'Comida de Buteco',      power: [9, 15],  speed: [10, 15], range: [4, 4], bombas: [4, 5], stamina: [10, 15], sigla: 'CB' },
-  RECEITA_DE_VO:         { label: 'Receita de Vó',         power: [14, 20], speed: [14, 20], range: [5, 6], bombas: [5, 6], stamina: [14, 20], sigla: 'VÓ' },
+  ESPECIALIDADE_DA_CASA: { label: 'Especialidade da Casa', power: [6, 9],   speed: [6, 11],  range: [2, 3], bombas: [2, 3], stamina: [6, 11],  sigla: 'EC' },
+  COMIDA_DE_BUTECO:      { label: 'Comida de Buteco',      power: [9, 12],  speed: [10, 15], range: [3, 4], bombas: [3, 4], stamina: [10, 15], sigla: 'CB' },
+  RECEITA_DE_VO:         { label: 'Receita de Vó',         power: [14, 16], speed: [14, 20], range: [4, 5], bombas: [4, 5], stamina: [14, 20], sigla: 'VÓ' },
 };
 // maxEnergy is no longer a fixed RARITY_CONF number — it's derived from
 // each hero's own ROLLED stamina (Stamina x 50). Every former
