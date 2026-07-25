@@ -3170,24 +3170,38 @@ function confirmBuyPack(idx) {
   );
 }
 
-function buyPack(idx) {
+// SERVER-SIDE ROLL (2026-07-24, emergency fix): used to roll rarity/stats
+// entirely client-side and just push the result — a real exploit
+// (monkey-patching SHOP_RARITY_WEIGHTS/buyPack() itself in devtools) forced
+// guaranteed Receita de Vó pulls this way. The roll now happens in the
+// open-pack Edge Function (mirrors admin-grant-currency/create-pix-order's
+// trust model exactly): it verifies the caller, checks/deducts bcoin, and
+// rolls using ITS OWN copy of SHOP_RARITY_WEIGHTS/RARITY_CONF/etc — nothing
+// the client does to its own JS can influence that roll anymore. This
+// function just calls it and reflects the AUTHORITATIVE result locally;
+// rollRarity()/makeHero() are no longer used for shop packs at all (still
+// used elsewhere — Jaula, fusion, wheel — none of which had a real exploit
+// reported, so left as client-side for now).
+async function buyPack(idx) {
   const pack = PACKS[idx];
+  if (!pack) return;
+  if (!sb || !cloudSignedIn()) { toast('Sincronização não configurada — não é possível comprar.'); return; }
+  // Fast client-side pre-check only — a nicety to avoid an unnecessary
+  // network round-trip when it's obviously unaffordable; the SERVER'S OWN
+  // check (inside open-pack) is what actually enforces this now.
   if (state.bcoin < pack.cost) {
     toast(`Not enough Chef Gems — need ${fmtCurrency(pack.cost)}.`);
     return;
   }
-  state.bcoin -= pack.cost;
-  const pulled = [];
-  for (let i = 0; i < pack.size; i++) {
-    // ONE flat rarity table now regardless of pack size (master spec #6) —
-    // pack size only changes how many rolls you get, not the per-roll odds
-    const hero = makeHero(rollRarity(SHOP_RARITY_WEIGHTS));
-    // No Picante here anymore (2026-07-23): isSpicy stays false (makeHero()'s
-    // default) — Jaula is now the only source of Picante Rangos.
-    state.heroes.push(hero);
-    pulled.push(hero);
-  }
+  const { data, error } = await sb.functions.invoke('open-pack', { body: { packIndex: idx } });
+  if (error) { toast('Erro ao abrir o pacote: ' + (error.message || 'falha na compra')); return; }
+  if (data && data.error) { toast('Erro: ' + data.error); return; }
+  const pulled = data.heroes;
+  state.bcoin = data.newBcoin;
+  state.heroes.push(...pulled);
+  state.nextHeroId = Math.max(state.nextHeroId, ...pulled.map(h => h.id + 1));
   save();
+  pushCloudSaveThrottled(); // reflect the server-authoritative result promptly, same precedent as other reward events
   renderHeader();
   renderShop();
   startPackReveal(pulled);
