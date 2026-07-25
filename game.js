@@ -3256,6 +3256,14 @@ async function buyPack(idx) {
   if (data && data.error) { toast('Erro: ' + data.error); return; }
   const pulled = data.heroes;
   state.bcoin = data.newBcoin;
+  // open-pack (server, authoritative) already deducted the pack cost from the
+  // cloud bcoin and returned the new value — record it as the new known-cloud
+  // baseline right away (2026-07-25 currency-double-deduction fix). Otherwise
+  // reconcileExternalCurrency() on the very next push reads the cloud's
+  // already-reduced bcoin against the STALE pre-pull baseline and mistakes the
+  // server-side deduction for an "external removal", subtracting the pack cost
+  // a SECOND time from local (and toasting a bogus "X Chef Gems removed").
+  if (state.lastKnownCloudCurrency) state.lastKnownCloudCurrency.bcoin = data.newBcoin;
   state.heroes.push(...pulled);
   state.nextHeroId = Math.max(state.nextHeroId, ...pulled.map(h => h.id + 1));
   save();
@@ -6424,6 +6432,35 @@ async function reconcileExternalCurrency() {
       state.wheelPaidSpinUsed = !!data.state.wheelPaidSpinUsed;
       state.lastKnownCloudCurrency.wheelPaidSpinUsed = state.wheelPaidSpinUsed;
       refreshWheelPanelLive();
+    }
+    // HERO RECONCILIATION (2026-07-25, real data-loss race fix) — the hero
+    // analogue of the currency merge above. open-pack (the server-side pack
+    // roller, service role) APPENDS the pulled heroes straight into this
+    // player's cloud saves row, authoritatively, before the client even sees
+    // the response. A full-state pushCloudSave() (30s interval / reward-event
+    // throttled / beforeunload) whose in-memory snapshot was captured in the
+    // brief window between that server write and buyPack() adding the same
+    // heroes to local state would otherwise blindly OVERWRITE the cloud with a
+    // heroes array missing those just-pulled Rangos — silent loss, no logout
+    // involved (the reported bug). Fold any such cloud hero into local state
+    // BEFORE the upsert, so the push can never drop it. Scope is deliberately
+    // narrow and safe: only heroes whose id is >= our own nextHeroId are
+    // adopted — an id at/above nextHeroId can only be a hero created AFTER this
+    // client's last-known state (a genuine external append: open-pack here, or
+    // another device), never one this client intentionally removed via
+    // fusion/sacrifice (those always carry ids BELOW nextHeroId, so a stale
+    // cloud copy of them is correctly left to be overwritten by the push). No
+    // toast — unlike a currency credit, adopting a hero the player just pulled
+    // themselves is not "news" worth interrupting them over.
+    if (Array.isArray(data.state.heroes) && data.state.heroes.length) {
+      if (!Array.isArray(state.heroes)) state.heroes = [];
+      const localIds = new Set(state.heroes.map(h => h && h.id));
+      const minNewId = Number(state.nextHeroId) || 1;
+      const appended = data.state.heroes.filter(h => h && typeof h.id === 'number' && h.id >= minNewId && !localIds.has(h.id));
+      if (appended.length) {
+        state.heroes.push(...appended);
+        state.nextHeroId = Math.max(minNewId, ...appended.map(h => h.id + 1));
+      }
     }
   } catch (e) { /* best-effort — a failed reconciliation read must never block the save itself */ }
 }
