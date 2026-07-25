@@ -6234,6 +6234,23 @@ async function cloudSignIn() {
 
 async function cloudSignOut() {
   if (!sb) return;
+  // DATA-LOSS FIX (2026-07-25): force a real, awaited push of the current
+  // state to the cloud BEFORE dropping the session. Without this, anything
+  // not yet synced when the player logs out was lost the moment
+  // sb.auth.signOut() invalidated the session — and the NEXT login's
+  // pullCloudSave() would then adopt the STALE cloud copy, making the
+  // progress look like it vanished. The reported case: open a pack (its
+  // heroes are added to `state` here and were only being synced via the
+  // THROTTLED/interval push, which can be skipped or lose a race with the
+  // server-authoritative open-pack write), then log out immediately — this
+  // guarantees the exact heroes currently in memory are the cloud's last
+  // write, so relogin restores them. Awaited on purpose (the coordinator's
+  // "guaranteed saved before logout can complete"); wrapped best-effort so a
+  // failed push can never trap the player unable to log out — we still sign
+  // out below regardless. This is the same pushCloudSave() the 30s interval
+  // already runs, so it introduces no new sync/reconcile behavior, only one
+  // more guaranteed push at the one moment it matters most.
+  if (cloudSignedIn()) { try { await pushCloudSave(); } catch (e) { /* still sign out below — data safety must not block logout */ } }
   await sb.auth.signOut();
   cloudSession = null;
   cloudUsername = null;
