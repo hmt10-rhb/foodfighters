@@ -5934,10 +5934,10 @@ function showAdminModal() {
     <button id="admin-grant-btn" class="btn">Confirmar</button>
 
     <hr style="margin:18px 0;border-color:#7a1f1f;">
-    <h3 style="color:#ff6b6b">☠️ Hard Reset GERAL — apaga TODAS as contas</h3>
-    <p class="muted">Apaga TODOS os jogadores registrados (exceto esta conta admin) — Rangos, moedas, ranking, tudo. IRREVERSÍVEL. Digite exatamente <b>APAGAR TUDO</b> abaixo pra liberar o botão.</p>
+    <h3 style="color:#ff6b6b">☠️ Hard Reset GERAL — zera o progresso de todo mundo</h3>
+    <p class="muted">Reseta TODOS os jogadores registrados (exceto esta conta admin) pro zero — Rangos, Food Coins, Chef Gems, ranking e missões, igual uma conta nova. Login/cadastro de cada um continua intacto (não precisa recadastrar), e Estrela Michelin de quem já comprou NUNCA é tocada. IRREVERSÍVEL. Digite exatamente <b>APAGAR TUDO</b> abaixo pra liberar o botão.</p>
     <input id="admin-wipe-confirm-text" type="text" placeholder="Digite: APAGAR TUDO" style="width:100%;margin-bottom:10px;" autocomplete="off">
-    <button id="admin-wipe-all-btn" class="btn btn-danger" disabled>☠️ Apagar todas as contas</button>`;
+    <button id="admin-wipe-all-btn" class="btn btn-danger" disabled>☠️ Resetar progresso de todo mundo</button>`;
   document.getElementById('modal-backdrop').classList.remove('hidden');
 }
 
@@ -5951,15 +5951,15 @@ async function adminWipeAllAccounts() {
   // Function's own server-side phrase check) — deliberately excessive for
   // an action this irreversible and this wide-reaching (every player, not
   // just one account).
-  if (!confirm('ÚLTIMA CONFIRMAÇÃO: isso apaga TODAS as contas de jogador, sem volta. Continuar?')) return;
+  if (!confirm('ÚLTIMA CONFIRMAÇÃO: isso zera o progresso de TODOS os jogadores (Rangos, moedas, ranking), sem volta. Estrela Michelin não é afetada. Continuar?')) return;
   const btn = document.getElementById('admin-wipe-all-btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Apagando...'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Resetando...'; }
   const { data, error } = await sb.functions.invoke('admin-hard-reset-all', {
     body: { confirm: ADMIN_WIPE_CONFIRM_PHRASE },
   });
-  if (error) { toast('Erro: ' + (error.message || 'falha ao apagar contas')); if (btn) { btn.disabled = false; btn.textContent = '☠️ Apagar todas as contas'; } return; }
-  if (data && data.error) { toast('Erro: ' + data.error); if (btn) { btn.disabled = false; btn.textContent = '☠️ Apagar todas as contas'; } return; }
-  toast(`✅ ${data.deletedCount} conta(s) apagada(s).`);
+  if (error) { toast('Erro: ' + (error.message || 'falha ao resetar contas')); if (btn) { btn.disabled = false; btn.textContent = '☠️ Resetar progresso de todo mundo'; } return; }
+  if (data && data.error) { toast('Erro: ' + data.error); if (btn) { btn.disabled = false; btn.textContent = '☠️ Resetar progresso de todo mundo'; } return; }
+  toast(`✅ ${data.resetCount} conta(s) resetada(s).`);
   document.getElementById('modal-backdrop').classList.add('hidden');
 }
 
