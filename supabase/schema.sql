@@ -108,6 +108,39 @@ begin
   end if;
 end $$;
 
+-- ============ Admin broadcast messages (2026-07-25) ============
+-- One row per message the admin sends to every player — game.js shows the
+-- newest one as a full-screen overlay (same visual treatment as the
+-- force-reload notice, see #admin-broadcast-overlay in index.html), via a
+-- Realtime subscription (same pattern as leaderboard/michelin_orders
+-- above) plus a periodic poll as a fallback if the Realtime channel drops.
+-- Everyone can READ (it's just an announcement, no sensitive data), but
+-- only the admin-broadcast-message Edge Function (service role) can WRITE
+-- — same "read open, write locked to a verified Edge Function" shape as
+-- michelin_orders.
+create table if not exists public.admin_broadcast (
+  id uuid primary key default gen_random_uuid(),
+  message text not null,
+  created_at timestamptz not null default now()
+);
+
+alter table public.admin_broadcast enable row level security;
+
+create policy "admin_broadcast: anyone can read" on public.admin_broadcast
+  for select using (true);
+-- Deliberately NO insert/update/delete policy for regular users — only the
+-- Edge Function (service role) writes.
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'admin_broadcast'
+  ) then
+    alter publication supabase_realtime add table public.admin_broadcast;
+  end if;
+end $$;
+
 -- ============ Anti-cheat guard ============
 -- Basic sanity check, not a full server-authoritative simulation: scores can
 -- only move forward, and a single sync can't leap an implausible number of

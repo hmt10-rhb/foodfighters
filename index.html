@@ -502,6 +502,19 @@
   </div>
 </div>
 
+<!-- Admin broadcast message (2026-07-25) — see showBroadcastOverlay()/
+     dismissBroadcastOverlay() in game.js. Same visual treatment as
+     #update-required-overlay above, but dismissible: closing it just hides
+     the overlay and remembers the message id in localStorage so it doesn't
+     reappear on the next load. -->
+<div id="admin-broadcast-overlay" class="hidden">
+  <div class="update-required-card">
+    <h2>📢 Aviso</h2>
+    <p id="admin-broadcast-text"></p>
+    <button id="admin-broadcast-dismiss-btn" class="btn">OK, entendi</button>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="config.js"></script>
 <script src="game.js"></script>

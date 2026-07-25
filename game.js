@@ -5924,6 +5924,7 @@ function bindEvents() {
     else if (e.target.closest('#cloud-signout-btn')) cloudSignOut();
     else if (e.target.closest('#admin-grant-btn')) grantCurrency();
     else if (e.target.closest('#admin-wipe-all-btn')) adminWipeAllAccounts();
+    else if (e.target.closest('#admin-broadcast-send-btn')) adminSendBroadcast();
   });
   // Type-to-confirm gate (2026-07-24) for the general wipe button — stays
   // disabled until the exact phrase is typed, same spirit as GitHub's
@@ -5987,7 +5988,13 @@ function showAdminModal() {
     <h3 style="color:#ff6b6b">☠️ Hard Reset GERAL — zera o progresso de todo mundo</h3>
     <p class="muted">Reseta TODOS os jogadores registrados (exceto esta conta admin) pro zero — Rangos, Food Coins, Chef Gems, ranking e missões, igual uma conta nova. Login/cadastro de cada um continua intacto (não precisa recadastrar), e Estrela Michelin de quem já comprou NUNCA é tocada. IRREVERSÍVEL. Digite exatamente <b>APAGAR TUDO</b> abaixo pra liberar o botão.</p>
     <input id="admin-wipe-confirm-text" type="text" placeholder="Digite: APAGAR TUDO" style="width:100%;margin-bottom:10px;" autocomplete="off">
-    <button id="admin-wipe-all-btn" class="btn btn-danger" disabled>☠️ Resetar progresso de todo mundo</button>`;
+    <button id="admin-wipe-all-btn" class="btn btn-danger" disabled>☠️ Resetar progresso de todo mundo</button>
+
+    <hr style="margin:18px 0;">
+    <h3>📢 Enviar mensagem para todos os jogadores</h3>
+    <p class="muted">Mostra um aviso em tela cheia pra todo mundo com o jogo aberto (chega na hora via Realtime, com verificação periódica de reserva). Cada jogador fecha com o próprio botão "OK, entendi" — não força reload.</p>
+    <textarea id="admin-broadcast-input" rows="3" placeholder="Mensagem para todos os jogadores" style="width:100%;margin-bottom:10px;resize:vertical;"></textarea>
+    <button id="admin-broadcast-send-btn" class="btn">Enviar para todos</button>`;
   document.getElementById('modal-backdrop').classList.remove('hidden');
 }
 
@@ -6011,6 +6018,30 @@ async function adminWipeAllAccounts() {
   if (data && data.error) { toast('Erro: ' + data.error); if (btn) { btn.disabled = false; btn.textContent = '☠️ Resetar progresso de todo mundo'; } return; }
   toast(`✅ ${data.resetCount} conta(s) resetada(s).`);
   document.getElementById('modal-backdrop').classList.add('hidden');
+}
+
+// Admin broadcast message (2026-07-25) — see the matching client-side
+// delivery logic (subscribeBroadcastRealtime()/checkBroadcast()/
+// showBroadcastIfNew()) near the bottom of this file, and
+// #admin-broadcast-overlay in index.html. Sends via the admin-broadcast-message
+// Edge Function, which re-verifies the caller is the admin server-side
+// (same trust pattern as every other admin-* function here) and inserts the
+// row every player's client is subscribed to.
+async function adminSendBroadcast() {
+  if (!sb) { toast('Sincronização não configurada neste build.'); return; }
+  const input = document.getElementById('admin-broadcast-input');
+  const message = input ? input.value.trim() : '';
+  if (!message) { toast('Digite uma mensagem antes de enviar.'); return; }
+  const btn = document.getElementById('admin-broadcast-send-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+  const { data, error } = await sb.functions.invoke('admin-broadcast-message', {
+    body: { message },
+  });
+  if (btn) { btn.disabled = false; btn.textContent = 'Enviar para todos'; }
+  if (error) { toast('Erro: ' + (error.message || 'falha ao enviar')); return; }
+  if (data && data.error) { toast('Erro: ' + data.error); return; }
+  if (input) input.value = '';
+  toast('✅ Mensagem enviada para todos os jogadores.');
 }
 
 async function grantCurrency() {
@@ -6714,3 +6745,61 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') checkForUpdate();
 });
 document.getElementById('update-required-reload-btn').addEventListener('click', () => location.reload());
+
+// ADMIN BROADCAST DELIVERY (2026-07-25) — same dual-delivery shape as the
+// leaderboard (see subscribeLeaderboardRealtime()'s own comment): a Realtime
+// subscription on admin_broadcast INSERTs for instant delivery, plus a
+// periodic poll as a fallback in case the table was never added to the
+// supabase_realtime publication or the websocket drops. Runs unconditionally
+// from page load (like captureBootVersion() above), independent of login —
+// the admin_broadcast RLS policy allows anyone to read, and even someone
+// sitting on the login screen should see an announcement. Unlike the
+// force-reload overlay, this one is dismissible: dismissing stores the
+// message's id in localStorage so it never reappears once closed, even
+// across reloads/re-logins on the same browser.
+let broadcastChannel = null;
+let pendingBroadcastId = null;
+const BROADCAST_SEEN_KEY = 'ff_broadcast_seen_id';
+
+function showBroadcastIfNew(row) {
+  if (!row || !row.id || !row.message) return;
+  if (row.id === localStorage.getItem(BROADCAST_SEEN_KEY)) return; // already dismissed (or is the one currently shown)
+  pendingBroadcastId = row.id;
+  const overlay = document.getElementById('admin-broadcast-overlay');
+  const text = document.getElementById('admin-broadcast-text');
+  if (text) text.textContent = row.message;
+  if (overlay) overlay.classList.remove('hidden');
+}
+
+async function checkBroadcast() {
+  if (!sb) return;
+  try {
+    const { data } = await sb
+      .from('admin_broadcast')
+      .select('id, message, created_at')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (data && data[0]) showBroadcastIfNew(data[0]);
+  } catch (e) { /* a network blip just means try again next interval/poll — same tolerance as checkForUpdate() */ }
+}
+
+function subscribeBroadcastRealtime() {
+  if (!sb || broadcastChannel) return;
+  broadcastChannel = sb
+    .channel('admin-broadcast-changes')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'admin_broadcast' }, payload => {
+      showBroadcastIfNew(payload.new);
+    })
+    .subscribe();
+}
+
+checkBroadcast();
+subscribeBroadcastRealtime();
+setInterval(checkBroadcast, 30000);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') checkBroadcast();
+});
+document.getElementById('admin-broadcast-dismiss-btn').addEventListener('click', () => {
+  if (pendingBroadcastId) localStorage.setItem(BROADCAST_SEEN_KEY, pendingBroadcastId);
+  document.getElementById('admin-broadcast-overlay').classList.add('hidden');
+});

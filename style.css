@@ -1866,6 +1866,22 @@ body.shaking { animation: bodyShake 0.5s ease-in-out 2; }
 }
 .update-required-card h2 { color: var(--accent2); margin-bottom: 12px; }
 .update-required-card p { color: var(--muted); margin-bottom: 18px; }
+/* Admin broadcast overlay (2026-07-25) — reuses .update-required-card's
+   look; only difference from the force-reload overlay is that this one has
+   a dismiss button instead of a reload button, so it doesn't need its own
+   z-index tier (same 99999, still above #modal-backdrop). */
+#admin-broadcast-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.88);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 99999;
+  padding: 20px;
+}
+#admin-broadcast-overlay.hidden { display: none; }
+#admin-broadcast-text { white-space: pre-wrap; }
 /* Hidden during a pack reveal (2026-07-23) — see startPackReveal()/
    cancelReveal() in game.js: no escape hatch while the fixed-timing reveal
    is running, same convention as every other .hidden toggle in this file. */
