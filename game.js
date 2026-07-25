@@ -1,5 +1,17 @@
 'use strict';
 
+// SECURITY (2026-07-25): the entire game runs inside this IIFE so that `state`
+// and every internal function stay PRIVATE — not reachable from the browser's
+// DevTools console. Before this, the game loaded as a classic <script>, which
+// puts top-level `let state`/`function ...` declarations in a scope the console
+// can read and mutate: players were opening the console and typing things like
+// `state.bcoin = 1e9` (or calling internal functions directly) to cheat, then
+// letting autosave push it up. Wrapping everything here closes that vector.
+// This is the CLIENT-SIDE half of the anti-cheat; the SERVER-SIDE half is the
+// saves_guard/leaderboard_guard triggers in supabase/schema.sql, which reject
+// impossible values even if someone hits the API directly. Both are needed.
+(function () {
+
 // Hard wipe (2026-07-24): every non-admin account was deleted via SQL
 // Editor (`delete from auth.users where email <> 'joaohermeto@hotmail.com'`)
 // ahead of a fresh start — this comment's own edit is what triggers the
@@ -6854,3 +6866,5 @@ document.getElementById('admin-broadcast-dismiss-btn').addEventListener('click',
   if (pendingBroadcastId) localStorage.setItem(BROADCAST_SEEN_KEY, pendingBroadcastId);
   document.getElementById('admin-broadcast-overlay').classList.add('hidden');
 });
+
+})(); // end SECURITY IIFE (see the top of this file) — keeps game state/functions out of the console
