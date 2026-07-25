@@ -6304,6 +6304,53 @@ async function reconcileExternalCurrency() {
   } catch (e) { /* best-effort — a failed reconciliation read must never block the save itself */ }
 }
 
+// A Postgres foreign-key violation (SQLSTATE 23503) coming back from a
+// saves/leaderboard upsert means one specific thing here, and only that: the
+// account we are authenticated AS no longer exists in auth.users. The ONLY
+// foreign key on either table is user_id -> auth.users(id) (see
+// supabase/schema.sql), every write goes out under our own
+// cloudSession.user.id, and RLS already pins that written id to auth.uid() —
+// so the id can only ever be our own server-verified identity, and a 23503
+// can't be anything but "that identity was deleted server-side" (e.g. an
+// admin account wipe — the earlier version of admin-hard-reset-all actually
+// deleted accounts via auth.admin.deleteUser) while this browser still holds
+// a not-yet-expired JWT for it. getSession() at boot only validates that JWT
+// LOCALLY (expiry/signature from cache, no server round-trip), which is
+// exactly how such a dead session survives a reload and then spams this FK
+// error on every 30s autosave. CRITICAL for "never sign out a valid player":
+// a genuinely existing account can NEVER produce 23503 (its user_id IS in
+// auth.users), and a transient network/RLS/other failure produces a
+// DIFFERENT code (or none) — so this is matched ONLY on the stable 23503
+// SQLSTATE, never on human-readable message text (which varies by PostgREST
+// version/locale).
+function isDeletedAccountError(error) {
+  return !!error && error.code === '23503';
+}
+
+// The account backing this session was deleted server-side (see
+// isDeletedAccountError()). Force a REAL sign-out: clear Supabase's own
+// stored session so getSession() stops handing this dead JWT back on the
+// next boot, drop cloudSession/cloudUsername locally, and return to the
+// login screen — instead of letting the 30s autosave loop (and every
+// reward-event push) keep firing the same foreign-key error forever under an
+// id that can never be written again. Re-entrancy guarded so the saves +
+// leaderboard errors within a single push (and any interval/visibility/
+// unload push already in flight during the signOut await) only ever trigger
+// ONE sign-out + toast. After this, cloudSession is null, so pushCloudSave()
+// short-circuits at its own guard and the 30s interval's cloudSignedIn()
+// check stops it too — the spam ends.
+let handlingDeadSession = false;
+async function handleDeadSession() {
+  if (handlingDeadSession) return;
+  handlingDeadSession = true;
+  try { if (sb) await sb.auth.signOut(); } catch (e) { /* best-effort — dropping the local session below is what actually stops the retry spam */ }
+  cloudSession = null;
+  cloudUsername = null;
+  showLoginScreen();
+  toast('Sua conta não está mais disponível (sessão encerrada). Faça login novamente.');
+  handlingDeadSession = false;
+}
+
 async function pushCloudSave() {
   if (!sb || !cloudSession) return;
   await reconcileExternalCurrency();
@@ -6324,8 +6371,16 @@ async function pushCloudSave() {
   // for so long: the write failed on every push for any player with cents
   // in their total, and nothing ever surfaced it. Logging here doesn't fix
   // failures, but it means the next one won't be silent.
-  if (savesRes.error) console.error('pushCloudSave: saves upsert failed', savesRes.error);
-  else {
+  if (savesRes.error) {
+    console.error('pushCloudSave: saves upsert failed', savesRes.error);
+    // Deleted-account session (see handleDeadSession()) — stop here and sign
+    // out rather than attempting the leaderboard upsert (which would fail the
+    // same way) or updating any baseline under an id that can never be
+    // written again. The saves row is cascade-deleted alongside the account,
+    // so this INSERT-path FK check is usually where a wiped session trips
+    // first.
+    if (isDeletedAccountError(savesRes.error)) { await handleDeadSession(); return; }
+  } else {
     // Whatever we just pushed IS the new cloud value for these fields —
     // update the reconciliation baseline so the NEXT push's diff (see
     // reconcileExternalCurrency()) only ever measures credits that land
@@ -6343,7 +6398,14 @@ async function pushCloudSave() {
     // genuinely accumulating. Round to 2 decimals instead of flooring.
     total_mined: Math.round(state.totalMined * 100) / 100,
   });
-  if (leaderboardRes.error) console.error('pushCloudSave: leaderboard upsert failed', leaderboardRes.error);
+  if (leaderboardRes.error) {
+    console.error('pushCloudSave: leaderboard upsert failed', leaderboardRes.error);
+    // Same deleted-account signal, caught here too in case the saves upsert
+    // above somehow succeeded (e.g. its row still existed) while the
+    // leaderboard row was already gone — this is the exact error from the
+    // production report.
+    if (isDeletedAccountError(leaderboardRes.error)) { await handleDeadSession(); return; }
+  }
 }
 
 async function refreshLeaderboard() {
