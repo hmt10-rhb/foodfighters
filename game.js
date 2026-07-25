@@ -5869,6 +5869,19 @@ function bindEvents() {
     else if (e.target.closest('#cloud-signin-btn')) cloudSignIn();
     else if (e.target.closest('#cloud-signout-btn')) cloudSignOut();
     else if (e.target.closest('#admin-grant-btn')) grantCurrency();
+    else if (e.target.closest('#admin-wipe-all-btn')) adminWipeAllAccounts();
+  });
+  // Type-to-confirm gate (2026-07-24) for the general wipe button — stays
+  // disabled until the exact phrase is typed, same spirit as GitHub's
+  // "type the repo name to delete it" pattern, since this specific action
+  // (apaga TODO jogador registrado) is far more destructive than anything
+  // else in this admin panel and a habitual-click confirm() dialog alone
+  // isn't a strong enough guard against a misclick.
+  document.getElementById('modal-body').addEventListener('input', e => {
+    if (e.target.id === 'admin-wipe-confirm-text') {
+      const btn = document.getElementById('admin-wipe-all-btn');
+      if (btn) btn.disabled = e.target.value !== ADMIN_WIPE_CONFIRM_PHRASE;
+    }
   });
 
   // Admin panel (2026-07-23) — see this button's own comment in index.html:
@@ -5914,8 +5927,36 @@ function showAdminModal() {
       <option value="hardResetCount">Hard Reset (usos)</option>
     </select>
     <input id="admin-amount" type="number" min="0" step="0.01" placeholder="Quantidade" style="width:100%;margin-bottom:10px;">
-    <button id="admin-grant-btn" class="btn">Confirmar</button>`;
+    <button id="admin-grant-btn" class="btn">Confirmar</button>
+
+    <hr style="margin:18px 0;border-color:#7a1f1f;">
+    <h3 style="color:#ff6b6b">☠️ Hard Reset GERAL — apaga TODAS as contas</h3>
+    <p class="muted">Apaga TODOS os jogadores registrados (exceto esta conta admin) — Rangos, moedas, ranking, tudo. IRREVERSÍVEL. Digite exatamente <b>APAGAR TUDO</b> abaixo pra liberar o botão.</p>
+    <input id="admin-wipe-confirm-text" type="text" placeholder="Digite: APAGAR TUDO" style="width:100%;margin-bottom:10px;" autocomplete="off">
+    <button id="admin-wipe-all-btn" class="btn btn-danger" disabled>☠️ Apagar todas as contas</button>`;
   document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+
+const ADMIN_WIPE_CONFIRM_PHRASE = 'APAGAR TUDO';
+
+async function adminWipeAllAccounts() {
+  if (!sb) { toast('Sincronização não configurada neste build.'); return; }
+  const typed = document.getElementById('admin-wipe-confirm-text').value;
+  if (typed !== ADMIN_WIPE_CONFIRM_PHRASE) return; // button is disabled unless this matches, but double-check anyway
+  // Third confirmation layer (typed phrase + this dialog + the Edge
+  // Function's own server-side phrase check) — deliberately excessive for
+  // an action this irreversible and this wide-reaching (every player, not
+  // just one account).
+  if (!confirm('ÚLTIMA CONFIRMAÇÃO: isso apaga TODAS as contas de jogador, sem volta. Continuar?')) return;
+  const btn = document.getElementById('admin-wipe-all-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Apagando...'; }
+  const { data, error } = await sb.functions.invoke('admin-hard-reset-all', {
+    body: { confirm: ADMIN_WIPE_CONFIRM_PHRASE },
+  });
+  if (error) { toast('Erro: ' + (error.message || 'falha ao apagar contas')); if (btn) { btn.disabled = false; btn.textContent = '☠️ Apagar todas as contas'; } return; }
+  if (data && data.error) { toast('Erro: ' + data.error); if (btn) { btn.disabled = false; btn.textContent = '☠️ Apagar todas as contas'; } return; }
+  toast(`✅ ${data.deletedCount} conta(s) apagada(s).`);
+  document.getElementById('modal-backdrop').classList.add('hidden');
 }
 
 async function grantCurrency() {
