@@ -136,3 +136,55 @@ drop trigger if exists leaderboard_guard_trigger on public.leaderboard;
 create trigger leaderboard_guard_trigger
   before insert or update on public.leaderboard
   for each row execute function public.leaderboard_guard();
+
+-- ============ Anti-cheat guard: saves.state.michelinCoin (2026-07-24) ============
+-- Estrela Michelin is the real-money-backed currency (bought via Pix, see
+-- create-pix-order/mercadopago-webhook) — but it lives inside
+-- public.saves.state, a jsonb blob the OWNER is otherwise fully free to
+-- update (see "saves: owner can update"/"saves: owner can insert" above),
+-- which meant nothing ever stopped a player from editing
+-- state.michelinCoin in their own browser's devtools and pushing
+-- themselves free currency. This mirrors leaderboard_guard's
+-- clamp-only-in-one-direction pattern instead of rejecting the write
+-- outright — so a player's OTHER legitimate progress in the same push
+-- (heroes, wave, Food/Chef Coins, etc.) still saves normally, only
+-- michelinCoin itself gets corrected back:
+--   * UPDATE from a normal user session: any INCREASE is clamped back to
+--     the previous value. Decreases (spending Michelin via the exchange)
+--     are still allowed freely.
+--   * INSERT from a normal user session: forced to 0 regardless of what's
+--     submitted — RLS lets a player insert their OWN first `saves` row
+--     ("saves: owner can insert") without checking state's contents at
+--     all, so a first-ever save could otherwise arrive pre-loaded with any
+--     michelinCoin value.
+--   * Both checks are skipped entirely for the SERVICE ROLE connection
+--     admin-grant-currency and mercadopago-webhook use (auth.role() =
+--     'service_role') — those are the only two paths that should ever be
+--     able to legitimately increase this value.
+create or replace function public.saves_guard()
+returns trigger as $$
+declare
+  old_michelin numeric;
+  new_michelin numeric;
+begin
+  if auth.role() != 'service_role' then
+    new_michelin := coalesce((new.state->>'michelinCoin')::numeric, 0);
+    if TG_OP = 'INSERT' then
+      if new_michelin != 0 then
+        new.state := jsonb_set(new.state, '{michelinCoin}', '0');
+      end if;
+    elsif TG_OP = 'UPDATE' then
+      old_michelin := coalesce((old.state->>'michelinCoin')::numeric, 0);
+      if new_michelin > old_michelin then
+        new.state := jsonb_set(new.state, '{michelinCoin}', to_jsonb(old_michelin));
+      end if;
+    end if;
+  end if;
+  return new;
+end;
+$$ language plpgsql security definer;
+
+drop trigger if exists saves_guard_trigger on public.saves;
+create trigger saves_guard_trigger
+  before insert or update on public.saves
+  for each row execute function public.saves_guard();
