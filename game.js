@@ -607,7 +607,26 @@ function defaultState() {
     // wheelLastClaim/wheelPaidSpinUsed also ride along (2026-07-24) — a
     // bulk/admin reset of the Roda da Sorte cooldown hits the exact same
     // race for anyone online when it runs.
-    lastKnownCloudCurrency: { starCore: 0, bcoin: 0, michelinCoin: 0, hardResetCount: 0, wheelLastClaim: 0, wheelPaidSpinUsed: false },
+    //
+    // CRITICAL (2026-07-25, real economy-exploit fix): each field here MUST
+    // mirror the STARTING value of the currency it tracks in this very same
+    // defaultState() — hence bcoin: 300 (NOT 0) to match `bcoin: 300` above.
+    // This baseline means "what this client believes the cloud holds"; a
+    // freshly-created account's mandatory first push (and the server-side
+    // saves_guard INSERT clamp) establish the cloud at exactly the starting
+    // grant, so the baseline must already equal it. When it did NOT (bcoin
+    // baseline was 0 while the granted bcoin was 300), reconcileExternalCurrency()
+    // read the cloud's real 300 against a baseline of 0 and mis-counted the
+    // STARTING GRANT ITSELF as a +300 "external credit", re-adding it to the
+    // balance — and because that add then got pushed, the cloud grew, so the
+    // next login re-added the new (larger) difference: a player could farm
+    // unlimited Chef Gems just by signing out and back in. Keeping the
+    // baseline internally consistent with the grant makes the starting-grant
+    // delta exactly 0, while still detecting genuine later admin/Pix credits
+    // (measured against this now-correct baseline). starCore/michelinCoin
+    // already started at 0 and so were always consistent — only bcoin was
+    // wrong. Keep this in lockstep with the currency start values above.
+    lastKnownCloudCurrency: { starCore: 0, bcoin: 300, michelinCoin: 0, hardResetCount: 0, wheelLastClaim: 0, wheelPaidSpinUsed: false },
     totalMined: 0,
     // Food Coins earned on the CURRENT map specifically (2026-07-23) — unlike
     // totalMined (lifetime, never resets), this resets to 0 at every genuine
@@ -6311,7 +6330,22 @@ async function reconcileExternalCurrency() {
   try {
     const { data } = await sb.from('saves').select('state').eq('user_id', cloudSession.user.id).maybeSingle();
     if (!data || !data.state) return;
-    if (!state.lastKnownCloudCurrency) state.lastKnownCloudCurrency = { starCore: 0, bcoin: 0, michelinCoin: 0, hardResetCount: 0, wheelLastClaim: 0, wheelPaidSpinUsed: false };
+    // Missing baseline (an old save from before this field existed, or any
+    // state built without defaultState()): ADOPT the cloud values we just
+    // read as the baseline rather than assuming 0 (2026-07-25 — same
+    // economy-exploit class as defaultState()'s own comment: a 0 baseline
+    // here against a real cloud balance would fabricate that entire balance
+    // as a phantom "external credit"). Adopting the cloud read yields a 0
+    // delta THIS cycle (no fabrication, no loss); the baseline is then
+    // trustworthy for detecting genuine external credits on later pushes.
+    if (!state.lastKnownCloudCurrency) state.lastKnownCloudCurrency = {
+      starCore: Number(data.state.starCore) || 0,
+      bcoin: Number(data.state.bcoin) || 0,
+      michelinCoin: Number(data.state.michelinCoin) || 0,
+      hardResetCount: Number(data.state.hardResetCount) || 0,
+      wheelLastClaim: Number(data.state.wheelLastClaim) || 0,
+      wheelPaidSpinUsed: !!data.state.wheelPaidSpinUsed,
+    };
     const labels = { starCore: 'Food Coins', bcoin: 'Chef Gems', michelinCoin: 'Estrela Michelin' };
     ['starCore', 'bcoin', 'michelinCoin'].forEach(k => {
       const cloudVal = Number(data.state[k]) || 0;
