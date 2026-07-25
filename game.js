@@ -6515,6 +6515,11 @@ async function handleDeadSession() {
 async function pushCloudSave() {
   if (!sb || !cloudSession) return;
   await reconcileExternalCurrency();
+  // Captured ONCE, before the network round-trip — this exact object (not a
+  // fresh read of `state` afterward) is what actually reaches the server.
+  // See its own comment below at the baseline-update site for why that
+  // distinction is critical (2026-07-25 currency-vanishing fix).
+  const snapshot = saveSnapshot();
   const savesRes = await sb.from('saves').upsert({
     user_id: cloudSession.user.id,
     // FIX (2026-07-23, master spec #1/#5): used to push the bare `state`
@@ -6523,7 +6528,7 @@ async function pushCloudSave() {
     // map even with pullCloudSave()'s restore logic fixed, since the row
     // simply never had a valid grid to restore in the first place. Same
     // snapshot shape save() writes locally now (saveSnapshot()).
-    state: saveSnapshot(),
+    state: snapshot,
     updated_at: new Date().toISOString(),
   });
   // ERROR LOGGING (2026-07-23): these upserts used to be fire-and-forget —
@@ -6546,7 +6551,21 @@ async function pushCloudSave() {
     // update the reconciliation baseline so the NEXT push's diff (see
     // reconcileExternalCurrency()) only ever measures credits that land
     // after this point, not what we ourselves just wrote.
-    state.lastKnownCloudCurrency = { starCore: state.starCore, bcoin: state.bcoin, michelinCoin: state.michelinCoin, hardResetCount: state.hardResetCount, wheelLastClaim: state.wheelLastClaim, wheelPaidSpinUsed: state.wheelPaidSpinUsed };
+    //
+    // CRITICAL (2026-07-25, real production bug — "toda moeda que eu farmo
+    // é removida"): this used to read `state.starCore`/etc LIVE, right here,
+    // AFTER the `await` above already resolved. Any amount earned locally
+    // during that network round-trip (a chest breaking while the upsert was
+    // in flight — routine for an active player) was never actually part of
+    // what got sent, but got baked into the baseline anyway. The next
+    // reconcile then compared the real (lower) cloud value against that
+    // inflated baseline, read the gap as an "external removal", toasted it,
+    // and ACTUALLY subtracted it from local state — on every single push
+    // cycle for every active player, since something new is almost always
+    // earned mid-flight. Fixed by baselining off `snapshot` (captured
+    // synchronously before the round-trip, the literal payload that was
+    // sent) instead of re-reading `state` after the fact.
+    state.lastKnownCloudCurrency = { starCore: snapshot.starCore, bcoin: snapshot.bcoin, michelinCoin: snapshot.michelinCoin, hardResetCount: snapshot.hardResetCount, wheelLastClaim: snapshot.wheelLastClaim, wheelPaidSpinUsed: snapshot.wheelPaidSpinUsed };
   }
   const leaderboardRes = await sb.from('leaderboard').upsert({
     user_id: cloudSession.user.id,
