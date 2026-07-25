@@ -1,5 +1,12 @@
 'use strict';
 
+// Hard wipe (2026-07-24): every non-admin account was deleted via SQL
+// Editor (`delete from auth.users where email <> 'joaohermeto@hotmail.com'`)
+// ahead of a fresh start — this comment's own edit is what triggers the
+// force-reload overlay (see checkForUpdate()) for anyone who still had the
+// game open from before the wipe, prompting them to reload into the login
+// screen rather than sit on a session whose account no longer exists.
+
 /* ============ Config ============ */
 
 const SAVE_KEY = 'foodfighters-save-v1';
