@@ -5153,6 +5153,7 @@ function showPatchNotesModal() {
     <h3 style="margin-top:16px">Seus Rangos</h3>
     <p class="muted">Existem 12 personagens diferentes (visual apenas — não muda como eles jogam). Cada Rango tem uma <b>raridade</b>, que define o quão forte ele nasce, da mais fraca pra mais forte: Caseiro → Temperado → Gourmet → Especialidade da Casa → Comida de Buteco → Receita de Vó.</p>
     <p class="muted">Cada Rango tem 5 características: <b>Poder</b> (dano por bomba), <b>Speed</b> (velocidade de movimento), <b>Tamanho</b> (alcance da explosão), <b>Bombas</b> (quantas ao mesmo tempo) e <b>Stamina</b> (quanta energia aguenta antes de descansar). Rangos também sobem de nível, o que aumenta um pouco o Poder.</p>
+    <p class="muted">Os status das raridades mais fortes passaram por um reequilíbrio recente, pra deixar o jogo mais justo. Isso só vale pra Rangos novos — quem você já tem continua exatamente como era.</p>
 
     <h3 style="margin-top:16px">🌶️ Picante</h3>
     <p class="muted">Qualquer Rango pode nascer como a variante especial Picante — vem com bônus extra de Poder, Speed e Stamina, e uma celebração própria ao ser revelado. Hoje só vem de Jaula (nunca da loja), e toda Jaula garante um Picante.</p>
