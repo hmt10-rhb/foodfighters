@@ -421,13 +421,17 @@ function tasksProgress(s, kind) {
   if (kind === 'wave') return Math.max(0, (s.wave || 1) - b.wave);
   return 0;
 }
+// Rewards bumped ×1.5 (2026-07-24), matching the starting Chef Gems bump
+// (200 -> 300 — see defaultState()'s own comment) — same internal
+// proportions preserved (Daily still pays more than any single milestone
+// here, per this array's own original 2026-07-23 design comment above).
 const TASKS = [
-  { id: 'chests250',  name: 'Quebre 250 Baús (após desbloquear)',         reward: 60,  check: s => tasksProgress(s, 'chests') >= 250 },
-  { id: 'chests1000', name: 'Quebre 1.000 Baús (após desbloquear)',       reward: 120, check: s => tasksProgress(s, 'chests') >= 1000 },
-  { id: 'wave10',     name: 'Avance 10 Fases (após desbloquear)',          reward: 50,  check: s => tasksProgress(s, 'wave') >= 10 },
-  { id: 'wave30',     name: 'Avance 30 Fases (após desbloquear)',          reward: 130, check: s => tasksProgress(s, 'wave') >= 30 },
-  { id: 'mine2000',   name: 'Minere 2.000 Food Coins (após desbloquear)', reward: 70,  check: s => tasksProgress(s, 'mined') >= 2000 },
-  { id: 'mine8000',   name: 'Minere 8.000 Food Coins (após desbloquear)', reward: 145, check: s => tasksProgress(s, 'mined') >= 8000 },
+  { id: 'chests250',  name: 'Quebre 250 Baús (após desbloquear)',         reward: 90,  check: s => tasksProgress(s, 'chests') >= 250 },
+  { id: 'chests1000', name: 'Quebre 1.000 Baús (após desbloquear)',       reward: 180, check: s => tasksProgress(s, 'chests') >= 1000 },
+  { id: 'wave10',     name: 'Avance 10 Fases (após desbloquear)',          reward: 75,  check: s => tasksProgress(s, 'wave') >= 10 },
+  { id: 'wave30',     name: 'Avance 30 Fases (após desbloquear)',          reward: 195, check: s => tasksProgress(s, 'wave') >= 30 },
+  { id: 'mine2000',   name: 'Minere 2.000 Food Coins (após desbloquear)', reward: 105, check: s => tasksProgress(s, 'mined') >= 2000 },
+  { id: 'mine8000',   name: 'Minere 8.000 Food Coins (após desbloquear)', reward: 220, check: s => tasksProgress(s, 'mined') >= 8000 },
 ];
 const TASKS_UNLOCK_HEROES = 15;
 
@@ -465,7 +469,7 @@ function ensureTasksBaseline() {
 // counted from the SAME destroyTile() chest branch that feeds
 // totalChestsBroken above — one real event, two counters.
 const DAILY_TASK_GOAL = 1000;
-const DAILY_TASK_REWARD = 150;
+const DAILY_TASK_REWARD = 225; // ×1.5 (2026-07-24) — see TASKS' own comment on the same bump
 const DAILY_RESET_HOURS = 18;
 
 // Called from economyTick() (every 1s) and once at boot — self-heals even
