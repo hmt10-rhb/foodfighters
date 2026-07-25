@@ -223,10 +223,11 @@ begin
         new.state := jsonb_set(new.state, '{michelinCoin}', '0');
       end if;
       -- fresh account: starCore/bcoin forced to the real defaultState()
-      -- starting values (0 / 200), same reasoning as michelinCoin above —
-      -- RLS lets a player insert their own first row with any state
-      -- contents at all.
-      new.state := jsonb_set(jsonb_set(new.state, '{starCore}', '0'), '{bcoin}', '200');
+      -- starting values (0 / 300 — see that field's own comment in
+      -- game.js, keep both in sync by hand), same reasoning as michelinCoin
+      -- above — RLS lets a player insert their own first row with any
+      -- state contents at all.
+      new.state := jsonb_set(jsonb_set(new.state, '{starCore}', '0'), '{bcoin}', '300');
       -- a brand-new account should never start pre-loaded with rare heroes
       if jsonb_array_length(coalesce(new.state->'heroes', '[]'::jsonb)) > 0 then
         new.state := jsonb_set(new.state, '{heroes}', '[]'::jsonb);

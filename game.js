@@ -554,9 +554,12 @@ let selectedInventoryHeroId = null; // Food Fighters-style Inventory tab: which 
 
 function defaultState() {
   return {
-    // Starting Chef Gems (2026-07-23, balance tweak): 500 -> 200 — exactly
-    // enough for one x10 pack at the current PACKS pricing (20/100/200/300).
-    bcoin: 200,
+    // Starting Chef Gems (2026-07-24, balance tweak): 500 -> 200 -> 300 —
+    // exactly enough for one x15 pack at the current PACKS pricing
+    // (20/100/200/300). Also mirrored in supabase/schema.sql's saves_guard()
+    // trigger (forces a fresh account's first INSERT to this same value) —
+    // keep both in sync by hand if this changes again.
+    bcoin: 300,
     // Estrela Michelin (2026-07-23, 3-currency restructure): the premium
     // currency, real-money-only — acquired via real PIX (see
     // generatePixOrder()/create-pix-order Edge Function). Named after
