@@ -3813,6 +3813,35 @@ function fmtCurrency(n) {
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// SECURITY (2026-07-25): usernames are the one piece of player-controlled text
+// that other players' browsers render (the shared ranking). They MUST be
+// HTML-escaped before touching innerHTML, or a name like
+// `<img src=x onerror=alert(1)>` runs arbitrary JS on everyone who opens the
+// ranking (this actually happened — "Hello by: Bizao"). Escaping here is the
+// real fix: it neutralizes every malicious name already stored in the DB,
+// rendering them as harmless plain text. sanitizeUsername() below is the
+// second layer, stopping such names from being stored in the first place.
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Defense-in-depth: strip anything a username has no business containing
+// (angle brackets, quotes) and cap the length so it can't be abused to smuggle
+// markup or blow out the ranking layout. Returns the cleaned name (may be
+// empty if the input was nothing but junk — callers validate for that).
+function sanitizeUsername(name) {
+  return String(name || '')
+    .replace(/[<>"'`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 24);
+}
+
 function fmtPct(p) {
   const pct = p * 100;
   return (pct >= 0.1 ? pct.toFixed(1) : pct.toPrecision(2)) + '%';
@@ -4509,7 +4538,7 @@ function renderRanking() {
   document.querySelector('#ranking-table tbody').innerHTML = rows.map((r, i) => `
     <tr class="${r.player ? 'player-row' : ''}">
       <td>${['🥇', '🥈', '🥉'][i] || i + 1}</td>
-      <td>${r.name}</td>
+      <td>${escapeHtml(r.name)}</td>
       <td>${fmtCurrency(r.score)}</td>
     </tr>`).join('');
 }
@@ -6101,8 +6130,8 @@ async function cloudSignUp() {
   if (!sb) return;
   const email = document.getElementById('cloud-email').value.trim();
   const pw = document.getElementById('cloud-pw').value;
-  const username = document.getElementById('cloud-username').value.trim();
-  if (!email || !pw || !username) { toast('Preencha email, senha e nome de jogador.'); return; }
+  const username = sanitizeUsername(document.getElementById('cloud-username').value);
+  if (!email || !pw || !username) { toast('Preencha email, senha e nome de jogador (sem < > " \').'); return; }
   applyRememberMeChoiceFromCheckbox();
   const { data, error } = await sb.auth.signUp({ email, password: pw });
   if (error) { toast('Erro ao criar conta: ' + error.message); return; }
@@ -6480,7 +6509,7 @@ function showAccountModal() {
     ? (cloudSignedIn()
       ? `
         <h3>☁️ Conta na nuvem</h3>
-        <p>Logado como <b>${cloudUsername}</b>. Progresso sincronizado entre dispositivos e visível no ranking.</p>
+        <p>Logado como <b>${escapeHtml(cloudUsername)}</b>. Progresso sincronizado entre dispositivos e visível no ranking.</p>
         <button id="cloud-signout-btn" class="btn">Sair da conta</button>`
       // MANDATORY LOGIN (2026-07-23): this "logged out but inside the
       // game" branch is now unreachable in practice — signing out
