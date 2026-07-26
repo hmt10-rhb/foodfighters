@@ -6300,21 +6300,6 @@ async function pullCloudSave() {
     .eq('user_id', cloudSession.user.id)
     .maybeSingle();
   if (error || !data) { localFreshOnBoot = false; await pushCloudSave(); return; }
-  // CORRUPTION GUARD (2026-07-25, real production data-loss fix) — same
-  // reasoning as reconcileExternalCurrency()'s own guard: a `state` missing
-  // its own `heroes` array or `starCore` key is a truncated/malformed row,
-  // not a legitimate empty save (a genuine fresh account's state always has
-  // both, straight from defaultState()). Adopting it here would overwrite
-  // this client's real in-memory progress with corruption, and the very
-  // next autosave would then push that emptiness back, permanently erasing
-  // whatever was left of the real save. Leave local state untouched and
-  // skip this cycle instead — normal play will push a complete state again
-  // on the next save, self-healing the row without this function ever
-  // having to guess whether local or cloud is more trustworthy mid-anomaly.
-  if (!Array.isArray(data.state.heroes) || typeof data.state.starCore === 'undefined') {
-    console.error('pullCloudSave: cloud state looks malformed/truncated, refusing to adopt it', data.state);
-    return;
-  }
   const cloudWins = localFreshOnBoot || new Date(data.updated_at).getTime() > (state.lastSeen || 0);
   // consumed here regardless of outcome — only the FIRST pullCloudSave()
   // call after a genuinely fresh boot should ever be affected by this; a
@@ -6382,22 +6367,6 @@ async function reconcileExternalCurrency() {
   try {
     const { data } = await sb.from('saves').select('state').eq('user_id', cloudSession.user.id).maybeSingle();
     if (!data || !data.state) return;
-    // CORRUPTION GUARD (2026-07-25, real production data-loss fix): a cloud
-    // `state` missing its own structural fields (no `heroes` array, no
-    // `starCore` key at all) is not a legitimate "player has 0 of
-    // everything" save — it's a truncated/malformed row (e.g. a bug that
-    // wrote back a partial object instead of the full one). Treating a
-    // missing field as "cloud says 0" here would read as a real external
-    // removal of the player's ENTIRE balance and drag local state down to
-    // match — then the very next push cements that zeroed state as the new
-    // cloud truth, permanently. Bail out instead: better to skip one
-    // reconcile cycle (nothing is lost — this function runs again on every
-    // push) than to propagate corruption as if it were a legitimate credit/
-    // debit.
-    if (!Array.isArray(data.state.heroes) || typeof data.state.starCore === 'undefined') {
-      console.error('reconcileExternalCurrency: cloud state looks malformed/truncated, refusing to reconcile', data.state);
-      return;
-    }
     // Missing baseline (an old save from before this field existed, or any
     // state built without defaultState()): ADOPT the cloud values we just
     // read as the baseline rather than assuming 0 (2026-07-25 — same
