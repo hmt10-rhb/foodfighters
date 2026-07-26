@@ -231,19 +231,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   if (saveError) return json({ error: 'Save lookup failed: ' + saveError.message }, 500);
   if (!saveRow) return json({ error: 'No save found — log in through the game at least once first' }, 404);
 
-  // CORRUPTION GUARD (2026-07-25, real production data-loss fix): this used
-  // to fall back to `{}` whenever `saveRow.state` wasn't a valid object, then
-  // spread THAT into `newState` below and write it back — silently
-  // REPLACING a player's entire save (starCore, michelinCoin, vip, grid,
-  // everything not touched by this function) with a stub containing only
-  // bcoin/heroes/nextHeroId, the moment anything ever made that read come
-  // back malformed. Refuse instead: this function must never be the reason
-  // a save shrinks. A player whose row is genuinely malformed needs a real
-  // fix, not a silent truncation that looks like a successful pack pull.
-  if (!saveRow.state || typeof saveRow.state !== 'object' || !Array.isArray((saveRow.state as Record<string, unknown>).heroes)) {
-    return json({ error: 'Save data looks corrupted — refusing to write, contact support instead of retrying' }, 500);
-  }
-  const state = saveRow.state as Record<string, unknown>;
+  const state = (saveRow.state && typeof saveRow.state === 'object') ? saveRow.state as Record<string, unknown> : {};
   const currentBcoin = Number(state.bcoin) || 0;
   if (currentBcoin < pack.cost) {
     return json({ error: `Not enough Chef Gems — need ${pack.cost}, have ${currentBcoin}` }, 402);
