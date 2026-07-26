@@ -6556,13 +6556,21 @@ function pushCloudSave() {
 }
 
 async function pushCloudSaveInner() {
-  if (!sb || !cloudSession) return;
+  // TEMP DEBUG (2026-07-25, remove once the vanishing-heroes root cause is
+  // found): visible toast instead of console.error, since we've had reports
+  // of silent failure with zero errors anywhere (console, Edge Function
+  // logs) — if THIS guard is what's stopping the write, this makes it obvious.
+  if (!sb || !cloudSession) { toast('DEBUG: pushCloudSave abortou — sb=' + !!sb + ' cloudSession=' + !!cloudSession); return; }
   await reconcileExternalCurrency();
   // Captured ONCE, before the network round-trip — this exact object (not a
   // fresh read of `state` afterward) is what actually reaches the server.
   // See its own comment below at the baseline-update site for why that
   // distinction is critical (2026-07-25 currency-vanishing fix).
   const snapshot = saveSnapshot();
+  // TEMP DEBUG: .select() added so we can see whether the upsert actually
+  // touched a row — a silently-blocked write (e.g. RLS filtering it to 0
+  // rows) reports NO error but also returns an empty data array, which is
+  // exactly the signature we're hunting for.
   const savesRes = await sb.from('saves').upsert({
     user_id: cloudSession.user.id,
     // FIX (2026-07-23, master spec #1/#5): used to push the bare `state`
@@ -6573,7 +6581,8 @@ async function pushCloudSaveInner() {
     // snapshot shape save() writes locally now (saveSnapshot()).
     state: snapshot,
     updated_at: new Date().toISOString(),
-  });
+  }).select('user_id');
+  toast(`DEBUG push: heroes=${(snapshot.heroes||[]).length} bcoin=${snapshot.bcoin} rowsWritten=${savesRes.data ? savesRes.data.length : 'null'} err=${savesRes.error ? savesRes.error.message : 'none'}`);
   // ERROR LOGGING (2026-07-23): these upserts used to be fire-and-forget —
   // any failure (RLS, schema mismatch, network) was completely invisible.
   // That's exactly how the leaderboard bigint/fractional mismatch below hid
