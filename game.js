@@ -1,5 +1,23 @@
 'use strict';
 
+// MAINTENANCE MODE (2026-07-26) — real production incident: the `saves`
+// table in Supabase is silently reverting player progress (heroes emptied,
+// bcoin zeroed) every 30-90 seconds, traced to something on the Supabase
+// infrastructure side (extensively ruled out as an app bug — see the
+// support ticket drafted this session). Letting players in right now just
+// guarantees they lose progress within a minute of playing. Flip this back
+// to `false` once Supabase confirms it's resolved — nothing else needs to
+// change, boot() just resumes normally.
+const MAINTENANCE_MODE = true;
+if (MAINTENANCE_MODE) {
+  // No DOMContentLoaded wrap needed — this script tag sits at the end of
+  // <body>, after #maintenance-overlay's markup, so the DOM is already
+  // parsed by the time this line runs (same assumption every other direct
+  // getElementById() call in this file already relies on).
+  const el = document.getElementById('maintenance-overlay');
+  if (el) el.classList.remove('hidden');
+}
+
 // Hard wipe (2026-07-24): every non-admin account was deleted via SQL
 // Editor (`delete from auth.users where email <> 'joaohermeto@hotmail.com'`)
 // ahead of a fresh start — this comment's own edit is what triggers the
@@ -6873,6 +6891,11 @@ bindEvents(); // safe to bind immediately — login-screen/modal buttons are ine
 // click Continuar, same as before this hardening), but the actual entry is
 // unconditionally gated behind showLoginScreen() either way.
 (async function boot() {
+  // See MAINTENANCE_MODE's own comment near the top of this file — skip
+  // touching Supabase (restoreCloudSession() would pull/push the currently
+  // corrupted `saves` table) entirely while it's on, not just hide the UI
+  // behind the overlay.
+  if (MAINTENANCE_MODE) return;
   await restoreCloudSession();
   showLoginScreen();
 })();

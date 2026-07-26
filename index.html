@@ -8,6 +8,21 @@
 </head>
 <body>
 
+<!-- MAINTENANCE MODE (2026-07-26) — see MAINTENANCE_MODE in game.js. A real
+     production incident: the `saves` table in Supabase is silently
+     reverting player progress every 30-90s, traced to something on the
+     Supabase infra side (not this app's code — extensively ruled out).
+     While that's unresolved, letting players in just guarantees they lose
+     progress within a minute, so the game is locked here, BEFORE game.js
+     even tries to touch Supabase. Flip MAINTENANCE_MODE back to false in
+     game.js to reopen — nothing else needs to change. -->
+<div id="maintenance-overlay" class="hidden">
+  <div class="update-required-card">
+    <h2>🛠️ Em manutenção</h2>
+    <p>Estamos resolvendo um problema sério de infraestrutura que está apagando o progresso dos jogadores. Voltamos assim que estiver resolvido — desculpa o transtorno!</p>
+  </div>
+</div>
+
 <!-- MANDATORY LOGIN GATE (2026-07-23, HARDENED — no auto-entry, no exceptions):
      the game shell (header/#shell/#bottom-nav) stays hidden via the
      body.ff-authed CSS toggle (see style.css) until a session is confirmed.

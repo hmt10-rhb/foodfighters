@@ -1855,6 +1855,21 @@ body.shaking { animation: bodyShake 0.5s ease-in-out 2; }
   padding: 20px;
 }
 #update-required-overlay.hidden { display: none; }
+/* Maintenance overlay (2026-07-26) — see its own comment in index.html.
+   Highest z-index of anything on the page (100000, above even the
+   force-reload overlay's 99999) since it must win over literally
+   everything, including a stale-tab reload prompt. */
+#maintenance-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100000;
+  padding: 20px;
+}
+#maintenance-overlay.hidden { display: none; }
 .update-required-card {
   background: var(--panel);
   border: 2px solid var(--accent2);
