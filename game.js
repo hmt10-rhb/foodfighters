@@ -3267,7 +3267,22 @@ async function buyPack(idx) {
   state.heroes.push(...pulled);
   state.nextHeroId = Math.max(state.nextHeroId, ...pulled.map(h => h.id + 1));
   save();
-  pushCloudSaveThrottled(); // reflect the server-authoritative result promptly, same precedent as other reward events
+  // FORCE, don't throttle (2026-07-25, real production data-loss fix): a
+  // pack purchase is rare and high-value, not a frequent small reward like a
+  // chest break — REWARD_PUSH_THROTTLE_MS's 5s window can silently SKIP this
+  // call entirely if any other push fired moments earlier. That's exactly
+  // the gap that let a heroes-vanish race happen: open-pack (server) already
+  // wrote the new heroes straight into the cloud row, but a DIFFERENT push
+  // that started EARLIER (e.g. the 30s interval), using a snapshot captured
+  // BEFORE this purchase, can still be in flight and land AFTER open-pack's
+  // write — overwriting the new heroes with its stale, hero-less snapshot.
+  // pushCloudSave()'s own FIFO chain (see its comment) guarantees THIS call
+  // always runs strictly after any such stale one and re-uploads the
+  // now-correct local state (with the new heroes) — but only if it's
+  // actually allowed to run at all, which pushCloudSaveThrottled() was not
+  // reliably doing. Awaited so a genuinely failed sync surfaces as a real
+  // toast/console error instead of silently leaving the purchase unsynced.
+  pushCloudSave().catch(e => console.error('buyPack: post-purchase sync failed', e));
   renderHeader();
   renderShop();
   startPackReveal(pulled);
@@ -6672,12 +6687,34 @@ function subscribeLeaderboardRealtime() {
 // background interval (this is the "as it happens" fast path; the interval
 // remains the steady baseline/fallback for players not actively cracking
 // chests).
+// TRAILING EDGE (2026-07-25, real production data-loss fix): this used to
+// just `return` when called too soon after the last one — a call inside the
+// throttle window was DROPPED entirely, not merely delayed. Combined with
+// pushCloudSave()'s FIFO chain (see its own comment), that drop could leave
+// a real reward permanently unsynced if an earlier, now-stale push (e.g. the
+// 30s interval, snapshotted BEFORE this reward) was still in flight and
+// landed AFTER — nothing was left to re-upload the correct, newer local
+// state, so the cloud stayed wrong until the next unrelated push happened
+// to fire. Now a suppressed call always schedules exactly one trailing
+// follow-up for the moment the window reopens, so a reward can be delayed
+// by throttling but is never silently lost.
 let lastRewardPush = 0;
+let rewardPushTrailingTimer = null;
 const REWARD_PUSH_THROTTLE_MS = 5000;
 function pushCloudSaveThrottled() {
   if (!cloudSignedIn()) return;
   const now = Date.now();
-  if (now - lastRewardPush < REWARD_PUSH_THROTTLE_MS) return;
+  if (now - lastRewardPush < REWARD_PUSH_THROTTLE_MS) {
+    if (!rewardPushTrailingTimer) {
+      const wait = REWARD_PUSH_THROTTLE_MS - (now - lastRewardPush);
+      rewardPushTrailingTimer = setTimeout(() => {
+        rewardPushTrailingTimer = null;
+        lastRewardPush = Date.now();
+        if (cloudSignedIn()) pushCloudSave();
+      }, wait);
+    }
+    return;
+  }
   lastRewardPush = now;
   pushCloudSave();
 }
