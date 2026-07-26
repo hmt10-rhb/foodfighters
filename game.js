@@ -6404,6 +6404,10 @@ async function reconcileExternalCurrency() {
   try {
     const { data } = await sb.from('saves').select('state').eq('user_id', cloudSession.user.id).maybeSingle();
     if (!data || !data.state) return;
+    // TEMP DEBUG (2026-07-26): pinpointing the exact revert mechanism —
+    // logs the raw cloud read this reconcile pass is about to act on,
+    // versus the CURRENT in-memory state, right at the moment of decision.
+    console.log(`[reconcile ${new Date().toISOString()}] cloud: heroes=${Array.isArray(data.state.heroes) ? data.state.heroes.length : 'n/a'} bcoin=${data.state.bcoin} | local: heroes=${Array.isArray(state.heroes) ? state.heroes.length : 'n/a'} bcoin=${state.bcoin} nextHeroId=${state.nextHeroId} | knownCloud.bcoin=${state.lastKnownCloudCurrency ? state.lastKnownCloudCurrency.bcoin : 'n/a'}`, new Error().stack);
     // Missing baseline (an old save from before this field existed, or any
     // state built without defaultState()): ADOPT the cloud values we just
     // read as the baseline rather than assuming 0 (2026-07-25 — same
