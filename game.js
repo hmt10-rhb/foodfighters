@@ -8,15 +8,17 @@
 // guarantees they lose progress within a minute of playing. Flip this back
 // to `false` once Supabase confirms it's resolved — nothing else needs to
 // change, boot() just resumes normally.
+//
+// ADMIN VERIFICATION PASS (2026-07-26): while confirming whether the
+// incident is actually resolved, the admin account alone is let all the way
+// in — the login FORM stays visible/usable for everyone (no overlay at
+// page load), but cloudSignIn()/cloudSignUp() themselves refuse anyone
+// whose email isn't ADMIN_EMAIL before ever touching `saves` (see their own
+// comments), and boot() below only calls restoreCloudSession() — which
+// reads/writes `saves` — for an already-persisted ADMIN session. A
+// non-admin session found at boot is deliberately left untouched and shown
+// the maintenance overlay instead of silently doing nothing.
 const MAINTENANCE_MODE = true;
-if (MAINTENANCE_MODE) {
-  // No DOMContentLoaded wrap needed — this script tag sits at the end of
-  // <body>, after #maintenance-overlay's markup, so the DOM is already
-  // parsed by the time this line runs (same assumption every other direct
-  // getElementById() call in this file already relies on).
-  const el = document.getElementById('maintenance-overlay');
-  if (el) el.classList.remove('hidden');
-}
 
 // Hard wipe (2026-07-24): every non-admin account was deleted via SQL
 // Editor (`delete from auth.users where email <> 'joaohermeto@hotmail.com'`)
@@ -6219,6 +6221,10 @@ function applyRememberMeChoiceFromCheckbox() {
 
 async function cloudSignUp() {
   if (!sb) return;
+  // MAINTENANCE MODE (2026-07-26) — no new accounts while the saves-table
+  // incident is being verified; the admin already has an account, nobody
+  // legitimately needs signup right now. See MAINTENANCE_MODE's own comment.
+  if (MAINTENANCE_MODE) { toast('O jogo está em manutenção — voltamos em breve.'); return; }
   const email = document.getElementById('cloud-email').value.trim();
   const pw = document.getElementById('cloud-pw').value;
   const username = sanitizeUsername(document.getElementById('cloud-username').value);
@@ -6262,6 +6268,16 @@ async function cloudSignIn() {
   applyRememberMeChoiceFromCheckbox();
   const { data, error } = await sb.auth.signInWithPassword({ email, password: pw });
   if (error) { toast('Erro ao entrar: ' + error.message); return; }
+  // MAINTENANCE MODE (2026-07-26): only the admin gets in while the
+  // saves-table incident is being verified — see MAINTENANCE_MODE's own
+  // comment near the top of this file. Sign right back out for anyone else
+  // BEFORE load()/pullCloudSave() ever runs, so a non-admin can't touch the
+  // still-possibly-affected `saves` table at all.
+  if (MAINTENANCE_MODE && email !== ADMIN_EMAIL) {
+    await sb.auth.signOut();
+    toast('O jogo está em manutenção — voltamos em breve.');
+    return;
+  }
   cloudSession = data.session;
   cloudUsername = localStorage.getItem(usernameKeyForUser(cloudSession.user.id)) || email.split('@')[0];
   // Load THIS account's own local cache before comparing against its own
@@ -6891,11 +6907,37 @@ bindEvents(); // safe to bind immediately — login-screen/modal buttons are ine
 // click Continuar, same as before this hardening), but the actual entry is
 // unconditionally gated behind showLoginScreen() either way.
 (async function boot() {
-  // See MAINTENANCE_MODE's own comment near the top of this file — skip
-  // touching Supabase (restoreCloudSession() would pull/push the currently
-  // corrupted `saves` table) entirely while it's on, not just hide the UI
-  // behind the overlay.
-  if (MAINTENANCE_MODE) return;
+  // MAINTENANCE MODE (2026-07-26) — see this constant's own comment near
+  // the top of this file. Admin-only verification pass while the
+  // saves-table incident is checked: peek at any already-persisted session
+  // WITHOUT touching `saves` yet (auth.getSession() alone never reads/
+  // writes that table) — only if it's the admin do we proceed with a real
+  // restoreCloudSession() (which does read/write saves). A non-admin
+  // session found here is deliberately left untouched (no load()/
+  // pullCloudSave()) and shown the maintenance overlay to explain why
+  // nothing happens, instead of silently doing nothing. No session at all:
+  // just show the normal fresh login form — cloudSignIn()/cloudSignUp()
+  // block anyone who isn't the admin themselves, before ever touching
+  // `saves`, so this isn't the only gate.
+  if (MAINTENANCE_MODE) {
+    let email = null;
+    if (sb) {
+      const { data } = await sb.auth.getSession();
+      email = data && data.session && data.session.user && data.session.user.email;
+    }
+    if (email === ADMIN_EMAIL) {
+      await restoreCloudSession();
+      showLoginScreen();
+      return;
+    }
+    if (email) {
+      const overlay = document.getElementById('maintenance-overlay');
+      if (overlay) overlay.classList.remove('hidden');
+      return;
+    }
+    showLoginScreen();
+    return;
+  }
   await restoreCloudSession();
   showLoginScreen();
 })();
