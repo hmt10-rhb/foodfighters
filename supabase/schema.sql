@@ -248,12 +248,6 @@ declare
   new_top_count int;
   hours_elapsed numeric;
   max_new_top int;
-  michelin_spent numeric;
-  old_vip numeric;
-  new_vip numeric;
-  now_ms numeric;
-  vip_base numeric;
-  max_vip_added numeric;
 begin
   if auth.role() != 'service_role' then
     new_michelin := coalesce((new.state->>'michelinCoin')::numeric, 0);
@@ -271,18 +265,11 @@ begin
       if jsonb_array_length(coalesce(new.state->'heroes', '[]'::jsonb)) > 0 then
         new.state := jsonb_set(new.state, '{heroes}', '[]'::jsonb);
       end if;
-      -- a fresh account can never start with VIP already active (2026-07-25)
-      if new.state->'vip' is not null and coalesce((new.state->'vip'->>'expiresAt')::numeric, 0) <> 0 then
-        new.state := jsonb_set(new.state, '{vip,expiresAt}', '0');
-      end if;
     elsif TG_OP = 'UPDATE' then
       old_michelin := coalesce((old.state->>'michelinCoin')::numeric, 0);
       if new_michelin > old_michelin then
         new.state := jsonb_set(new.state, '{michelinCoin}', to_jsonb(old_michelin));
       end if;
-      -- premium currency actually spent this write (never negative), used to
-      -- bound how much VIP time could have been legitimately bought below
-      michelin_spent := greatest(old_michelin - new_michelin, 0);
 
       old_wealth := coalesce((old.state->>'starCore')::numeric, 0) + coalesce((old.state->>'bcoin')::numeric, 0) * 10;
       new_wealth := coalesce((new.state->>'starCore')::numeric, 0) + coalesce((new.state->>'bcoin')::numeric, 0) * 10;
@@ -311,65 +298,6 @@ begin
         if (new_top_count - old_top_count) > max_new_top then
           new.state := jsonb_set(new.state, '{heroes}', old.state->'heroes');
         end if;
-      end if;
-
-      -- ============ VIP clamp (2026-07-25) ============
-      -- VIP (state.vip.expiresAt, a ms timestamp) is bought ONLY by spending
-      -- Estrela Michelin, entirely client-side: buyVip() in game.js does
-      -- `state.michelinCoin -= cost; state.vip.expiresAt = base + days*86400000`
-      -- with VIP_MICHELIN_PRICE = {1:2, 7:7, 30:16}. Nothing stopped a player
-      -- from editing expiresAt to a far-future date for free in devtools.
-      -- Rule: VIP may only be EXTENDED in proportion to the Michelin actually
-      -- spent in this SAME write. The best legitimate rate is the 30-day pack
-      -- (16 Michelin -> 30 days = 1.875 days/Michelin); we allow a generous
-      -- 2 days/Michelin so a real purchase never trips. An expiresAt already
-      -- in the past means VIP is expired, so the extension is measured from
-      -- now() — mirroring buyVip()'s `base = isVipActive() ? expiresAt : now`.
-      -- If the extension exceeds what was paid for, expiresAt reverts (only
-      -- the VIP field; the rest of the save still applies).
-      old_vip := coalesce((old.state->'vip'->>'expiresAt')::numeric, 0);
-      new_vip := coalesce((new.state->'vip'->>'expiresAt')::numeric, 0);
-      if new_vip > old_vip then
-        now_ms := extract(epoch from now()) * 1000;
-        vip_base := greatest(old_vip, now_ms);
-        max_vip_added := michelin_spent * 2 * 86400000; -- 2 days per Michelin, in ms
-        if (new_vip - vip_base) > max_vip_added then
-          new.state := jsonb_set(new.state, '{vip,expiresAt}', to_jsonb(old_vip));
-        end if;
-      end if;
-
-      -- ============ Hero level/stat sanity clamp (2026-07-25) ============
-      -- Level and the rolled stats are otherwise a devtools free-for-all — a
-      -- player can set `h.level`/`h.power` etc. to anything and push it. These
-      -- are HARD ceilings straight from the game's own tables (game.js):
-      -- MAX_LEVEL = 10; the top rarity RECEITA_DE_VO rolls power<=16, speed<=20,
-      -- range<=5, bombas<=5, stamina<=20, and the ONLY thing that raises a
-      -- STORED stat past its roll is Picante (power +7, speed +5, stamina +5 —
-      -- never range or bombCapacity). So no legitimate hero of ANY rarity can
-      -- exceed: level 10, power 23, speed 25, stamina 25, range 5, bombCapacity
-      -- 5. `rarity` must be one of the known keys. `bonusPower` (from Sacrifice)
-      -- has no natural cap and compounds, so it only gets a very high
-      -- blatant-forgery ceiling (1e6 — orders of magnitude above any real
-      -- grind, which tops out in the hundreds); a subtle bonusPower edit below
-      -- that is NOT caught here (honest limitation — the real fix would be
-      -- moving Sacrifice server-side). If ANY hero violates a ceiling, the
-      -- WHOLE heroes array reverts (same blunt-not-partial philosophy as the
-      -- currency/top-rarity clamps above) — one impossible hero means the push
-      -- was tampered with.
-      if exists (
-        select 1 from jsonb_array_elements(coalesce(new.state->'heroes', '[]'::jsonb)) h
-        where coalesce((h->>'level')::numeric, 1) > 10
-           or coalesce((h->>'level')::numeric, 1) < 1
-           or coalesce((h->>'power')::numeric, 0) > 23
-           or coalesce((h->>'speed')::numeric, 0) > 25
-           or coalesce((h->>'stamina')::numeric, 0) > 25
-           or coalesce((h->>'range')::numeric, 0) > 5
-           or coalesce((h->>'bombCapacity')::numeric, 0) > 5
-           or coalesce((h->>'bonusPower')::numeric, 0) > 1000000
-           or coalesce(h->>'rarity', 'CASEIRO') not in
-                ('CASEIRO','TEMPERADO','GOURMET','ESPECIALIDADE_DA_CASA','COMIDA_DE_BUTECO','RECEITA_DE_VO')
-      ) then
-        new.state := jsonb_set(new.state, '{heroes}', old.state->'heroes');
       end if;
     end if;
   end if;
