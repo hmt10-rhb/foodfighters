@@ -223,11 +223,22 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
 
+  // TEMP DEBUG (2026-07-26) — real console.log calls, visible in Supabase's
+  // Edge Function Logs (unlike the default boot/shutdown lifecycle noise).
+  // Sanity-checks whether the service role key looks like a real, DISTINCT
+  // key from the anon key (a misconfigured/stale secret would make this
+  // client behave like an anonymous caller, subject to full RLS — which
+  // would silently update ZERO rows, no error, matching every symptom
+  // reported tonight).
+  console.log('open-pack DEBUG: userId=', userId, 'packIndex=', packIndex);
+  console.log('open-pack DEBUG: serviceRoleKey length=', serviceRoleKey.length, 'anonKey length=', anonKey.length, 'keysAreDifferent=', serviceRoleKey !== anonKey);
+
   const { data: saveRow, error: saveError } = await adminClient
     .from('saves')
     .select('state')
     .eq('user_id', userId)
     .maybeSingle();
+  console.log('open-pack DEBUG: save lookup — error=', saveError, 'found=', !!saveRow, 'heroesBefore=', saveRow && Array.isArray((saveRow.state as any)?.heroes) ? (saveRow.state as any).heroes.length : 'n/a');
   if (saveError) return json({ error: 'Save lookup failed: ' + saveError.message }, 500);
   if (!saveRow) return json({ error: 'No save found — log in through the game at least once first' }, 404);
 
@@ -253,11 +264,32 @@ Deno.serve(async (req: Request): Promise<Response> => {
     nextHeroId,
   };
 
-  const { error: updateError } = await adminClient
+  const { data: updateData, error: updateError } = await adminClient
     .from('saves')
     .update({ state: newState })
-    .eq('user_id', userId);
+    .eq('user_id', userId)
+    .select('user_id');
+  console.log('open-pack DEBUG: update — error=', updateError, 'rowsReturned=', updateData ? updateData.length : 'null (no .select or blocked)');
   if (updateError) return json({ error: 'Update failed: ' + updateError.message }, 500);
+
+  // TEMP DEBUG: immediate re-select, same connection/request, right after
+  // the update — proves whether the write is ACTUALLY visible right away or
+  // whether something is real-time reverting it.
+  const { data: verifyRow, error: verifyError } = await adminClient
+    .from('saves')
+    .select('state')
+    .eq('user_id', userId)
+    .maybeSingle();
+  console.log('open-pack DEBUG: verify re-select — error=', verifyError, 'heroesAfter=', verifyRow && Array.isArray((verifyRow.state as any)?.heroes) ? (verifyRow.state as any).heroes.length : 'n/a', 'bcoinAfter=', verifyRow ? (verifyRow.state as any)?.bcoin : 'n/a');
+
+  if (!updateData || updateData.length === 0) {
+    // The write reported no error but touched zero rows — this is the exact
+    // signature of an RLS policy silently filtering it out (e.g. this
+    // client not actually running with service_role privileges). Surface
+    // it as a real error instead of returning a fake "success" with heroes
+    // the client will show but the database will never actually hold.
+    return json({ error: 'DEBUG: update matched 0 rows — write did not persist (see Edge Function logs)' }, 500);
+  }
 
   return json({
     success: true,
