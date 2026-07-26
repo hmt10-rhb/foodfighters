@@ -6512,7 +6512,35 @@ async function handleDeadSession() {
   handlingDeadSession = false;
 }
 
-async function pushCloudSave() {
+// SERIALIZATION (2026-07-25, real production bug — currency still vanishing
+// after the snapshot-baseline fix above): pushCloudSave() is called from
+// several independent, un-coordinated triggers — the 30s interval, the
+// 5s-throttled reward push, beforeunload, visibilitychange, sign-out — with
+// no mutex between them. Two calls can end up with their network requests
+// in flight AT THE SAME TIME, and nothing guarantees they LAND in the order
+// they STARTED: if call A (started first, smaller snapshot — earned less by
+// the time it captured state) finishes its upsert AFTER call B (started
+// later, bigger snapshot — earned more), A's stale, smaller snapshot is the
+// one that ends up actually persisted, silently overwriting B's larger,
+// more-correct write. The player's local `state` never dropped, but the
+// cloud row now holds LESS than what was really earned — invisible until
+// the next reload pulls that smaller number back down. Fixed by forcing
+// every pushCloudSave() call through a strict FIFO chain: each call now
+// only STARTS once the previous one has fully finished (upsert AND its
+// baseline update), so there is never more than one upsert in flight and
+// every call sees the truly-latest state, eliminating the out-of-order
+// completion race entirely.
+let pushCloudSaveChain = Promise.resolve();
+function pushCloudSave() {
+  const run = pushCloudSaveChain.then(() => pushCloudSaveInner());
+  // swallow so one failed push doesn't permanently wedge the chain for
+  // every push after it — the caller of THIS invocation still sees/can
+  // handle the real rejection via `run` itself
+  pushCloudSaveChain = run.catch(() => {});
+  return run;
+}
+
+async function pushCloudSaveInner() {
   if (!sb || !cloudSession) return;
   await reconcileExternalCurrency();
   // Captured ONCE, before the network round-trip — this exact object (not a
