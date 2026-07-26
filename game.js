@@ -6551,6 +6551,12 @@ async function pushCloudSaveInner() {
   // See its own comment below at the baseline-update site for why that
   // distinction is critical (2026-07-25 currency-vanishing fix).
   const snapshot = saveSnapshot();
+  // TEMP DEBUG (2026-07-26): persistent console.log (not a toast — this is
+  // meant to be scrolled back through in the console after waiting a few
+  // minutes, not caught live) on every single push, with a stack trace so
+  // we can see WHICH caller (interval / throttled reward / forced
+  // post-purchase / beforeunload / etc) is firing and what it's sending.
+  console.log(`[pushCloudSave ${new Date().toISOString()}] heroes=${(snapshot.heroes||[]).length} bcoin=${snapshot.bcoin} nextHeroId=${snapshot.nextHeroId}`, new Error().stack);
   const savesRes = await sb.from('saves').upsert({
     user_id: cloudSession.user.id,
     // FIX (2026-07-23, master spec #1/#5): used to push the bare `state`
@@ -6561,7 +6567,8 @@ async function pushCloudSaveInner() {
     // snapshot shape save() writes locally now (saveSnapshot()).
     state: snapshot,
     updated_at: new Date().toISOString(),
-  });
+  }).select('user_id');
+  console.log(`[pushCloudSave result] error=${savesRes.error ? savesRes.error.message : 'none'} rowsWritten=${savesRes.data ? savesRes.data.length : 'null'}`);
   // ERROR LOGGING (2026-07-23): these upserts used to be fire-and-forget —
   // any failure (RLS, schema mismatch, network) was completely invisible.
   // That's exactly how the leaderboard bigint/fractional mismatch below hid
