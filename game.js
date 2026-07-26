@@ -1,17 +1,5 @@
 'use strict';
 
-// SECURITY (2026-07-25): the entire game runs inside this IIFE so that `state`
-// and every internal function stay PRIVATE — not reachable from the browser's
-// DevTools console. Before this, the game loaded as a classic <script>, which
-// puts top-level `let state`/`function ...` declarations in a scope the console
-// can read and mutate: players were opening the console and typing things like
-// `state.bcoin = 1e9` (or calling internal functions directly) to cheat, then
-// letting autosave push it up. Wrapping everything here closes that vector.
-// This is the CLIENT-SIDE half of the anti-cheat; the SERVER-SIDE half is the
-// saves_guard/leaderboard_guard triggers in supabase/schema.sql, which reject
-// impossible values even if someone hits the API directly. Both are needed.
-(function () {
-
 // Hard wipe (2026-07-24): every non-admin account was deleted via SQL
 // Editor (`delete from auth.users where email <> 'joaohermeto@hotmail.com'`)
 // ahead of a fresh start — this comment's own edit is what triggers the
@@ -619,26 +607,7 @@ function defaultState() {
     // wheelLastClaim/wheelPaidSpinUsed also ride along (2026-07-24) — a
     // bulk/admin reset of the Roda da Sorte cooldown hits the exact same
     // race for anyone online when it runs.
-    //
-    // CRITICAL (2026-07-25, real economy-exploit fix): each field here MUST
-    // mirror the STARTING value of the currency it tracks in this very same
-    // defaultState() — hence bcoin: 300 (NOT 0) to match `bcoin: 300` above.
-    // This baseline means "what this client believes the cloud holds"; a
-    // freshly-created account's mandatory first push (and the server-side
-    // saves_guard INSERT clamp) establish the cloud at exactly the starting
-    // grant, so the baseline must already equal it. When it did NOT (bcoin
-    // baseline was 0 while the granted bcoin was 300), reconcileExternalCurrency()
-    // read the cloud's real 300 against a baseline of 0 and mis-counted the
-    // STARTING GRANT ITSELF as a +300 "external credit", re-adding it to the
-    // balance — and because that add then got pushed, the cloud grew, so the
-    // next login re-added the new (larger) difference: a player could farm
-    // unlimited Chef Gems just by signing out and back in. Keeping the
-    // baseline internally consistent with the grant makes the starting-grant
-    // delta exactly 0, while still detecting genuine later admin/Pix credits
-    // (measured against this now-correct baseline). starCore/michelinCoin
-    // already started at 0 and so were always consistent — only bcoin was
-    // wrong. Keep this in lockstep with the currency start values above.
-    lastKnownCloudCurrency: { starCore: 0, bcoin: 300, michelinCoin: 0, hardResetCount: 0, wheelLastClaim: 0, wheelPaidSpinUsed: false },
+    lastKnownCloudCurrency: { starCore: 0, bcoin: 0, michelinCoin: 0, hardResetCount: 0, wheelLastClaim: 0, wheelPaidSpinUsed: false },
     totalMined: 0,
     // Food Coins earned on the CURRENT map specifically (2026-07-23) — unlike
     // totalMined (lifetime, never resets), this resets to 0 at every genuine
@@ -3256,33 +3225,10 @@ async function buyPack(idx) {
   if (data && data.error) { toast('Erro: ' + data.error); return; }
   const pulled = data.heroes;
   state.bcoin = data.newBcoin;
-  // open-pack (server, authoritative) already deducted the pack cost from the
-  // cloud bcoin and returned the new value — record it as the new known-cloud
-  // baseline right away (2026-07-25 currency-double-deduction fix). Otherwise
-  // reconcileExternalCurrency() on the very next push reads the cloud's
-  // already-reduced bcoin against the STALE pre-pull baseline and mistakes the
-  // server-side deduction for an "external removal", subtracting the pack cost
-  // a SECOND time from local (and toasting a bogus "X Chef Gems removed").
-  if (state.lastKnownCloudCurrency) state.lastKnownCloudCurrency.bcoin = data.newBcoin;
   state.heroes.push(...pulled);
   state.nextHeroId = Math.max(state.nextHeroId, ...pulled.map(h => h.id + 1));
   save();
-  // FORCE, don't throttle (2026-07-25, real production data-loss fix): a
-  // pack purchase is rare and high-value, not a frequent small reward like a
-  // chest break — REWARD_PUSH_THROTTLE_MS's 5s window can silently SKIP this
-  // call entirely if any other push fired moments earlier. That's exactly
-  // the gap that let a heroes-vanish race happen: open-pack (server) already
-  // wrote the new heroes straight into the cloud row, but a DIFFERENT push
-  // that started EARLIER (e.g. the 30s interval), using a snapshot captured
-  // BEFORE this purchase, can still be in flight and land AFTER open-pack's
-  // write — overwriting the new heroes with its stale, hero-less snapshot.
-  // pushCloudSave()'s own FIFO chain (see its comment) guarantees THIS call
-  // always runs strictly after any such stale one and re-uploads the
-  // now-correct local state (with the new heroes) — but only if it's
-  // actually allowed to run at all, which pushCloudSaveThrottled() was not
-  // reliably doing. Awaited so a genuinely failed sync surfaces as a real
-  // toast/console error instead of silently leaving the purchase unsynced.
-  pushCloudSave().catch(e => console.error('buyPack: post-purchase sync failed', e));
+  pushCloudSaveThrottled(); // reflect the server-authoritative result promptly, same precedent as other reward events
   renderHeader();
   renderShop();
   startPackReveal(pulled);
@@ -6269,23 +6215,6 @@ async function cloudSignIn() {
 
 async function cloudSignOut() {
   if (!sb) return;
-  // DATA-LOSS FIX (2026-07-25): force a real, awaited push of the current
-  // state to the cloud BEFORE dropping the session. Without this, anything
-  // not yet synced when the player logs out was lost the moment
-  // sb.auth.signOut() invalidated the session — and the NEXT login's
-  // pullCloudSave() would then adopt the STALE cloud copy, making the
-  // progress look like it vanished. The reported case: open a pack (its
-  // heroes are added to `state` here and were only being synced via the
-  // THROTTLED/interval push, which can be skipped or lose a race with the
-  // server-authoritative open-pack write), then log out immediately — this
-  // guarantees the exact heroes currently in memory are the cloud's last
-  // write, so relogin restores them. Awaited on purpose (the coordinator's
-  // "guaranteed saved before logout can complete"); wrapped best-effort so a
-  // failed push can never trap the player unable to log out — we still sign
-  // out below regardless. This is the same pushCloudSave() the 30s interval
-  // already runs, so it introduces no new sync/reconcile behavior, only one
-  // more guaranteed push at the one moment it matters most.
-  if (cloudSignedIn()) { try { await pushCloudSave(); } catch (e) { /* still sign out below — data safety must not block logout */ } }
   await sb.auth.signOut();
   cloudSession = null;
   cloudUsername = null;
@@ -6382,22 +6311,7 @@ async function reconcileExternalCurrency() {
   try {
     const { data } = await sb.from('saves').select('state').eq('user_id', cloudSession.user.id).maybeSingle();
     if (!data || !data.state) return;
-    // Missing baseline (an old save from before this field existed, or any
-    // state built without defaultState()): ADOPT the cloud values we just
-    // read as the baseline rather than assuming 0 (2026-07-25 — same
-    // economy-exploit class as defaultState()'s own comment: a 0 baseline
-    // here against a real cloud balance would fabricate that entire balance
-    // as a phantom "external credit"). Adopting the cloud read yields a 0
-    // delta THIS cycle (no fabrication, no loss); the baseline is then
-    // trustworthy for detecting genuine external credits on later pushes.
-    if (!state.lastKnownCloudCurrency) state.lastKnownCloudCurrency = {
-      starCore: Number(data.state.starCore) || 0,
-      bcoin: Number(data.state.bcoin) || 0,
-      michelinCoin: Number(data.state.michelinCoin) || 0,
-      hardResetCount: Number(data.state.hardResetCount) || 0,
-      wheelLastClaim: Number(data.state.wheelLastClaim) || 0,
-      wheelPaidSpinUsed: !!data.state.wheelPaidSpinUsed,
-    };
+    if (!state.lastKnownCloudCurrency) state.lastKnownCloudCurrency = { starCore: 0, bcoin: 0, michelinCoin: 0, hardResetCount: 0, wheelLastClaim: 0, wheelPaidSpinUsed: false };
     const labels = { starCore: 'Food Coins', bcoin: 'Chef Gems', michelinCoin: 'Estrela Michelin' };
     ['starCore', 'bcoin', 'michelinCoin'].forEach(k => {
       const cloudVal = Number(data.state[k]) || 0;
@@ -6447,35 +6361,6 @@ async function reconcileExternalCurrency() {
       state.wheelPaidSpinUsed = !!data.state.wheelPaidSpinUsed;
       state.lastKnownCloudCurrency.wheelPaidSpinUsed = state.wheelPaidSpinUsed;
       refreshWheelPanelLive();
-    }
-    // HERO RECONCILIATION (2026-07-25, real data-loss race fix) — the hero
-    // analogue of the currency merge above. open-pack (the server-side pack
-    // roller, service role) APPENDS the pulled heroes straight into this
-    // player's cloud saves row, authoritatively, before the client even sees
-    // the response. A full-state pushCloudSave() (30s interval / reward-event
-    // throttled / beforeunload) whose in-memory snapshot was captured in the
-    // brief window between that server write and buyPack() adding the same
-    // heroes to local state would otherwise blindly OVERWRITE the cloud with a
-    // heroes array missing those just-pulled Rangos — silent loss, no logout
-    // involved (the reported bug). Fold any such cloud hero into local state
-    // BEFORE the upsert, so the push can never drop it. Scope is deliberately
-    // narrow and safe: only heroes whose id is >= our own nextHeroId are
-    // adopted — an id at/above nextHeroId can only be a hero created AFTER this
-    // client's last-known state (a genuine external append: open-pack here, or
-    // another device), never one this client intentionally removed via
-    // fusion/sacrifice (those always carry ids BELOW nextHeroId, so a stale
-    // cloud copy of them is correctly left to be overwritten by the push). No
-    // toast — unlike a currency credit, adopting a hero the player just pulled
-    // themselves is not "news" worth interrupting them over.
-    if (Array.isArray(data.state.heroes) && data.state.heroes.length) {
-      if (!Array.isArray(state.heroes)) state.heroes = [];
-      const localIds = new Set(state.heroes.map(h => h && h.id));
-      const minNewId = Number(state.nextHeroId) || 1;
-      const appended = data.state.heroes.filter(h => h && typeof h.id === 'number' && h.id >= minNewId && !localIds.has(h.id));
-      if (appended.length) {
-        state.heroes.push(...appended);
-        state.nextHeroId = Math.max(minNewId, ...appended.map(h => h.id + 1));
-      }
     }
   } catch (e) { /* best-effort — a failed reconciliation read must never block the save itself */ }
 }
@@ -6527,50 +6412,9 @@ async function handleDeadSession() {
   handlingDeadSession = false;
 }
 
-// SERIALIZATION (2026-07-25, real production bug — currency still vanishing
-// after the snapshot-baseline fix above): pushCloudSave() is called from
-// several independent, un-coordinated triggers — the 30s interval, the
-// 5s-throttled reward push, beforeunload, visibilitychange, sign-out — with
-// no mutex between them. Two calls can end up with their network requests
-// in flight AT THE SAME TIME, and nothing guarantees they LAND in the order
-// they STARTED: if call A (started first, smaller snapshot — earned less by
-// the time it captured state) finishes its upsert AFTER call B (started
-// later, bigger snapshot — earned more), A's stale, smaller snapshot is the
-// one that ends up actually persisted, silently overwriting B's larger,
-// more-correct write. The player's local `state` never dropped, but the
-// cloud row now holds LESS than what was really earned — invisible until
-// the next reload pulls that smaller number back down. Fixed by forcing
-// every pushCloudSave() call through a strict FIFO chain: each call now
-// only STARTS once the previous one has fully finished (upsert AND its
-// baseline update), so there is never more than one upsert in flight and
-// every call sees the truly-latest state, eliminating the out-of-order
-// completion race entirely.
-let pushCloudSaveChain = Promise.resolve();
-function pushCloudSave() {
-  const run = pushCloudSaveChain.then(() => pushCloudSaveInner());
-  // swallow so one failed push doesn't permanently wedge the chain for
-  // every push after it — the caller of THIS invocation still sees/can
-  // handle the real rejection via `run` itself
-  pushCloudSaveChain = run.catch(() => {});
-  return run;
-}
-
-async function pushCloudSaveInner() {
-  // TEMP DEBUG (2026-07-25, remove once the vanishing-heroes root cause is
-  // found): visible toast instead of console.error, since we've had reports
-  // of silent failure with zero errors anywhere (console, Edge Function
-  // logs) — if THIS guard is what's stopping the write, this makes it obvious.
-  if (!sb || !cloudSession) { toast('DEBUG: pushCloudSave abortou — sb=' + !!sb + ' cloudSession=' + !!cloudSession); return; }
+async function pushCloudSave() {
+  if (!sb || !cloudSession) return;
   await reconcileExternalCurrency();
-  // Captured ONCE, before the network round-trip — this exact object (not a
-  // fresh read of `state` afterward) is what actually reaches the server.
-  // See its own comment below at the baseline-update site for why that
-  // distinction is critical (2026-07-25 currency-vanishing fix).
-  const snapshot = saveSnapshot();
-  // TEMP DEBUG: .select() added so we can see whether the upsert actually
-  // touched a row — a silently-blocked write (e.g. RLS filtering it to 0
-  // rows) reports NO error but also returns an empty data array, which is
-  // exactly the signature we're hunting for.
   const savesRes = await sb.from('saves').upsert({
     user_id: cloudSession.user.id,
     // FIX (2026-07-23, master spec #1/#5): used to push the bare `state`
@@ -6579,10 +6423,9 @@ async function pushCloudSaveInner() {
     // map even with pullCloudSave()'s restore logic fixed, since the row
     // simply never had a valid grid to restore in the first place. Same
     // snapshot shape save() writes locally now (saveSnapshot()).
-    state: snapshot,
+    state: saveSnapshot(),
     updated_at: new Date().toISOString(),
-  }).select('user_id');
-  toast(`DEBUG push: heroes=${(snapshot.heroes||[]).length} bcoin=${snapshot.bcoin} rowsWritten=${savesRes.data ? savesRes.data.length : 'null'} err=${savesRes.error ? savesRes.error.message : 'none'}`);
+  });
   // ERROR LOGGING (2026-07-23): these upserts used to be fire-and-forget —
   // any failure (RLS, schema mismatch, network) was completely invisible.
   // That's exactly how the leaderboard bigint/fractional mismatch below hid
@@ -6603,21 +6446,7 @@ async function pushCloudSaveInner() {
     // update the reconciliation baseline so the NEXT push's diff (see
     // reconcileExternalCurrency()) only ever measures credits that land
     // after this point, not what we ourselves just wrote.
-    //
-    // CRITICAL (2026-07-25, real production bug — "toda moeda que eu farmo
-    // é removida"): this used to read `state.starCore`/etc LIVE, right here,
-    // AFTER the `await` above already resolved. Any amount earned locally
-    // during that network round-trip (a chest breaking while the upsert was
-    // in flight — routine for an active player) was never actually part of
-    // what got sent, but got baked into the baseline anyway. The next
-    // reconcile then compared the real (lower) cloud value against that
-    // inflated baseline, read the gap as an "external removal", toasted it,
-    // and ACTUALLY subtracted it from local state — on every single push
-    // cycle for every active player, since something new is almost always
-    // earned mid-flight. Fixed by baselining off `snapshot` (captured
-    // synchronously before the round-trip, the literal payload that was
-    // sent) instead of re-reading `state` after the fact.
-    state.lastKnownCloudCurrency = { starCore: snapshot.starCore, bcoin: snapshot.bcoin, michelinCoin: snapshot.michelinCoin, hardResetCount: snapshot.hardResetCount, wheelLastClaim: snapshot.wheelLastClaim, wheelPaidSpinUsed: snapshot.wheelPaidSpinUsed };
+    state.lastKnownCloudCurrency = { starCore: state.starCore, bcoin: state.bcoin, michelinCoin: state.michelinCoin, hardResetCount: state.hardResetCount, wheelLastClaim: state.wheelLastClaim, wheelPaidSpinUsed: state.wheelPaidSpinUsed };
   }
   const leaderboardRes = await sb.from('leaderboard').upsert({
     user_id: cloudSession.user.id,
@@ -6696,34 +6525,12 @@ function subscribeLeaderboardRealtime() {
 // background interval (this is the "as it happens" fast path; the interval
 // remains the steady baseline/fallback for players not actively cracking
 // chests).
-// TRAILING EDGE (2026-07-25, real production data-loss fix): this used to
-// just `return` when called too soon after the last one — a call inside the
-// throttle window was DROPPED entirely, not merely delayed. Combined with
-// pushCloudSave()'s FIFO chain (see its own comment), that drop could leave
-// a real reward permanently unsynced if an earlier, now-stale push (e.g. the
-// 30s interval, snapshotted BEFORE this reward) was still in flight and
-// landed AFTER — nothing was left to re-upload the correct, newer local
-// state, so the cloud stayed wrong until the next unrelated push happened
-// to fire. Now a suppressed call always schedules exactly one trailing
-// follow-up for the moment the window reopens, so a reward can be delayed
-// by throttling but is never silently lost.
 let lastRewardPush = 0;
-let rewardPushTrailingTimer = null;
 const REWARD_PUSH_THROTTLE_MS = 5000;
 function pushCloudSaveThrottled() {
   if (!cloudSignedIn()) return;
   const now = Date.now();
-  if (now - lastRewardPush < REWARD_PUSH_THROTTLE_MS) {
-    if (!rewardPushTrailingTimer) {
-      const wait = REWARD_PUSH_THROTTLE_MS - (now - lastRewardPush);
-      rewardPushTrailingTimer = setTimeout(() => {
-        rewardPushTrailingTimer = null;
-        lastRewardPush = Date.now();
-        if (cloudSignedIn()) pushCloudSave();
-      }, wait);
-    }
-    return;
-  }
+  if (now - lastRewardPush < REWARD_PUSH_THROTTLE_MS) return;
   lastRewardPush = now;
   pushCloudSave();
 }
@@ -6996,5 +6803,3 @@ document.getElementById('admin-broadcast-dismiss-btn').addEventListener('click',
   if (pendingBroadcastId) localStorage.setItem(BROADCAST_SEEN_KEY, pendingBroadcastId);
   document.getElementById('admin-broadcast-overlay').classList.add('hidden');
 });
-
-})(); // end SECURITY IIFE (see the top of this file) — keeps game state/functions out of the console
