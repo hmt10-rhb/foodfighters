@@ -3259,38 +3259,39 @@ async function buyPack(idx) {
     toast(`Not enough Chef Gems — need ${fmtCurrency(pack.cost)}.`);
     return;
   }
-  const { data, error } = await sb.functions.invoke('open-pack', { body: { packIndex: idx } });
-  if (error) { toast('Erro ao abrir o pacote: ' + (error.message || 'falha na compra')); return; }
-  if (data && data.error) { toast('Erro: ' + data.error); return; }
-  const pulled = data.heroes;
-  state.bcoin = data.newBcoin;
-  // open-pack (server, authoritative) already deducted the pack cost from the
-  // cloud bcoin and returned the new value — record it as the new known-cloud
-  // baseline right away (2026-07-25 currency-double-deduction fix). Otherwise
-  // reconcileExternalCurrency() on the very next push reads the cloud's
-  // already-reduced bcoin against the STALE pre-pull baseline and mistakes the
-  // server-side deduction for an "external removal", subtracting the pack cost
-  // a SECOND time from local (and toasting a bogus "X Chef Gems removed").
-  if (state.lastKnownCloudCurrency) state.lastKnownCloudCurrency.bcoin = data.newBcoin;
-  state.heroes.push(...pulled);
-  state.nextHeroId = Math.max(state.nextHeroId, ...pulled.map(h => h.id + 1));
-  save();
-  // FORCE, don't throttle (2026-07-25, real production data-loss fix): a
-  // pack purchase is rare and high-value, not a frequent small reward like a
-  // chest break — REWARD_PUSH_THROTTLE_MS's 5s window can silently SKIP this
-  // call entirely if any other push fired moments earlier. That's exactly
-  // the gap that let a heroes-vanish race happen: open-pack (server) already
-  // wrote the new heroes straight into the cloud row, but a DIFFERENT push
-  // that started EARLIER (e.g. the 30s interval), using a snapshot captured
-  // BEFORE this purchase, can still be in flight and land AFTER open-pack's
-  // write — overwriting the new heroes with its stale, hero-less snapshot.
-  // pushCloudSave()'s own FIFO chain (see its comment) guarantees THIS call
-  // always runs strictly after any such stale one and re-uploads the
-  // now-correct local state (with the new heroes) — but only if it's
-  // actually allowed to run at all, which pushCloudSaveThrottled() was not
-  // reliably doing. Awaited so a genuinely failed sync surfaces as a real
-  // toast/console error instead of silently leaving the purchase unsynced.
-  pushCloudSave('buyPack-forced').catch(e => console.error('buyPack: post-purchase sync failed', e));
+  // EXCLUSIVE (2026-07-27, real production data-loss fix — see
+  // runExclusive()'s own comment for the full mechanism): the open-pack
+  // call itself, not just the follow-up push, now runs inside the SAME
+  // chain every regular pushCloudSave() uses. This used to just be a
+  // "FORCE, don't throttle" follow-up push after open-pack — which fixed
+  // the case where the follow-up got silently skipped, but NOT the case
+  // where a push that was ALREADY in flight (started before the purchase)
+  // landed its stale, hero-less write AFTER open-pack's own write. Wrapping
+  // the whole flow closes that: any such in-flight push is now guaranteed
+  // to fully land BEFORE this block even starts, so it can never land after.
+  const result = await runExclusive(async () => {
+    const { data, error } = await sb.functions.invoke('open-pack', { body: { packIndex: idx } });
+    if (error) return { error: 'Erro ao abrir o pacote: ' + (error.message || 'falha na compra') };
+    if (data && data.error) return { error: 'Erro: ' + data.error };
+    const pulled = data.heroes;
+    state.bcoin = data.newBcoin;
+    // open-pack (server, authoritative) already deducted the pack cost from
+    // the cloud bcoin and returned the new value — record it as the new
+    // known-cloud baseline right away (2026-07-25 currency-double-deduction
+    // fix). Otherwise reconcileExternalCurrency() on the very next push
+    // reads the cloud's already-reduced bcoin against the STALE pre-pull
+    // baseline and mistakes the server-side deduction for an "external
+    // removal", subtracting the pack cost a SECOND time from local (and
+    // toasting a bogus "X Chef Gems removed").
+    if (state.lastKnownCloudCurrency) state.lastKnownCloudCurrency.bcoin = data.newBcoin;
+    state.heroes.push(...pulled);
+    state.nextHeroId = Math.max(state.nextHeroId, ...pulled.map(h => h.id + 1));
+    save();
+    await pushCloudSaveInner(++pushCloudSaveCallCounter);
+    return { pulled };
+  });
+  if (result.error) { toast(result.error); return; }
+  const pulled = result.pulled;
   renderHeader();
   renderShop();
   startPackReveal(pulled);
@@ -6605,6 +6606,27 @@ async function handleDeadSession() {
 // every call sees the truly-latest state, eliminating the out-of-order
 // completion race entirely.
 let pushCloudSaveChain = Promise.resolve();
+// EXCLUSIVE CHAIN (2026-07-27, closes the last real race): shared by
+// pushCloudSave() below AND buyPack()'s whole purchase flow (see its own
+// comment) — anything run through this never overlaps with anything else
+// run through it. This is what actually fixed the confirmed data-loss bug:
+// open-pack's own write (service_role, authoritative) was never
+// coordinated with the regular pushCloudSave() chain at all, so an
+// ALREADY-in-flight push (e.g. the 30s interval, its network request sent
+// before the purchase even started) could still land AFTER open-pack and
+// overwrite the new heroes with its stale pre-purchase snapshot. Routing
+// buyPack()'s entire flow (the open-pack call itself, not just its
+// follow-up push) through this same chain guarantees any such in-flight
+// write fully lands and finishes FIRST — buyPack's own confirming push
+// always runs strictly after, never before.
+function runExclusive(fn) {
+  const run = pushCloudSaveChain.then(fn);
+  // swallow so one failed run doesn't permanently wedge the chain for
+  // everything after it — the caller of THIS invocation still sees/can
+  // handle the real rejection via `run` itself
+  pushCloudSaveChain = run.catch(() => {});
+  return run;
+}
 // TEMP DEBUG (2026-07-26): unique, monotonic id assigned at CALL time (not
 // execution time) — lets us see the true invocation order across every
 // trigger (interval/throttled/forced/etc), separate from the order calls
@@ -6614,12 +6636,7 @@ let pushCloudSaveCallCounter = 0;
 function pushCloudSave(callSite) {
   const callId = ++pushCloudSaveCallCounter;
   console.log(`[pushCloudSave CALLED #${callId} from "${callSite || 'unknown'}" at ${new Date().toISOString()}] state.heroes.length=${Array.isArray(state.heroes) ? state.heroes.length : 'n/a'} state.bcoin=${state.bcoin}`);
-  const run = pushCloudSaveChain.then(() => pushCloudSaveInner(callId));
-  // swallow so one failed push doesn't permanently wedge the chain for
-  // every push after it — the caller of THIS invocation still sees/can
-  // handle the real rejection via `run` itself
-  pushCloudSaveChain = run.catch(() => {});
-  return run;
+  return runExclusive(() => pushCloudSaveInner(callId));
 }
 
 async function pushCloudSaveInner(callId) {

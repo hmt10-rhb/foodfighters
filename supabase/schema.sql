@@ -235,6 +235,28 @@ create trigger leaderboard_guard_trigger
 -- a new Edge Function mirroring create-pix-order's pattern) so the client
 -- never controls the odds at all; this trigger is the stopgap until that
 -- ships.
+-- ============ REMOVED 2026-07-27 (real production data-loss bug,
+-- confirmed root cause) ============
+-- The top-rarity-hero-gain clamp that used to live in the UPDATE branch
+-- below (comparing old vs new counts of COMIDA_DE_BUTECO/RECEITA_DE_VO
+-- heroes, reverting the WHOLE heroes array on an implausible jump) had a
+-- fatal self-reinforcing failure mode: if `old.state.heroes` ever became
+-- wrongly empty EVEN ONCE (e.g. a stale client push landing right after
+-- open-pack's own write — a real race, independent of this trigger, since
+-- open-pack's service-role write and a client's regular authenticated
+-- push are two completely uncoordinated write paths), every SUBSEQUENT
+-- legitimate push trying to restore the real heroes array looked like
+-- "gained N rare heroes in one push" relative to that stuck-at-zero
+-- baseline — so the clamp reverted it back to empty again, forever. There
+-- is no recovery path once this triggers: old.state.heroes never gets a
+-- chance to become non-empty again on its own. Confirmed via
+-- console+SQL+saves_audit correlation across TWO separate Supabase
+-- projects (same schema, same bug both times) that this is exactly what
+-- was silently destroying real player progress. Removed rather than
+-- patched — the underlying anti-cheat goal (bound top-rarity pull rate)
+-- is being redesigned from scratch, carefully, server-side (moving the
+-- pack roll itself into open-pack, which already runs under service_role
+-- and is immune to this whole class of bug).
 create or replace function public.saves_guard()
 returns trigger as $$
 declare
@@ -244,10 +266,6 @@ declare
   new_wealth numeric;
   elapsed_s numeric;
   max_gain numeric;
-  old_top_count int;
-  new_top_count int;
-  hours_elapsed numeric;
-  max_new_top int;
 begin
   if auth.role() != 'service_role' then
     new_michelin := coalesce((new.state->>'michelinCoin')::numeric, 0);
@@ -279,24 +297,6 @@ begin
         if (new_wealth - old_wealth) > max_gain then
           new.state := jsonb_set(new.state, '{starCore}', to_jsonb(coalesce((old.state->>'starCore')::numeric, 0)));
           new.state := jsonb_set(new.state, '{bcoin}', to_jsonb(coalesce((old.state->>'bcoin')::numeric, 0)));
-        end if;
-      end if;
-
-      old_top_count := (select count(*) from jsonb_array_elements(coalesce(old.state->'heroes', '[]'::jsonb)) h
-                         where h->>'rarity' in ('COMIDA_DE_BUTECO', 'RECEITA_DE_VO'));
-      new_top_count := (select count(*) from jsonb_array_elements(coalesce(new.state->'heroes', '[]'::jsonb)) h
-                         where h->>'rarity' in ('COMIDA_DE_BUTECO', 'RECEITA_DE_VO'));
-      if new_top_count > old_top_count then
-        hours_elapsed := greatest(extract(epoch from (now() - old.updated_at)), 0) / 3600;
-        -- 1 "grace" gain allowed immediately (indistinguishable from real
-        -- luck — see this section's header comment), +1 more per 6 real
-        -- hours elapsed. Reverts the WHOLE heroes array on purpose (same
-        -- blunt-not-partial philosophy as the currency clamp above) —
-        -- exceeding this in one push is already well outside anything
-        -- explainable by normal play.
-        max_new_top := 1 + floor(hours_elapsed / 6);
-        if (new_top_count - old_top_count) > max_new_top then
-          new.state := jsonb_set(new.state, '{heroes}', old.state->'heroes');
         end if;
       end if;
     end if;
