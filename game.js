@@ -6248,9 +6248,22 @@ async function cloudSignUp() {
     toast('Conta criada e sincronizada!');
     enterGame(); // mandatory login: signup with an immediate session goes straight into the game, not to the account modal
   } else {
-    toast('Conta criada — confirme o email antes de entrar (verifique a caixa de entrada).');
-    const backdrop = document.getElementById('modal-backdrop');
-    if (backdrop) backdrop.classList.add('hidden'); // close the signup modal, back to the login screen to wait for email confirmation
+    // Email confirmation is required on this project (2026-07-27, explicit
+    // decision to keep it ON — real emails are worth having, e.g. for
+    // password recovery). A toast alone is too easy to miss/dismiss before
+    // reading it — swap the signup modal's own content to a persistent
+    // message instead of just closing it, so the player has a clear next
+    // step (their inbox) rather than being dropped back on a blank login
+    // form wondering what happened.
+    document.getElementById('modal-body').innerHTML = `
+      <h3>📬 Confirme seu email</h3>
+      <p class="muted">Conta criada! Antes de entrar, confirme seu email — mandamos um link pra:</p>
+      <p style="font-weight:bold;text-align:center;margin:10px 0;">${escapeHtml(email)}</p>
+      <p class="muted">Verifique a caixa de entrada (e o spam) e clica no link. Depois é só voltar aqui e entrar normalmente.</p>
+      <button id="signup-confirm-ack-btn" class="btn">Entendi</button>`;
+    document.getElementById('modal-body').querySelector('#signup-confirm-ack-btn').addEventListener('click', () => {
+      document.getElementById('modal-backdrop').classList.add('hidden');
+    });
   }
 }
 
