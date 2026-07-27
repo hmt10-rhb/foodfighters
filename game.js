@@ -3040,7 +3040,7 @@ function onMichelinOrderApproved(quantity) {
   unsubscribeMichelinOrder();
   state.michelinCoin = (state.michelinCoin || 0) + quantity;
   save();
-  pushCloudSave();
+  pushCloudSave('onMichelinOrderApproved');
   renderHeader();
   renderExtras();
   document.getElementById('modal-body').innerHTML = `
@@ -3290,7 +3290,7 @@ async function buyPack(idx) {
   // actually allowed to run at all, which pushCloudSaveThrottled() was not
   // reliably doing. Awaited so a genuinely failed sync surfaces as a real
   // toast/console error instead of silently leaving the purchase unsynced.
-  pushCloudSave().catch(e => console.error('buyPack: post-purchase sync failed', e));
+  pushCloudSave('buyPack-forced').catch(e => console.error('buyPack: post-purchase sync failed', e));
   renderHeader();
   renderShop();
   startPackReveal(pulled);
@@ -3483,7 +3483,7 @@ function performExchange(fromKey, toKey, amount) {
   state[fromKey] -= spend;
   state[toKey] = (state[toKey] || 0) + gain;
   save();
-  pushCloudSave();
+  pushCloudSave('currencyExchange');
   renderHeader();
   toast(`Convertido: ${fmtCurrency(spend)} ${EXCHANGE_CURRENCIES[fromKey].label} → ${fmtCurrency(gain)} ${EXCHANGE_CURRENCIES[toKey].label}`);
   exchangeModalAmount = 0;
@@ -6243,7 +6243,7 @@ async function cloudSignUp() {
     // stranger's roster onto a freshly created account with no comparison
     // at all).
     newGameState();
-    await pushCloudSave();
+    await pushCloudSave('cloudSignUp');
     toast('Conta criada e sincronizada!');
     enterGame(); // mandatory login: signup with an immediate session goes straight into the game, not to the account modal
   } else {
@@ -6307,7 +6307,7 @@ async function cloudSignOut() {
   // out below regardless. This is the same pushCloudSave() the 30s interval
   // already runs, so it introduces no new sync/reconcile behavior, only one
   // more guaranteed push at the one moment it matters most.
-  if (cloudSignedIn()) { try { await pushCloudSave(); } catch (e) { /* still sign out below — data safety must not block logout */ } }
+  if (cloudSignedIn()) { try { await pushCloudSave('cloudSignOut'); } catch (e) { /* still sign out below — data safety must not block logout */ } }
   await sb.auth.signOut();
   cloudSession = null;
   cloudUsername = null;
@@ -6336,7 +6336,7 @@ async function pullCloudSave() {
     .select('state, updated_at')
     .eq('user_id', cloudSession.user.id)
     .maybeSingle();
-  if (error || !data) { localFreshOnBoot = false; await pushCloudSave(); return; }
+  if (error || !data) { localFreshOnBoot = false; await pushCloudSave('pullCloudSave-noRow'); return; }
   const cloudWins = localFreshOnBoot || new Date(data.updated_at).getTime() > (state.lastSeen || 0);
   // consumed here regardless of outcome — only the FIRST pullCloudSave()
   // call after a genuinely fresh boot should ever be affected by this; a
@@ -6372,7 +6372,7 @@ async function pullCloudSave() {
     syncActors();
     renderAll();
   } else {
-    await pushCloudSave();
+    await pushCloudSave('pullCloudSave-localWins');
   }
 }
 
@@ -6399,7 +6399,7 @@ async function pullCloudSave() {
 // lastKnownCloudCurrency in lockstep — so cloudVal can only ever differ from
 // knownVal because of something that happened OUTSIDE this client (admin
 // action, Pix webhook), regardless of what local currently holds.
-async function reconcileExternalCurrency() {
+async function reconcileExternalCurrency(callId) {
   if (!sb || !cloudSession) return;
   try {
     const { data } = await sb.from('saves').select('state').eq('user_id', cloudSession.user.id).maybeSingle();
@@ -6407,7 +6407,7 @@ async function reconcileExternalCurrency() {
     // TEMP DEBUG (2026-07-26): pinpointing the exact revert mechanism —
     // logs the raw cloud read this reconcile pass is about to act on,
     // versus the CURRENT in-memory state, right at the moment of decision.
-    console.log(`[reconcile ${new Date().toISOString()}] cloud: heroes=${Array.isArray(data.state.heroes) ? data.state.heroes.length : 'n/a'} bcoin=${data.state.bcoin} | local: heroes=${Array.isArray(state.heroes) ? state.heroes.length : 'n/a'} bcoin=${state.bcoin} nextHeroId=${state.nextHeroId} | knownCloud.bcoin=${state.lastKnownCloudCurrency ? state.lastKnownCloudCurrency.bcoin : 'n/a'}`, new Error().stack);
+    console.log(`[reconcile for push #${callId} at ${new Date().toISOString()}] cloud: heroes=${Array.isArray(data.state.heroes) ? data.state.heroes.length : 'n/a'} bcoin=${data.state.bcoin} | local: heroes=${Array.isArray(state.heroes) ? state.heroes.length : 'n/a'} bcoin=${state.bcoin} nextHeroId=${state.nextHeroId} | knownCloud.bcoin=${state.lastKnownCloudCurrency ? state.lastKnownCloudCurrency.bcoin : 'n/a'}`);
     // Missing baseline (an old save from before this field existed, or any
     // state built without defaultState()): ADOPT the cloud values we just
     // read as the baseline rather than assuming 0 (2026-07-25 — same
@@ -6572,8 +6572,16 @@ async function handleDeadSession() {
 // every call sees the truly-latest state, eliminating the out-of-order
 // completion race entirely.
 let pushCloudSaveChain = Promise.resolve();
-function pushCloudSave() {
-  const run = pushCloudSaveChain.then(() => pushCloudSaveInner());
+// TEMP DEBUG (2026-07-26): unique, monotonic id assigned at CALL time (not
+// execution time) — lets us see the true invocation order across every
+// trigger (interval/throttled/forced/etc), separate from the order calls
+// actually execute in via the chain, and correlate a specific call site
+// against what shows up in the saves_audit table.
+let pushCloudSaveCallCounter = 0;
+function pushCloudSave(callSite) {
+  const callId = ++pushCloudSaveCallCounter;
+  console.log(`[pushCloudSave CALLED #${callId} from "${callSite || 'unknown'}" at ${new Date().toISOString()}] state.heroes.length=${Array.isArray(state.heroes) ? state.heroes.length : 'n/a'} state.bcoin=${state.bcoin}`);
+  const run = pushCloudSaveChain.then(() => pushCloudSaveInner(callId));
   // swallow so one failed push doesn't permanently wedge the chain for
   // every push after it — the caller of THIS invocation still sees/can
   // handle the real rejection via `run` itself
@@ -6581,9 +6589,10 @@ function pushCloudSave() {
   return run;
 }
 
-async function pushCloudSaveInner() {
-  if (!sb || !cloudSession) return;
-  await reconcileExternalCurrency();
+async function pushCloudSaveInner(callId) {
+  if (!sb || !cloudSession) { console.log(`[pushCloudSave #${callId} ABORTED — no sb/cloudSession]`); return; }
+  console.log(`[pushCloudSave #${callId} STARTING EXECUTION at ${new Date().toISOString()}] state.heroes.length=${Array.isArray(state.heroes) ? state.heroes.length : 'n/a'} state.bcoin=${state.bcoin}`);
+  await reconcileExternalCurrency(callId);
   // Captured ONCE, before the network round-trip — this exact object (not a
   // fresh read of `state` afterward) is what actually reaches the server.
   // See its own comment below at the baseline-update site for why that
@@ -6594,7 +6603,7 @@ async function pushCloudSaveInner() {
   // minutes, not caught live) on every single push, with a stack trace so
   // we can see WHICH caller (interval / throttled reward / forced
   // post-purchase / beforeunload / etc) is firing and what it's sending.
-  console.log(`[pushCloudSave ${new Date().toISOString()}] heroes=${(snapshot.heroes||[]).length} bcoin=${snapshot.bcoin} nextHeroId=${snapshot.nextHeroId}`, new Error().stack);
+  console.log(`[pushCloudSave #${callId} SNAPSHOT at ${new Date().toISOString()}] heroes=${(snapshot.heroes||[]).length} bcoin=${snapshot.bcoin} nextHeroId=${snapshot.nextHeroId}`);
   const savesRes = await sb.from('saves').upsert({
     user_id: cloudSession.user.id,
     // FIX (2026-07-23, master spec #1/#5): used to push the bare `state`
@@ -6606,7 +6615,7 @@ async function pushCloudSaveInner() {
     state: snapshot,
     updated_at: new Date().toISOString(),
   }).select('user_id');
-  console.log(`[pushCloudSave result] error=${savesRes.error ? savesRes.error.message : 'none'} rowsWritten=${savesRes.data ? savesRes.data.length : 'null'}`);
+  console.log(`[pushCloudSave #${callId} RESULT at ${new Date().toISOString()}] error=${savesRes.error ? savesRes.error.message : 'none'} rowsWritten=${savesRes.data ? savesRes.data.length : 'null'}`);
   // ERROR LOGGING (2026-07-23): these upserts used to be fire-and-forget —
   // any failure (RLS, schema mismatch, network) was completely invisible.
   // That's exactly how the leaderboard bigint/fractional mismatch below hid
@@ -6743,13 +6752,13 @@ function pushCloudSaveThrottled() {
       rewardPushTrailingTimer = setTimeout(() => {
         rewardPushTrailingTimer = null;
         lastRewardPush = Date.now();
-        if (cloudSignedIn()) pushCloudSave();
+        if (cloudSignedIn()) pushCloudSave('rewardThrottle-trailing');
       }, wait);
     }
     return;
   }
   lastRewardPush = now;
-  pushCloudSave();
+  pushCloudSave('rewardThrottle-immediate');
 }
 
 function showAccountModal() {
@@ -6825,11 +6834,11 @@ function enterGame() {
   // independent of Realtime entirely, so the ranking still catches up
   // periodically even if the push channel is broken.
   setInterval(refreshLeaderboard, 20000);
-  setInterval(() => { if (cloudSignedIn()) pushCloudSave(); }, 30000);
+  setInterval(() => { if (cloudSignedIn()) pushCloudSave('interval-30s'); }, 30000);
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden' && cloudSignedIn()) pushCloudSave();
+    if (document.visibilityState === 'hidden' && cloudSignedIn()) pushCloudSave('visibilitychange-hidden');
   });
-  window.addEventListener('beforeunload', () => { if (cloudSignedIn()) pushCloudSave(); });
+  window.addEventListener('beforeunload', () => { if (cloudSignedIn()) pushCloudSave('beforeunload'); });
 }
 // MANDATORY LOGIN (2026-07-23, HARDENED — no auto-entry, no exceptions):
 // this is now the ONLY place that decides which of the two login-card
