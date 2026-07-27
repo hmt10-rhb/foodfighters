@@ -6221,13 +6221,14 @@ function applyRememberMeChoiceFromCheckbox() {
 
 async function cloudSignUp() {
   if (!sb) return;
-  // MAINTENANCE MODE (2026-07-26) — no new accounts while the saves-table
-  // incident is being verified; the admin already has an account, nobody
-  // legitimately needs signup right now. See MAINTENANCE_MODE's own comment.
-  if (MAINTENANCE_MODE) { toast('O jogo está em manutenção — voltamos em breve.'); return; }
   const email = document.getElementById('cloud-email').value.trim();
   const pw = document.getElementById('cloud-pw').value;
   const username = sanitizeUsername(document.getElementById('cloud-username').value);
+  // MAINTENANCE MODE (2026-07-26/27) — only the admin can sign up while the
+  // saves-table incident is being verified (e.g. bootstrapping the admin's
+  // own account on a freshly migrated Supabase project that doesn't have it
+  // yet) — everyone else is blocked. See MAINTENANCE_MODE's own comment.
+  if (MAINTENANCE_MODE && email !== ADMIN_EMAIL) { toast('O jogo está em manutenção — voltamos em breve.'); return; }
   if (!email || !pw || !username) { toast('Preencha email, senha e nome de jogador (sem < > " \').'); return; }
   applyRememberMeChoiceFromCheckbox();
   const { data, error } = await sb.auth.signUp({ email, password: pw });
