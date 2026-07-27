@@ -6439,14 +6439,33 @@ async function reconcileExternalCurrency(callId) {
       wheelPaidSpinUsed: !!data.state.wheelPaidSpinUsed,
     };
     const labels = { starCore: 'Food Coins', bcoin: 'Chef Gems', michelinCoin: 'Estrela Michelin' };
+    // ADD-ONLY (2026-07-27, reverted a real regression): this used to also
+    // react to NEGATIVE deltas (cloudVal < knownVal), subtracting from local
+    // state and toasting "removido" — added 2026-07-24 (commit dcdffef) so
+    // an admin's "Remover moeda" action would reflect immediately for an
+    // online player, without waiting for their next reload. The problem:
+    // this makes ANY transient/stale/racy read of the cloud (for whatever
+    // reason — a slow request landing out of order, anything) ACTIVELY
+    // DESTRUCTIVE — it doesn't just fail to credit, it visibly takes real
+    // currency away from the player. The ORIGINAL design (see 15b2008) was
+    // deliberately one-directional: only ever ADD a positive external
+    // credit, never subtract, specifically because a local spend already
+    // naturally produces a negative (or zero) delta on its own — there was
+    // never a legitimate reason for this function to actively remove
+    // currency. Restoring that original, safer behavior. The tradeoff: an
+    // admin "remove currency" action on an online player now only takes
+    // effect on their next reload/login (pullCloudSave adopts the cloud
+    // value directly there) instead of instantly — an acceptable, rare
+    // edge case next to the alternative of randomly clawing back real
+    // players' progress.
     ['starCore', 'bcoin', 'michelinCoin'].forEach(k => {
       const cloudVal = Number(data.state[k]) || 0;
       const knownVal = Number(state.lastKnownCloudCurrency[k]) || 0;
       const externalDelta = cloudVal - knownVal;
-      if (externalDelta === 0) return;
-      state[k] = Math.max(0, (Number(state[k]) || 0) + externalDelta);
-      if (externalDelta > 0) toast(`Você recebeu ${fmtCurrency(externalDelta)} ${labels[k]}!`);
-      else toast(`${fmtCurrency(-externalDelta)} ${labels[k]} foram removidos da sua conta.`);
+      if (externalDelta > 0) {
+        state[k] = (Number(state[k]) || 0) + externalDelta;
+        toast(`Você recebeu ${fmtCurrency(externalDelta)} ${labels[k]}!`);
+      }
     });
     // hardResetCount (2026-07-24) is USES SPENT, not a balance — a positive
     // delta here means an admin used one up on the player's behalf (fewer
