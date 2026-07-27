@@ -6346,11 +6346,39 @@ async function cloudSignOut() {
 // branch fired. Both fixed here.
 async function pullCloudSave() {
   if (!sb || !cloudSession) return;
-  const { data, error } = await sb
-    .from('saves')
-    .select('state, updated_at')
-    .eq('user_id', cloudSession.user.id)
-    .maybeSingle();
+  // RETRY ON SUSPICIOUS READ (2026-07-27, real production data-loss fix):
+  // this SELECT has been observed, on this Supabase project, to
+  // intermittently return a STALE snapshot of `state` — the row itself is
+  // correct (confirmed via direct SQL moments later/earlier), but this
+  // particular read comes back missing heroes/currency that were already
+  // confirmed written. reconcileExternalCurrency() hits the exact same
+  // staleness but is harmless there (it only ever ADDS a credit, never
+  // removes). This function is NOT harmless — a `cloudWins` pull below does
+  // a WHOLESALE REPLACE of local state, so a single stale read here
+  // silently reverts real progress, and the very next periodic push then
+  // re-persists that wrong, now-local state back to the cloud for real.
+  // Guard against it the cheap way: if a read looks like a downgrade from
+  // what THIS device already knows it legitimately has (fewer heroes than
+  // our own last-saved local count), don't trust it blindly — re-read a
+  // couple of times first. A genuine cross-device pull with real fewer
+  // heroes (rare, but possible) still goes through once the retries agree.
+  const localHeroCount = Array.isArray(state.heroes) ? state.heroes.length : 0;
+  const localWealth = (Number(state.starCore) || 0) + (Number(state.bcoin) || 0) + (Number(state.michelinCoin) || 0);
+  let data, error;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    ({ data, error } = await sb
+      .from('saves')
+      .select('state, updated_at')
+      .eq('user_id', cloudSession.user.id)
+      .maybeSingle());
+    if (error || !data) break;
+    const cloudHeroCount = Array.isArray(data.state.heroes) ? data.state.heroes.length : 0;
+    const cloudWealth = (Number(data.state.starCore) || 0) + (Number(data.state.bcoin) || 0) + (Number(data.state.michelinCoin) || 0);
+    const looksStale = cloudHeroCount < localHeroCount || cloudWealth < localWealth;
+    if (!looksStale || attempt === 3) break;
+    console.warn(`pullCloudSave: read #${attempt} looks stale (cloud heroes=${cloudHeroCount}/wealth=${cloudWealth} < local known heroes=${localHeroCount}/wealth=${localWealth}) — retrying`);
+    await new Promise(r => setTimeout(r, 800));
+  }
   if (error || !data) { localFreshOnBoot = false; await pushCloudSave('pullCloudSave-noRow'); return; }
   const cloudWins = localFreshOnBoot || new Date(data.updated_at).getTime() > (state.lastSeen || 0);
   // consumed here regardless of outcome — only the FIRST pullCloudSave()
